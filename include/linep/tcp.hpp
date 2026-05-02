@@ -1,6 +1,8 @@
 #pragma once
-// Internal redirect — public API is at <linep/tcp.hpp>
-#include <linep/tcp.hpp>
+#include <linep/export.h>
+#include <linep/messages.hpp>
+#include <linep/types.hpp>
+#include <cstdint>
 
 // ── Public DLL boundary — pure virtual interfaces only ───────────────────────
 // No std::string / std::thread / std::atomic at the ABI boundary.

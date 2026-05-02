@@ -1,6 +1,8 @@
 #pragma once
-// Internal redirect — public API is at <linep/framing.hpp>
-#include <linep/framing.hpp>
+#include <linep/types.hpp>
+#include <cstdint>
+
+namespace linep::core {
 
 // ── HeartbeatCompact ─────────────────────────────────────────────────────────
 
