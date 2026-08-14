@@ -30,6 +30,53 @@ LINEP_SL_API int linep_sl1_verify_mac(
     return linep::sl::verify_sl1_mac(secret_key, key_len, *hdr, *ext, payload, payload_len) ? 1 : 0;
 }
 
+LINEP_SL_API int linep_sl2_validate_peer_identity(
+    const linep_sl2_peer_identity_t* peer,
+    uint32_t expected_trust_domain)
+{
+    if (!peer) return 0;
+    linep::sl::PeerIdentity p{};
+    p.trust_domain_id = peer->trust_domain_id;
+    p.node_id = peer->node_id;
+    std::memcpy(p.pubkey, peer->pubkey, 32);
+    p.revoked = (peer->revoked != 0);
+    return linep::sl::validate_peer_identity(p, expected_trust_domain) ? 1 : 0;
+}
+
+LINEP_SL_API int linep_sl2_derive_session_key(
+    const uint8_t* master_secret, uint32_t master_len,
+    uint32_t session_id, uint16_t key_id,
+    uint16_t node_id, uint64_t ttl_sec,
+    uint64_t current_time_sec,
+    linep_sl2_session_key_t* out_key)
+{
+    if (!master_secret || master_len == 0 || !out_key) return 0;
+    linep::sl::SessionKey sk{};
+    if (!linep::sl::derive_session_key(master_secret, master_len, session_id, key_id, node_id, ttl_sec, current_time_sec, sk)) {
+        return 0;
+    }
+    out_key->session_id = sk.session_id;
+    out_key->key_id = sk.key_id;
+    out_key->established_at_sec = sk.established_at_sec;
+    out_key->expires_at_sec = sk.expires_at_sec;
+    std::memcpy(out_key->secret_key, sk.secret_key, 32);
+    return 1;
+}
+
+LINEP_SL_API int linep_sl2_verify_session_key_freshness(
+    const linep_sl2_session_key_t* key,
+    uint64_t current_time_sec)
+{
+    if (!key) return 0;
+    linep::sl::SessionKey sk{};
+    sk.session_id = key->session_id;
+    sk.key_id = key->key_id;
+    sk.established_at_sec = key->established_at_sec;
+    sk.expires_at_sec = key->expires_at_sec;
+    std::memcpy(sk.secret_key, key->secret_key, 32);
+    return linep::sl::verify_session_key_freshness(sk, current_time_sec) ? 1 : 0;
+}
+
 LINEP_SL_API int linep_sl3_create_cap_token(
     const uint8_t* secret_key, uint32_t key_len,
     uint32_t session_id, uint64_t granted_caps,

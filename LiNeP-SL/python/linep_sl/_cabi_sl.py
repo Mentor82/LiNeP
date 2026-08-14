@@ -20,6 +20,21 @@ typedef struct {
     uint8_t  cap_mac[16];
 } linep_sl_cap_ext_t;
 
+typedef struct {
+    uint32_t trust_domain_id;
+    uint16_t node_id;
+    uint8_t  pubkey[32];
+    uint8_t  revoked;
+} linep_sl2_peer_identity_t;
+
+typedef struct {
+    uint32_t session_id;
+    uint16_t key_id;
+    uint64_t established_at_sec;
+    uint64_t expires_at_sec;
+    uint8_t  secret_key[32];
+} linep_sl2_session_key_t;
+
 int linep_sl1_compute_mac(
     const uint8_t* secret_key, uint32_t key_len,
     const void* header_ptr, uint32_t session_id,
@@ -31,6 +46,21 @@ int linep_sl1_verify_mac(
     const uint8_t* secret_key, uint32_t key_len,
     const void* header_ptr, const linep_sl_auth_ext_t* auth_ext,
     const uint8_t* payload, uint32_t payload_len);
+
+int linep_sl2_validate_peer_identity(
+    const linep_sl2_peer_identity_t* peer,
+    uint32_t expected_trust_domain);
+
+int linep_sl2_derive_session_key(
+    const uint8_t* master_secret, uint32_t master_len,
+    uint32_t session_id, uint16_t key_id,
+    uint16_t node_id, uint64_t ttl_sec,
+    uint64_t current_time_sec,
+    linep_sl2_session_key_t* out_key);
+
+int linep_sl2_verify_session_key_freshness(
+    const linep_sl2_session_key_t* key,
+    uint64_t current_time_sec);
 
 int linep_sl3_create_cap_token(
     const uint8_t* secret_key, uint32_t key_len,
