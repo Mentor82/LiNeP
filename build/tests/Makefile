@@ -475,6 +475,20 @@ test_udp_control_frames/fast:
 	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_udp_control_frames.dir\build.make tests/CMakeFiles/test_udp_control_frames.dir/build
 .PHONY : test_udp_control_frames/fast
 
+# Convenience name for target.
+tests/CMakeFiles/test_task_streaming.dir/rule:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 tests/CMakeFiles/test_task_streaming.dir/rule
+.PHONY : tests/CMakeFiles/test_task_streaming.dir/rule
+
+# Convenience name for target.
+test_task_streaming: tests/CMakeFiles/test_task_streaming.dir/rule
+.PHONY : test_task_streaming
+
+# fast build rule for target.
+test_task_streaming/fast:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_streaming.dir\build.make tests/CMakeFiles/test_task_streaming.dir/build
+.PHONY : test_task_streaming/fast
+
 test_crc.obj: test_crc.cpp.obj
 .PHONY : test_crc.obj
 
@@ -1027,6 +1041,30 @@ test_task_send_receive.cpp.s:
 	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_send_receive.dir\build.make tests/CMakeFiles/test_task_send_receive.dir/test_task_send_receive.cpp.s
 .PHONY : test_task_send_receive.cpp.s
 
+test_task_streaming.obj: test_task_streaming.cpp.obj
+.PHONY : test_task_streaming.obj
+
+# target to build an object file
+test_task_streaming.cpp.obj:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_streaming.dir\build.make tests/CMakeFiles/test_task_streaming.dir/test_task_streaming.cpp.obj
+.PHONY : test_task_streaming.cpp.obj
+
+test_task_streaming.i: test_task_streaming.cpp.i
+.PHONY : test_task_streaming.i
+
+# target to preprocess a source file
+test_task_streaming.cpp.i:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_streaming.dir\build.make tests/CMakeFiles/test_task_streaming.dir/test_task_streaming.cpp.i
+.PHONY : test_task_streaming.cpp.i
+
+test_task_streaming.s: test_task_streaming.cpp.s
+.PHONY : test_task_streaming.s
+
+# target to generate assembly for a file
+test_task_streaming.cpp.s:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_streaming.dir\build.make tests/CMakeFiles/test_task_streaming.dir/test_task_streaming.cpp.s
+.PHONY : test_task_streaming.cpp.s
+
 test_timeout_detection.obj: test_timeout_detection.cpp.obj
 .PHONY : test_timeout_detection.obj
 
@@ -1107,6 +1145,7 @@ help:
 	@echo ... test_scheduler_state_machine
 	@echo ... test_slot_state_update_from_heartbeat
 	@echo ... test_task_send_receive
+	@echo ... test_task_streaming
 	@echo ... test_timeout_detection
 	@echo ... test_udp_control_frames
 	@echo ... test_crc.obj
@@ -1178,6 +1217,9 @@ help:
 	@echo ... test_task_send_receive.obj
 	@echo ... test_task_send_receive.i
 	@echo ... test_task_send_receive.s
+	@echo ... test_task_streaming.obj
+	@echo ... test_task_streaming.i
+	@echo ... test_task_streaming.s
 	@echo ... test_timeout_detection.obj
 	@echo ... test_timeout_detection.i
 	@echo ... test_timeout_detection.s

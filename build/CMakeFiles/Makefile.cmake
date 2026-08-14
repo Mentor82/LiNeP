@@ -90,4 +90,5 @@ set(CMAKE_DEPEND_INFO_FILES
   "tests/CMakeFiles/test_header_reject_bad_fields.dir/DependInfo.cmake"
   "tests/CMakeFiles/test_scheduler_state_machine.dir/DependInfo.cmake"
   "tests/CMakeFiles/test_udp_control_frames.dir/DependInfo.cmake"
+  "tests/CMakeFiles/test_task_streaming.dir/DependInfo.cmake"
   )

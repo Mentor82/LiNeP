@@ -32,6 +32,13 @@ public:
     // task_type    : one of linep::TaskType (TASK_INSTRUCT, TASK_CODE, …).
     //                Serialized as payload byte 0 in TASK frames.
     // correlation_id: caller-chosen request ID; echoed in the RESULT header.
+    using StreamChunkCallback = void (*)(uint32_t correlation_id,
+                                         uint32_t sequence,
+                                         uint16_t flags,
+                                         const uint8_t* chunk_payload,
+                                         uint32_t chunk_len,
+                                         void* user_data);
+
     virtual uint8_t send_task(const char*    host,
                                uint16_t       port,
                                uint8_t        task_type,
@@ -43,6 +50,18 @@ public:
                                uint8_t*       result_buf,
                                uint32_t*      result_len,
                                uint32_t       timeout_ms = 5000) = 0;
+
+    virtual uint8_t send_task_stream(const char*          host,
+                                      uint16_t             port,
+                                      uint8_t              task_type,
+                                      uint32_t             correlation_id,
+                                      uint16_t             worker_id,
+                                      uint8_t              slot_id,
+                                      const uint8_t*      payload,
+                                      uint32_t             payload_len,
+                                      StreamChunkCallback  chunk_cb,
+                                      void*                user_data,
+                                      uint32_t             timeout_ms = 5000) = 0;
 };
 
 LINEP_API ITcpTaskSender* create_task_sender();
@@ -58,16 +77,6 @@ LINEP_API void             destroy_task_sender(ITcpTaskSender* p);
 class LINEP_API ITcpTaskReceiver {
 public:
     // Called once per TASK frame received.
-    //
-    // task_type: payload byte 0 of the TASK frame.
-    // correlation_id / worker_id / slot_id: from the TASK header.
-    // payload / payload_len: task body bytes after the leading task_type byte.
-    //
-    // result_buf / result_cap / result_len:
-    //   Write the response body into result_buf (up to result_cap bytes).
-    //   Set *result_len to the number of bytes written.
-    //
-    // Returns: linep::ResultStatus byte sent back to the client.
     using TaskCallback = uint8_t (*)(uint8_t         task_type,
                                       uint32_t        correlation_id,
                                       uint16_t        worker_id,
@@ -79,11 +88,31 @@ public:
                                       uint32_t*       result_len,
                                       void*           user_data);
 
+    using ChunkWriterCallback = bool (*)(const uint8_t* chunk_payload,
+                                         uint32_t       chunk_len,
+                                         bool           is_final,
+                                         void*          writer_arg);
+
+    using StreamTaskCallback = uint8_t (*)(uint8_t              task_type,
+                                            uint32_t             correlation_id,
+                                            uint16_t             worker_id,
+                                            uint8_t              slot_id,
+                                            const uint8_t*       payload,
+                                            uint32_t             payload_len,
+                                            ChunkWriterCallback  writer,
+                                            void*                writer_arg,
+                                            const volatile bool* is_cancelled,
+                                            void*                user_data);
+
     virtual ~ITcpTaskReceiver() = default;
 
-    // Start listening.  Returns false if the port cannot be bound.
+    // Start listening for single-RESULT tasks.
     virtual bool start(uint16_t port, TaskCallback cb,
                        void* user_data = nullptr) = 0;
+
+    // Start listening for streaming tasks.
+    virtual bool start_stream(uint16_t port, StreamTaskCallback stream_cb,
+                              void* user_data = nullptr) = 0;
 
     // Stop accepting new connections and wait for active handlers to finish.
     virtual void stop() = 0;

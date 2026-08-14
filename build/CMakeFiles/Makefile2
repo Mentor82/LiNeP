@@ -212,6 +212,7 @@ tests/all: tests/CMakeFiles/test_scheduler_selects_best_slots_fallback.dir/all
 tests/all: tests/CMakeFiles/test_header_reject_bad_fields.dir/all
 tests/all: tests/CMakeFiles/test_scheduler_state_machine.dir/all
 tests/all: tests/CMakeFiles/test_udp_control_frames.dir/all
+tests/all: tests/CMakeFiles/test_task_streaming.dir/all
 .PHONY : tests/all
 
 # Recursive "preinstall" directory target.
@@ -244,6 +245,7 @@ tests/clean: tests/CMakeFiles/test_scheduler_selects_best_slots_fallback.dir/cle
 tests/clean: tests/CMakeFiles/test_header_reject_bad_fields.dir/clean
 tests/clean: tests/CMakeFiles/test_scheduler_state_machine.dir/clean
 tests/clean: tests/CMakeFiles/test_udp_control_frames.dir/clean
+tests/clean: tests/CMakeFiles/test_task_streaming.dir/clean
 .PHONY : tests/clean
 
 #=============================================================================
@@ -659,7 +661,7 @@ tests/CMakeFiles/test_timeout_detection.dir/all: src/tcp/CMakeFiles/linep_tcp.di
 tests/CMakeFiles/test_timeout_detection.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_timeout_detection.dir\build.make tests/CMakeFiles/test_timeout_detection.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_timeout_detection.dir\build.make tests/CMakeFiles/test_timeout_detection.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=58,59 "Built target test_timeout_detection"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=60,61 "Built target test_timeout_detection"
 .PHONY : tests/CMakeFiles/test_timeout_detection.dir/all
 
 # Build rule for subdir invocation for target.
@@ -1169,7 +1171,7 @@ tests/CMakeFiles/test_udp_control_frames.dir/all: src/tcp/CMakeFiles/linep_tcp.d
 tests/CMakeFiles/test_udp_control_frames.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_udp_control_frames.dir\build.make tests/CMakeFiles/test_udp_control_frames.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_udp_control_frames.dir\build.make tests/CMakeFiles/test_udp_control_frames.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=60,61 "Built target test_udp_control_frames"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=62,63 "Built target test_udp_control_frames"
 .PHONY : tests/CMakeFiles/test_udp_control_frames.dir/all
 
 # Build rule for subdir invocation for target.
@@ -1187,6 +1189,36 @@ test_udp_control_frames: tests/CMakeFiles/test_udp_control_frames.dir/rule
 tests/CMakeFiles/test_udp_control_frames.dir/clean:
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_udp_control_frames.dir\build.make tests/CMakeFiles/test_udp_control_frames.dir/clean
 .PHONY : tests/CMakeFiles/test_udp_control_frames.dir/clean
+
+#=============================================================================
+# Target rules for target tests/CMakeFiles/test_task_streaming.dir
+
+# All Build rule for target.
+tests/CMakeFiles/test_task_streaming.dir/all: src/pal/CMakeFiles/linep_pal.dir/all
+tests/CMakeFiles/test_task_streaming.dir/all: src/core/CMakeFiles/linep_core.dir/all
+tests/CMakeFiles/test_task_streaming.dir/all: src/udp/CMakeFiles/linep_udp.dir/all
+tests/CMakeFiles/test_task_streaming.dir/all: src/tcp/CMakeFiles/linep_tcp.dir/all
+tests/CMakeFiles/test_task_streaming.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
+	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_streaming.dir\build.make tests/CMakeFiles/test_task_streaming.dir/depend
+	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_streaming.dir\build.make tests/CMakeFiles/test_task_streaming.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=58,59 "Built target test_task_streaming"
+.PHONY : tests/CMakeFiles/test_task_streaming.dir/all
+
+# Build rule for subdir invocation for target.
+tests/CMakeFiles/test_task_streaming.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start C:\ai\LiNeP\build\CMakeFiles 11
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 tests/CMakeFiles/test_task_streaming.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start C:\ai\LiNeP\build\CMakeFiles 0
+.PHONY : tests/CMakeFiles/test_task_streaming.dir/rule
+
+# Convenience name for target.
+test_task_streaming: tests/CMakeFiles/test_task_streaming.dir/rule
+.PHONY : test_task_streaming
+
+# clean rule for target.
+tests/CMakeFiles/test_task_streaming.dir/clean:
+	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_streaming.dir\build.make tests/CMakeFiles/test_task_streaming.dir/clean
+.PHONY : tests/CMakeFiles/test_task_streaming.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.

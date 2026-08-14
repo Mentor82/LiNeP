@@ -541,6 +541,19 @@ test_udp_control_frames/fast:
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_udp_control_frames.dir\build.make tests/CMakeFiles/test_udp_control_frames.dir/build
 .PHONY : test_udp_control_frames/fast
 
+#=============================================================================
+# Target rules for targets named test_task_streaming
+
+# Build rule for target.
+test_task_streaming: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 test_task_streaming
+.PHONY : test_task_streaming
+
+# fast build rule for target.
+test_task_streaming/fast:
+	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_streaming.dir\build.make tests/CMakeFiles/test_task_streaming.dir/build
+.PHONY : test_task_streaming/fast
+
 # Help Target
 help:
 	@echo The following are some of the valid targets for this Makefile:
@@ -580,6 +593,7 @@ help:
 	@echo ... test_scheduler_state_machine
 	@echo ... test_slot_state_update_from_heartbeat
 	@echo ... test_task_send_receive
+	@echo ... test_task_streaming
 	@echo ... test_timeout_detection
 	@echo ... test_udp_control_frames
 .PHONY : help

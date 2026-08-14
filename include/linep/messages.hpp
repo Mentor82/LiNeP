@@ -20,6 +20,7 @@ enum MsgType : uint8_t {
     TASK_ACK         = 0x11,
     RESULT           = 0x12,
     MSG_ERROR        = 0x13,
+    TASK_CANCEL      = 0x14,
 
     // Status
     STATUS_REQUEST   = 0x20,
@@ -182,6 +183,7 @@ inline bool is_known_msg_type(uint8_t t) noexcept {
         case TASK_ACK:
         case RESULT:
         case MSG_ERROR:
+        case TASK_CANCEL:
         case STATUS_REQUEST:
         case STATUS_RESPONSE:
         case EMBED_REQUEST:

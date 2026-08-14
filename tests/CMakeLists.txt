@@ -51,3 +51,4 @@ linep_add_test(test_scheduler_selects_best_slots_fallback test_scheduler_selects
 linep_add_test(test_header_reject_bad_fields              test_header_reject_bad_fields.cpp)
 linep_add_test(test_scheduler_state_machine               test_scheduler_state_machine.cpp)
 linep_add_test(test_udp_control_frames                    test_udp_control_frames.cpp)
+linep_add_test(test_task_streaming                        test_task_streaming.cpp)

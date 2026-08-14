@@ -54,6 +54,7 @@ class MsgType(IntEnum):
     TASK_ACK          = 0x11
     RESULT            = 0x12
     MSG_ERROR         = 0x13
+    TASK_CANCEL       = 0x14
 
     # Status
     STATUS_REQUEST    = 0x20

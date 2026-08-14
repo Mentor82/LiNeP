@@ -67,6 +67,7 @@ enum {
     LINEP_MSG_TASK_ACK            = 0x11,
     LINEP_MSG_RESULT              = 0x12,
     LINEP_MSG_ERROR               = 0x13,
+    LINEP_MSG_TASK_CANCEL         = 0x14,
     LINEP_MSG_STATUS_REQUEST      = 0x20,
     LINEP_MSG_STATUS_RESPONSE     = 0x21,
     LINEP_MSG_EMBED_REQUEST       = 0x30,
