@@ -13,6 +13,14 @@ public:
     bool is_node_revoked(uint16_t node_id) const noexcept override {
         return node_id != 777;
     }
+    bool get_peer_identity(uint16_t node_id, uint32_t trust_domain_id, linep::sl::PeerIdentity& out_peer) const noexcept override {
+        if (node_id != 777) return false;
+        out_peer.node_id = 777;
+        out_peer.trust_domain_id = trust_domain_id;
+        out_peer.revoked = false;
+        std::memset(out_peer.pubkey, 0xAA, 32);
+        return true;
+    }
 };
 
 int main() {

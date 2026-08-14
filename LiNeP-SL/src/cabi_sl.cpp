@@ -196,6 +196,7 @@ LINEP_SL_API int linep_sl4_engine_evaluate(
     uint16_t local_node_id,
     uint16_t remote_node_id,
     uint32_t remote_trust_domain_id,
+    const uint8_t* remote_pubkey_32bytes,
     uint8_t  remote_revoked,
     uint8_t  negotiated_sl,
     uint64_t requested_cap,
@@ -217,12 +218,33 @@ LINEP_SL_API int linep_sl4_engine_evaluate(
     dctx.key_id = key_id;
     dctx.local_peer.node_id = local_node_id;
     dctx.local_peer.trust_domain_id = trust_domain_id;
-    std::memset(dctx.local_peer.pubkey, 0xAA, 32);
 
     dctx.remote_peer.node_id = remote_node_id;
     dctx.remote_peer.trust_domain_id = remote_trust_domain_id;
-    std::memset(dctx.remote_peer.pubkey, 0xAA, 32);
     dctx.remote_peer.revoked = (remote_revoked != 0);
+
+    // REAL IDENTITY RESOLUTION: Consume passed pubkey if available, else look up registered identity
+    bool pubkey_set = false;
+    if (remote_pubkey_32bytes) {
+        uint8_t mask = 0;
+        for (int i = 0; i < 32; ++i) mask |= remote_pubkey_32bytes[i];
+        if (mask != 0) {
+            std::memcpy(dctx.remote_peer.pubkey, remote_pubkey_32bytes, 32);
+            pubkey_set = true;
+        }
+    }
+
+    if (!pubkey_set && impl->id_provider) {
+        linep::sl::PeerIdentity registered_id{};
+        if (impl->id_provider->get_peer_identity(remote_node_id, remote_trust_domain_id, registered_id)) {
+            std::memcpy(dctx.remote_peer.pubkey, registered_id.pubkey, 32);
+            pubkey_set = true;
+        }
+    }
+
+    if (!pubkey_set) {
+        std::memset(dctx.remote_peer.pubkey, 0, 32); // All zeros -> will fail closed if identity validation is required
+    }
 
     dctx.negotiated_sl = static_cast<linep::sl::SecurityLevel>(negotiated_sl);
     dctx.requested_cap = static_cast<linep::sl::CapFlags>(requested_cap);
@@ -264,11 +286,12 @@ LINEP_SL_API int linep_sl4_evaluate_decision(
     uint32_t reason_buf_len)
 {
     auto eng = linep_sl4_engine_create(trust_domain_id);
-    linep_sl4_engine_register_peer(eng, remote_node_id, reinterpret_cast<const uint8_t*>("\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa"));
+    const uint8_t default_pubkey[32] = {0xAA};
+    linep_sl4_engine_register_peer(eng, remote_node_id, default_pubkey);
 
     int ret = linep_sl4_engine_evaluate(
         eng, trust_domain_id, session_id, key_id, 1, remote_node_id, remote_trust_domain_id,
-        remote_revoked, negotiated_sl, requested_cap, 0, 0, policy_id, 0, 1700000000ULL,
+        default_pubkey, remote_revoked, negotiated_sl, requested_cap, 0, 0, policy_id, 0, 1700000000ULL,
         out_decision, out_reason_buf, reason_buf_len);
     linep_sl4_engine_free(eng);
     return ret;

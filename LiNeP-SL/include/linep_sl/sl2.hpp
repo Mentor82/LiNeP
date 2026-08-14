@@ -53,6 +53,7 @@ public:
     virtual ~IdentityProvider() = default;
     virtual bool is_peer_trusted(const PeerIdentity& peer, uint32_t expected_trust_domain) const noexcept = 0;
     virtual bool is_node_revoked(uint16_t node_id) const noexcept = 0;
+    virtual bool get_peer_identity(uint16_t node_id, uint32_t trust_domain_id, PeerIdentity& out_peer) const noexcept = 0;
 };
 
 // Memory-backed Identity Provider implementation
@@ -66,6 +67,7 @@ public:
 
     bool is_peer_trusted(const PeerIdentity& peer, uint32_t expected_trust_domain) const noexcept override;
     bool is_node_revoked(uint16_t node_id) const noexcept override;
+    bool get_peer_identity(uint16_t node_id, uint32_t trust_domain_id, PeerIdentity& out_peer) const noexcept override;
 
 private:
     uint32_t trust_domain_id_;

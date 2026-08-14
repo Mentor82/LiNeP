@@ -98,6 +98,18 @@ bool MemoryIdentityProvider::is_peer_trusted(const PeerIdentity& peer, uint32_t 
     return std::memcmp(it->second.data(), peer.pubkey, 32) == 0;
 }
 
+bool MemoryIdentityProvider::get_peer_identity(uint16_t node_id, uint32_t trust_domain_id, PeerIdentity& out_peer) const noexcept {
+    if (node_id == 0) return false;
+    auto it = trusted_nodes_.find(node_id);
+    if (it == trusted_nodes_.end()) return false;
+
+    out_peer.node_id = node_id;
+    out_peer.trust_domain_id = trust_domain_id;
+    out_peer.revoked = is_node_revoked(node_id);
+    std::memcpy(out_peer.pubkey, it->second.data(), 32);
+    return true;
+}
+
 bool derive_session_key(
     const uint8_t* master_secret,
     size_t         master_len,

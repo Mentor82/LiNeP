@@ -78,11 +78,18 @@ class SecurityDecisionEngine:
         remote_revoked: bool,
         negotiated_sl: SecurityLevel | int,
         requested_cap: CapFlags | int,
+        remote_pubkey_32bytes: bytes | None = None,
         policy_id: str = "default-policy",
         established_policy_revision: int = 0,
     ) -> tuple[Decision, str]:
         out_dec = ffi.new("uint8_t *")
         out_reason = ffi.new("char[128]")
+
+        pub_cdata = ffi.NULL
+        if remote_pubkey_32bytes is not None:
+            if len(remote_pubkey_32bytes) != 32:
+                raise ValueError("remote_pubkey_32bytes must be 32 bytes")
+            pub_cdata = ffi.new("uint8_t[32]", remote_pubkey_32bytes)
 
         lib.linep_sl4_engine_evaluate(
             self._handle,
@@ -92,6 +99,7 @@ class SecurityDecisionEngine:
             local_node_id,
             remote_node_id,
             remote_trust_domain_id,
+            pub_cdata,
             1 if remote_revoked else 0,
             int(negotiated_sl),
             int(requested_cap),

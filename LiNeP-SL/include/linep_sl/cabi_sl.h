@@ -150,6 +150,7 @@ LINEP_SL_API int linep_sl4_engine_evaluate(
     uint16_t local_node_id,
     uint16_t remote_node_id,
     uint32_t remote_trust_domain_id,
+    const uint8_t* remote_pubkey_32bytes,
     uint8_t  remote_revoked,
     uint8_t  negotiated_sl,
     uint64_t requested_cap,
