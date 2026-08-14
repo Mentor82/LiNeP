@@ -1,6 +1,6 @@
 # Interoperability & Integration Report: Windows ↔ Debian 13 (Trixie)
 
-This document records the cross-platform build, binary parity, socket communication, security level negotiation, session key lifecycle, and fail-closed validation between **Windows Host** and **Debian 13 WSL (LIARA Workstation)**.
+This document records the cross-platform build, binary parity, socket communication, security level negotiation, session key lifecycle, fail-closed security gates, streaming fragments, and authenticated cancellation between **Windows Host** and **Debian 13 WSL (LIARA Workstation)**.
 
 ---
 
@@ -16,41 +16,49 @@ This document records the cross-platform build, binary parity, socket communicat
 
 ---
 
-## 2. Phase 1–6 Validation Summary
+## 2. Fail-Closed Security Gates & DoD Protocol Verification
 
-### Phase 1 — Build & Parity
-- **C++ Native Builds**: Built `linep_sl_core` static libraries and shared objects (`.dll` and `.so`) cleanly on both platforms.
-- **SL1 MAC Golden Vectors**: 34-byte Little-Endian wire format prefix produced 100% identical 16-byte HMAC-SHA256 signatures across Windows and Debian 13.
-- **Python Bindings**: CFFI bindings loaded seamlessly on both platforms.
+### Security Gate 1: Fail-Closed MAC Verification
+- **Rule**: If `verify_sl1_mac()` returns `False` (tampered header, modified payload, wrong key), the server MUST immediately abort dispatch and return `status: REJECTED`.
+- **Test Outcome**: Verified across Windows Host and Debian 13 WSL. Tampered MACs were rejected with `"status": "REJECTED"`, `"reason": "Authentication failed (Invalid MAC)"`.
 
-### Phase 2 — Peer Identity & Trust Domain
-- **Identity Allocation**:
-  - Peer A (Windows): Node ID `10`, Pubkey `0xAA...`
-  - Peer B (Debian): Node ID `20`, Pubkey `0xBB...`
-- **Verification**: Mutual identity acceptance succeeded (`is_peer_trusted == True`). Unknown node IDs, revoked nodes, and trust-domain ID mismatches failed closed.
+### Security Gate 2: Fail-Closed Capability Authorization
+- **Rule**: If `verify_capability_token()` fails (unauthorized action e.g. requesting `ADMIN` when only `INFERENCE_READ` is granted), the server MUST immediately reject with `status: REJECTED`.
+- **Test Outcome**: Verified across OS boundaries. Requesting unauthorized `ADMIN` returned `"status": "REJECTED"`, `"reason": "Capability authorization failed"`.
 
-### Phase 3 — SL2 Session Establishment & Anti-Downgrade
-- **Security Negotiation**: Negotiated `SL2_IDENTITY` when offered `SL2` and `SL3`.
-- **Downgrade Rejection**: When offered `SL1` against a policy requiring `SL2`, negotiation failed closed (`success == False`).
-- **Session Key Derivation**: Both platforms derived identical 256-bit symmetric session key:
-  `d4b803b37703fe5f19b04106fd039273b0f96a621be3d3b737f41af17f5b8671`
+### V0.2 Transport: Stream Fragments & Duplicate Rejection
+- **Rule**: Stream chunks must maintain strictly monotonic sequence numbers (`chunk_seq = 1, 2, 3...`). Out-of-order or duplicate fragments MUST be rejected.
+- **Test Outcome**:
+  - Valid Chunks 1 & 2 $\rightarrow$ `status: ACCEPTED`.
+  - Retransmitted / Duplicate Chunk 2 $\rightarrow$ `status: REJECTED`, `"reason": "Stream sequence error (duplicate/reordered chunk 2)"`.
 
-### Phase 4 — Key Rotation & Boundary Behavior
-- **Key Rotation**: Successfully rotated session keys over active TCP sockets (`key_id` 1 $\rightarrow$ 2).
-- **Rotation Boundary**: Old key from 2+ generations prior was rejected (`is_key_valid == False`).
-
-### Phase 5 — Protected LiNeP Transport Over TCP
-- **Real Socket Transfer**: Tested live TCP socket communication in both directions:
-  1. Windows Server (`0.0.0.0:19878`) $\leftarrow$ Debian Client (`172.24.224.1:19878`) — **PASSED**
-  2. Debian Server (`0.0.0.0:19879`) $\leftarrow$ Windows Client (`127.0.0.1:19879`) — **PASSED**
-- **Payload Verification**: Authenticated SL1 header & SL3 capability token frames were processed cleanly with response `b"OK_SL2_ACK"`.
-
-### Phase 6 — SL3 Capability Enforcement
-- **`INFERENCE_READ`**: Verified allowed (`cap_read_ok == True`).
-- **`ADMIN`**: Verified denied-by-default (`cap_admin_ok == False`).
+### V0.2 Transport: Authenticated TASK_CANCEL
+- **Rule**: `TASK_CANCEL` must contain valid SL1 HMAC authentication. Unauthenticated or tampered cancels MUST be rejected.
+- **Test Outcome**:
+  - Valid SL1 Authenticated `TASK_CANCEL` $\rightarrow$ `status: CANCEL_ACCEPTED`.
+  - Tampered / Bad MAC `TASK_CANCEL` $\rightarrow$ `status: REJECTED`.
 
 ---
 
-## 3. Observability & Security Compliance
-- **Zero Key Leaks**: Private key material and master secrets are strictly unlogged and hidden from error payloads.
-- **Fail-Closed Guarantee**: All invalid headers, tampered MACs, expired tokens, and downgrade attempts are rejected before task callback execution.
+## 3. Security & Observability Compliance (No Secret Leakage)
+
+- **Sanitized Audit Log**: No raw 256-bit symmetric session keys or master secret material appear in logs, responses, or documentation.
+- **Fingerprinting**: Session key identification uses SHA-256 key fingerprints (`Key Fingerprint: 4f89d3a7e21b... [Redacted 256-bit Secret]`).
+- **Fail-Closed Reason Codes**: Error responses expose structured reason strings without disclosing internal key bytes or cryptographic states.
+
+---
+
+## 4. Multi-Platform Interop Matrix
+
+| Test Case | Direction 1: Win Server $\leftarrow$ Debian Client | Direction 2: Debian Server $\leftarrow$ Win Client | Status |
+|---|---|---|---|
+| **Mutual Identity Authentication** | PASSED | PASSED | **OK** |
+| **SL2 Security Level Negotiation** | PASSED | PASSED | **OK** |
+| **SL1 MAC Verification (Gate 1)** | PASSED | PASSED | **OK** |
+| **SL3 Capability Check (Gate 2)** | PASSED | PASSED | **OK** |
+| **Tampered MAC Rejection** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
+| **Unauthorized Capability Rejection** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
+| **Stream Chunk Monotonic Sequence** | PASSED (ACCEPTED) | PASSED (ACCEPTED) | **OK** |
+| **Duplicate Stream Chunk Rejection** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
+| **Authenticated TASK_CANCEL** | PASSED (CANCEL_ACCEPTED) | PASSED (CANCEL_ACCEPTED) | **OK** |
+| **Tampered TASK_CANCEL Rejection** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
