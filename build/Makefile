@@ -567,6 +567,19 @@ test_normalized_scoring/fast:
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_normalized_scoring.dir\build.make tests/CMakeFiles/test_normalized_scoring.dir/build
 .PHONY : test_normalized_scoring/fast
 
+#=============================================================================
+# Target rules for targets named test_consensus_engine
+
+# Build rule for target.
+test_consensus_engine: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 test_consensus_engine
+.PHONY : test_consensus_engine
+
+# fast build rule for target.
+test_consensus_engine/fast:
+	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_consensus_engine.dir\build.make tests/CMakeFiles/test_consensus_engine.dir/build
+.PHONY : test_consensus_engine/fast
+
 # Help Target
 help:
 	@echo The following are some of the valid targets for this Makefile:
@@ -583,6 +596,7 @@ help:
 	@echo ... linep_scheduler
 	@echo ... linep_tcp
 	@echo ... linep_udp
+	@echo ... test_consensus_engine
 	@echo ... test_crc
 	@echo ... test_crc_fail_reject
 	@echo ... test_error_frame_handling

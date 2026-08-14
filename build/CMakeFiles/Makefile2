@@ -214,6 +214,7 @@ tests/all: tests/CMakeFiles/test_scheduler_state_machine.dir/all
 tests/all: tests/CMakeFiles/test_udp_control_frames.dir/all
 tests/all: tests/CMakeFiles/test_task_streaming.dir/all
 tests/all: tests/CMakeFiles/test_normalized_scoring.dir/all
+tests/all: tests/CMakeFiles/test_consensus_engine.dir/all
 .PHONY : tests/all
 
 # Recursive "preinstall" directory target.
@@ -248,6 +249,7 @@ tests/clean: tests/CMakeFiles/test_scheduler_state_machine.dir/clean
 tests/clean: tests/CMakeFiles/test_udp_control_frames.dir/clean
 tests/clean: tests/CMakeFiles/test_task_streaming.dir/clean
 tests/clean: tests/CMakeFiles/test_normalized_scoring.dir/clean
+tests/clean: tests/CMakeFiles/test_consensus_engine.dir/clean
 .PHONY : tests/clean
 
 #=============================================================================
@@ -258,8 +260,8 @@ CMakeFiles/linep.dir/all: src/pal/CMakeFiles/linep_pal.dir/all
 CMakeFiles/linep.dir/all: src/core/CMakeFiles/linep_core.dir/all
 CMakeFiles/linep.dir/all: src/udp/CMakeFiles/linep_udp.dir/all
 CMakeFiles/linep.dir/all: src/tcp/CMakeFiles/linep_tcp.dir/all
-CMakeFiles/linep.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 CMakeFiles/linep.dir/all: src/cabi/CMakeFiles/linep_cabi.dir/all
+CMakeFiles/linep.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f CMakeFiles\linep.dir\build.make CMakeFiles/linep.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles\linep.dir\build.make CMakeFiles/linep.dir/build
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=1 "Built target linep"
@@ -453,7 +455,7 @@ tests/CMakeFiles/test_crc.dir/all: src/tcp/CMakeFiles/linep_tcp.dir/all
 tests/CMakeFiles/test_crc.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_crc.dir\build.make tests/CMakeFiles/test_crc.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_crc.dir\build.make tests/CMakeFiles/test_crc.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=12,13 "Built target test_crc"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=14,15 "Built target test_crc"
 .PHONY : tests/CMakeFiles/test_crc.dir/all
 
 # Build rule for subdir invocation for target.
@@ -483,7 +485,7 @@ tests/CMakeFiles/test_heartbeat_compact.dir/all: src/tcp/CMakeFiles/linep_tcp.di
 tests/CMakeFiles/test_heartbeat_compact.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_heartbeat_compact.dir\build.make tests/CMakeFiles/test_heartbeat_compact.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_heartbeat_compact.dir\build.make tests/CMakeFiles/test_heartbeat_compact.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=20,21 "Built target test_heartbeat_compact"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=22,23 "Built target test_heartbeat_compact"
 .PHONY : tests/CMakeFiles/test_heartbeat_compact.dir/all
 
 # Build rule for subdir invocation for target.
@@ -513,7 +515,7 @@ tests/CMakeFiles/test_register_frame.dir/all: src/tcp/CMakeFiles/linep_tcp.dir/a
 tests/CMakeFiles/test_register_frame.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_register_frame.dir\build.make tests/CMakeFiles/test_register_frame.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_register_frame.dir\build.make tests/CMakeFiles/test_register_frame.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=24,25 "Built target test_register_frame"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=26,27 "Built target test_register_frame"
 .PHONY : tests/CMakeFiles/test_register_frame.dir/all
 
 # Build rule for subdir invocation for target.
@@ -543,7 +545,7 @@ tests/CMakeFiles/test_task_send_receive.dir/all: src/tcp/CMakeFiles/linep_tcp.di
 tests/CMakeFiles/test_task_send_receive.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_send_receive.dir\build.make tests/CMakeFiles/test_task_send_receive.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_send_receive.dir\build.make tests/CMakeFiles/test_task_send_receive.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=58,59 "Built target test_task_send_receive"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=60,61 "Built target test_task_send_receive"
 .PHONY : tests/CMakeFiles/test_task_send_receive.dir/all
 
 # Build rule for subdir invocation for target.
@@ -573,7 +575,7 @@ tests/CMakeFiles/test_result_parsing.dir/all: src/tcp/CMakeFiles/linep_tcp.dir/a
 tests/CMakeFiles/test_result_parsing.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_result_parsing.dir\build.make tests/CMakeFiles/test_result_parsing.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_result_parsing.dir\build.make tests/CMakeFiles/test_result_parsing.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=26,27 "Built target test_result_parsing"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=28,29 "Built target test_result_parsing"
 .PHONY : tests/CMakeFiles/test_result_parsing.dir/all
 
 # Build rule for subdir invocation for target.
@@ -603,7 +605,7 @@ tests/CMakeFiles/test_error_frame_handling.dir/all: src/tcp/CMakeFiles/linep_tcp
 tests/CMakeFiles/test_error_frame_handling.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_error_frame_handling.dir\build.make tests/CMakeFiles/test_error_frame_handling.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_error_frame_handling.dir\build.make tests/CMakeFiles/test_error_frame_handling.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=16,17 "Built target test_error_frame_handling"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=18,19 "Built target test_error_frame_handling"
 .PHONY : tests/CMakeFiles/test_error_frame_handling.dir/all
 
 # Build rule for subdir invocation for target.
@@ -633,7 +635,7 @@ tests/CMakeFiles/test_crc_fail_reject.dir/all: src/tcp/CMakeFiles/linep_tcp.dir/
 tests/CMakeFiles/test_crc_fail_reject.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_crc_fail_reject.dir\build.make tests/CMakeFiles/test_crc_fail_reject.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_crc_fail_reject.dir\build.make tests/CMakeFiles/test_crc_fail_reject.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=14,15 "Built target test_crc_fail_reject"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=16,17 "Built target test_crc_fail_reject"
 .PHONY : tests/CMakeFiles/test_crc_fail_reject.dir/all
 
 # Build rule for subdir invocation for target.
@@ -663,7 +665,7 @@ tests/CMakeFiles/test_timeout_detection.dir/all: src/tcp/CMakeFiles/linep_tcp.di
 tests/CMakeFiles/test_timeout_detection.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_timeout_detection.dir\build.make tests/CMakeFiles/test_timeout_detection.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_timeout_detection.dir\build.make tests/CMakeFiles/test_timeout_detection.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=62,63 "Built target test_timeout_detection"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=64,65 "Built target test_timeout_detection"
 .PHONY : tests/CMakeFiles/test_timeout_detection.dir/all
 
 # Build rule for subdir invocation for target.
@@ -693,7 +695,7 @@ tests/CMakeFiles/test_slot_state_update_from_heartbeat.dir/all: src/tcp/CMakeFil
 tests/CMakeFiles/test_slot_state_update_from_heartbeat.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_slot_state_update_from_heartbeat.dir\build.make tests/CMakeFiles/test_slot_state_update_from_heartbeat.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_slot_state_update_from_heartbeat.dir\build.make tests/CMakeFiles/test_slot_state_update_from_heartbeat.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=56,57 "Built target test_slot_state_update_from_heartbeat"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=58,59 "Built target test_slot_state_update_from_heartbeat"
 .PHONY : tests/CMakeFiles/test_slot_state_update_from_heartbeat.dir/all
 
 # Build rule for subdir invocation for target.
@@ -723,7 +725,7 @@ tests/CMakeFiles/test_scheduler_selects_lowest_score.dir/all: src/tcp/CMakeFiles
 tests/CMakeFiles/test_scheduler_selects_lowest_score.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_selects_lowest_score.dir\build.make tests/CMakeFiles/test_scheduler_selects_lowest_score.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_selects_lowest_score.dir\build.make tests/CMakeFiles/test_scheduler_selects_lowest_score.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=52,53 "Built target test_scheduler_selects_lowest_score"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=54,55 "Built target test_scheduler_selects_lowest_score"
 .PHONY : tests/CMakeFiles/test_scheduler_selects_lowest_score.dir/all
 
 # Build rule for subdir invocation for target.
@@ -753,7 +755,7 @@ tests/CMakeFiles/test_scheduler_ignores_not_ready.dir/all: src/tcp/CMakeFiles/li
 tests/CMakeFiles/test_scheduler_ignores_not_ready.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_ignores_not_ready.dir\build.make tests/CMakeFiles/test_scheduler_ignores_not_ready.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_ignores_not_ready.dir\build.make tests/CMakeFiles/test_scheduler_ignores_not_ready.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=38,39 "Built target test_scheduler_ignores_not_ready"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=40,41 "Built target test_scheduler_ignores_not_ready"
 .PHONY : tests/CMakeFiles/test_scheduler_ignores_not_ready.dir/all
 
 # Build rule for subdir invocation for target.
@@ -783,7 +785,7 @@ tests/CMakeFiles/test_scheduler_ignores_error_slot.dir/all: src/tcp/CMakeFiles/l
 tests/CMakeFiles/test_scheduler_ignores_error_slot.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_ignores_error_slot.dir\build.make tests/CMakeFiles/test_scheduler_ignores_error_slot.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_ignores_error_slot.dir\build.make tests/CMakeFiles/test_scheduler_ignores_error_slot.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=36,37 "Built target test_scheduler_ignores_error_slot"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=38,39 "Built target test_scheduler_ignores_error_slot"
 .PHONY : tests/CMakeFiles/test_scheduler_ignores_error_slot.dir/all
 
 # Build rule for subdir invocation for target.
@@ -813,7 +815,7 @@ tests/CMakeFiles/test_scheduler_ignores_stale_slot.dir/all: src/tcp/CMakeFiles/l
 tests/CMakeFiles/test_scheduler_ignores_stale_slot.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_ignores_stale_slot.dir\build.make tests/CMakeFiles/test_scheduler_ignores_stale_slot.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_ignores_stale_slot.dir\build.make tests/CMakeFiles/test_scheduler_ignores_stale_slot.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=40,41 "Built target test_scheduler_ignores_stale_slot"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=42,43 "Built target test_scheduler_ignores_stale_slot"
 .PHONY : tests/CMakeFiles/test_scheduler_ignores_stale_slot.dir/all
 
 # Build rule for subdir invocation for target.
@@ -843,7 +845,7 @@ tests/CMakeFiles/test_scheduler_prefers_lower_queue.dir/all: src/tcp/CMakeFiles/
 tests/CMakeFiles/test_scheduler_prefers_lower_queue.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_prefers_lower_queue.dir\build.make tests/CMakeFiles/test_scheduler_prefers_lower_queue.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_prefers_lower_queue.dir\build.make tests/CMakeFiles/test_scheduler_prefers_lower_queue.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=42,43 "Built target test_scheduler_prefers_lower_queue"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=44,45 "Built target test_scheduler_prefers_lower_queue"
 .PHONY : tests/CMakeFiles/test_scheduler_prefers_lower_queue.dir/all
 
 # Build rule for subdir invocation for target.
@@ -873,7 +875,7 @@ tests/CMakeFiles/test_scheduler_applies_busy_penalty.dir/all: src/tcp/CMakeFiles
 tests/CMakeFiles/test_scheduler_applies_busy_penalty.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_applies_busy_penalty.dir\build.make tests/CMakeFiles/test_scheduler_applies_busy_penalty.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_applies_busy_penalty.dir\build.make tests/CMakeFiles/test_scheduler_applies_busy_penalty.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=28,29 "Built target test_scheduler_applies_busy_penalty"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=30,31 "Built target test_scheduler_applies_busy_penalty"
 .PHONY : tests/CMakeFiles/test_scheduler_applies_busy_penalty.dir/all
 
 # Build rule for subdir invocation for target.
@@ -903,7 +905,7 @@ tests/CMakeFiles/test_scheduler_applies_degraded_penalty.dir/all: src/tcp/CMakeF
 tests/CMakeFiles/test_scheduler_applies_degraded_penalty.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_applies_degraded_penalty.dir\build.make tests/CMakeFiles/test_scheduler_applies_degraded_penalty.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_applies_degraded_penalty.dir\build.make tests/CMakeFiles/test_scheduler_applies_degraded_penalty.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=30,31 "Built target test_scheduler_applies_degraded_penalty"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=32,33 "Built target test_scheduler_applies_degraded_penalty"
 .PHONY : tests/CMakeFiles/test_scheduler_applies_degraded_penalty.dir/all
 
 # Build rule for subdir invocation for target.
@@ -933,7 +935,7 @@ tests/CMakeFiles/test_scheduler_cooldown_after_timeout.dir/all: src/tcp/CMakeFil
 tests/CMakeFiles/test_scheduler_cooldown_after_timeout.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_cooldown_after_timeout.dir\build.make tests/CMakeFiles/test_scheduler_cooldown_after_timeout.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_cooldown_after_timeout.dir\build.make tests/CMakeFiles/test_scheduler_cooldown_after_timeout.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=34,35 "Built target test_scheduler_cooldown_after_timeout"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=36,37 "Built target test_scheduler_cooldown_after_timeout"
 .PHONY : tests/CMakeFiles/test_scheduler_cooldown_after_timeout.dir/all
 
 # Build rule for subdir invocation for target.
@@ -963,7 +965,7 @@ tests/CMakeFiles/test_scheduler_retries_on_second_worker.dir/all: src/tcp/CMakeF
 tests/CMakeFiles/test_scheduler_retries_on_second_worker.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_retries_on_second_worker.dir\build.make tests/CMakeFiles/test_scheduler_retries_on_second_worker.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_retries_on_second_worker.dir\build.make tests/CMakeFiles/test_scheduler_retries_on_second_worker.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=46,47 "Built target test_scheduler_retries_on_second_worker"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=48,49 "Built target test_scheduler_retries_on_second_worker"
 .PHONY : tests/CMakeFiles/test_scheduler_retries_on_second_worker.dir/all
 
 # Build rule for subdir invocation for target.
@@ -993,7 +995,7 @@ tests/CMakeFiles/test_scheduler_rejects_when_no_slot_available.dir/all: src/tcp/
 tests/CMakeFiles/test_scheduler_rejects_when_no_slot_available.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_rejects_when_no_slot_available.dir\build.make tests/CMakeFiles/test_scheduler_rejects_when_no_slot_available.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_rejects_when_no_slot_available.dir\build.make tests/CMakeFiles/test_scheduler_rejects_when_no_slot_available.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=44,45 "Built target test_scheduler_rejects_when_no_slot_available"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=46,47 "Built target test_scheduler_rejects_when_no_slot_available"
 .PHONY : tests/CMakeFiles/test_scheduler_rejects_when_no_slot_available.dir/all
 
 # Build rule for subdir invocation for target.
@@ -1023,7 +1025,7 @@ tests/CMakeFiles/test_scheduler_backpressure_queue_full.dir/all: src/tcp/CMakeFi
 tests/CMakeFiles/test_scheduler_backpressure_queue_full.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_backpressure_queue_full.dir\build.make tests/CMakeFiles/test_scheduler_backpressure_queue_full.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_backpressure_queue_full.dir\build.make tests/CMakeFiles/test_scheduler_backpressure_queue_full.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=32,33 "Built target test_scheduler_backpressure_queue_full"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=34,35 "Built target test_scheduler_backpressure_queue_full"
 .PHONY : tests/CMakeFiles/test_scheduler_backpressure_queue_full.dir/all
 
 # Build rule for subdir invocation for target.
@@ -1053,7 +1055,7 @@ tests/CMakeFiles/test_scheduler_selects_best_slots_with_diversity.dir/all: src/t
 tests/CMakeFiles/test_scheduler_selects_best_slots_with_diversity.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_selects_best_slots_with_diversity.dir\build.make tests/CMakeFiles/test_scheduler_selects_best_slots_with_diversity.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_selects_best_slots_with_diversity.dir\build.make tests/CMakeFiles/test_scheduler_selects_best_slots_with_diversity.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=50,51 "Built target test_scheduler_selects_best_slots_with_diversity"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=52,53 "Built target test_scheduler_selects_best_slots_with_diversity"
 .PHONY : tests/CMakeFiles/test_scheduler_selects_best_slots_with_diversity.dir/all
 
 # Build rule for subdir invocation for target.
@@ -1083,7 +1085,7 @@ tests/CMakeFiles/test_scheduler_selects_best_slots_fallback.dir/all: src/tcp/CMa
 tests/CMakeFiles/test_scheduler_selects_best_slots_fallback.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_selects_best_slots_fallback.dir\build.make tests/CMakeFiles/test_scheduler_selects_best_slots_fallback.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_selects_best_slots_fallback.dir\build.make tests/CMakeFiles/test_scheduler_selects_best_slots_fallback.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=48,49 "Built target test_scheduler_selects_best_slots_fallback"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=50,51 "Built target test_scheduler_selects_best_slots_fallback"
 .PHONY : tests/CMakeFiles/test_scheduler_selects_best_slots_fallback.dir/all
 
 # Build rule for subdir invocation for target.
@@ -1113,7 +1115,7 @@ tests/CMakeFiles/test_header_reject_bad_fields.dir/all: src/tcp/CMakeFiles/linep
 tests/CMakeFiles/test_header_reject_bad_fields.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_header_reject_bad_fields.dir\build.make tests/CMakeFiles/test_header_reject_bad_fields.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_header_reject_bad_fields.dir\build.make tests/CMakeFiles/test_header_reject_bad_fields.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=18,19 "Built target test_header_reject_bad_fields"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=20,21 "Built target test_header_reject_bad_fields"
 .PHONY : tests/CMakeFiles/test_header_reject_bad_fields.dir/all
 
 # Build rule for subdir invocation for target.
@@ -1143,7 +1145,7 @@ tests/CMakeFiles/test_scheduler_state_machine.dir/all: src/tcp/CMakeFiles/linep_
 tests/CMakeFiles/test_scheduler_state_machine.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_state_machine.dir\build.make tests/CMakeFiles/test_scheduler_state_machine.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_scheduler_state_machine.dir\build.make tests/CMakeFiles/test_scheduler_state_machine.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=54,55 "Built target test_scheduler_state_machine"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=56,57 "Built target test_scheduler_state_machine"
 .PHONY : tests/CMakeFiles/test_scheduler_state_machine.dir/all
 
 # Build rule for subdir invocation for target.
@@ -1173,7 +1175,7 @@ tests/CMakeFiles/test_udp_control_frames.dir/all: src/tcp/CMakeFiles/linep_tcp.d
 tests/CMakeFiles/test_udp_control_frames.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_udp_control_frames.dir\build.make tests/CMakeFiles/test_udp_control_frames.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_udp_control_frames.dir\build.make tests/CMakeFiles/test_udp_control_frames.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=64,65 "Built target test_udp_control_frames"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=66,67 "Built target test_udp_control_frames"
 .PHONY : tests/CMakeFiles/test_udp_control_frames.dir/all
 
 # Build rule for subdir invocation for target.
@@ -1203,7 +1205,7 @@ tests/CMakeFiles/test_task_streaming.dir/all: src/tcp/CMakeFiles/linep_tcp.dir/a
 tests/CMakeFiles/test_task_streaming.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_streaming.dir\build.make tests/CMakeFiles/test_task_streaming.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_streaming.dir\build.make tests/CMakeFiles/test_task_streaming.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=60,61 "Built target test_task_streaming"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=62,63 "Built target test_task_streaming"
 .PHONY : tests/CMakeFiles/test_task_streaming.dir/all
 
 # Build rule for subdir invocation for target.
@@ -1233,7 +1235,7 @@ tests/CMakeFiles/test_normalized_scoring.dir/all: src/tcp/CMakeFiles/linep_tcp.d
 tests/CMakeFiles/test_normalized_scoring.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_normalized_scoring.dir\build.make tests/CMakeFiles/test_normalized_scoring.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_normalized_scoring.dir\build.make tests/CMakeFiles/test_normalized_scoring.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=22,23 "Built target test_normalized_scoring"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=24,25 "Built target test_normalized_scoring"
 .PHONY : tests/CMakeFiles/test_normalized_scoring.dir/all
 
 # Build rule for subdir invocation for target.
@@ -1251,6 +1253,36 @@ test_normalized_scoring: tests/CMakeFiles/test_normalized_scoring.dir/rule
 tests/CMakeFiles/test_normalized_scoring.dir/clean:
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_normalized_scoring.dir\build.make tests/CMakeFiles/test_normalized_scoring.dir/clean
 .PHONY : tests/CMakeFiles/test_normalized_scoring.dir/clean
+
+#=============================================================================
+# Target rules for target tests/CMakeFiles/test_consensus_engine.dir
+
+# All Build rule for target.
+tests/CMakeFiles/test_consensus_engine.dir/all: src/pal/CMakeFiles/linep_pal.dir/all
+tests/CMakeFiles/test_consensus_engine.dir/all: src/core/CMakeFiles/linep_core.dir/all
+tests/CMakeFiles/test_consensus_engine.dir/all: src/udp/CMakeFiles/linep_udp.dir/all
+tests/CMakeFiles/test_consensus_engine.dir/all: src/tcp/CMakeFiles/linep_tcp.dir/all
+tests/CMakeFiles/test_consensus_engine.dir/all: src/scheduler/CMakeFiles/linep_scheduler.dir/all
+	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_consensus_engine.dir\build.make tests/CMakeFiles/test_consensus_engine.dir/depend
+	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_consensus_engine.dir\build.make tests/CMakeFiles/test_consensus_engine.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\ai\LiNeP\build\CMakeFiles --progress-num=12,13 "Built target test_consensus_engine"
+.PHONY : tests/CMakeFiles/test_consensus_engine.dir/all
+
+# Build rule for subdir invocation for target.
+tests/CMakeFiles/test_consensus_engine.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start C:\ai\LiNeP\build\CMakeFiles 11
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 tests/CMakeFiles/test_consensus_engine.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start C:\ai\LiNeP\build\CMakeFiles 0
+.PHONY : tests/CMakeFiles/test_consensus_engine.dir/rule
+
+# Convenience name for target.
+test_consensus_engine: tests/CMakeFiles/test_consensus_engine.dir/rule
+.PHONY : test_consensus_engine
+
+# clean rule for target.
+tests/CMakeFiles/test_consensus_engine.dir/clean:
+	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_consensus_engine.dir\build.make tests/CMakeFiles/test_consensus_engine.dir/clean
+.PHONY : tests/CMakeFiles/test_consensus_engine.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.

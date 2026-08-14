@@ -53,3 +53,4 @@ linep_add_test(test_scheduler_state_machine               test_scheduler_state_m
 linep_add_test(test_udp_control_frames                    test_udp_control_frames.cpp)
 linep_add_test(test_task_streaming                        test_task_streaming.cpp)
 linep_add_test(test_normalized_scoring                    test_normalized_scoring.cpp)
+linep_add_test(test_consensus_engine                      test_consensus_engine.cpp)

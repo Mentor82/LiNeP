@@ -92,4 +92,5 @@ set(CMAKE_DEPEND_INFO_FILES
   "tests/CMakeFiles/test_udp_control_frames.dir/DependInfo.cmake"
   "tests/CMakeFiles/test_task_streaming.dir/DependInfo.cmake"
   "tests/CMakeFiles/test_normalized_scoring.dir/DependInfo.cmake"
+  "tests/CMakeFiles/test_consensus_engine.dir/DependInfo.cmake"
   )

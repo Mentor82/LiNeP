@@ -53,6 +53,7 @@ C:/ai/LiNeP/build/tests/CMakeFiles/test_scheduler_state_machine.dir
 C:/ai/LiNeP/build/tests/CMakeFiles/test_udp_control_frames.dir
 C:/ai/LiNeP/build/tests/CMakeFiles/test_task_streaming.dir
 C:/ai/LiNeP/build/tests/CMakeFiles/test_normalized_scoring.dir
+C:/ai/LiNeP/build/tests/CMakeFiles/test_consensus_engine.dir
 C:/ai/LiNeP/build/tests/CMakeFiles/test.dir
 C:/ai/LiNeP/build/tests/CMakeFiles/edit_cache.dir
 C:/ai/LiNeP/build/tests/CMakeFiles/rebuild_cache.dir

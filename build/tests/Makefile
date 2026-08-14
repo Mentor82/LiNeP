@@ -503,6 +503,44 @@ test_normalized_scoring/fast:
 	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_normalized_scoring.dir\build.make tests/CMakeFiles/test_normalized_scoring.dir/build
 .PHONY : test_normalized_scoring/fast
 
+# Convenience name for target.
+tests/CMakeFiles/test_consensus_engine.dir/rule:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 tests/CMakeFiles/test_consensus_engine.dir/rule
+.PHONY : tests/CMakeFiles/test_consensus_engine.dir/rule
+
+# Convenience name for target.
+test_consensus_engine: tests/CMakeFiles/test_consensus_engine.dir/rule
+.PHONY : test_consensus_engine
+
+# fast build rule for target.
+test_consensus_engine/fast:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_consensus_engine.dir\build.make tests/CMakeFiles/test_consensus_engine.dir/build
+.PHONY : test_consensus_engine/fast
+
+test_consensus_engine.obj: test_consensus_engine.cpp.obj
+.PHONY : test_consensus_engine.obj
+
+# target to build an object file
+test_consensus_engine.cpp.obj:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_consensus_engine.dir\build.make tests/CMakeFiles/test_consensus_engine.dir/test_consensus_engine.cpp.obj
+.PHONY : test_consensus_engine.cpp.obj
+
+test_consensus_engine.i: test_consensus_engine.cpp.i
+.PHONY : test_consensus_engine.i
+
+# target to preprocess a source file
+test_consensus_engine.cpp.i:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_consensus_engine.dir\build.make tests/CMakeFiles/test_consensus_engine.dir/test_consensus_engine.cpp.i
+.PHONY : test_consensus_engine.cpp.i
+
+test_consensus_engine.s: test_consensus_engine.cpp.s
+.PHONY : test_consensus_engine.s
+
+# target to generate assembly for a file
+test_consensus_engine.cpp.s:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_consensus_engine.dir\build.make tests/CMakeFiles/test_consensus_engine.dir/test_consensus_engine.cpp.s
+.PHONY : test_consensus_engine.cpp.s
+
 test_crc.obj: test_crc.cpp.obj
 .PHONY : test_crc.obj
 
@@ -1160,6 +1198,7 @@ help:
 	@echo ... edit_cache
 	@echo ... rebuild_cache
 	@echo ... test
+	@echo ... test_consensus_engine
 	@echo ... test_crc
 	@echo ... test_crc_fail_reject
 	@echo ... test_error_frame_handling
@@ -1187,6 +1226,9 @@ help:
 	@echo ... test_task_streaming
 	@echo ... test_timeout_detection
 	@echo ... test_udp_control_frames
+	@echo ... test_consensus_engine.obj
+	@echo ... test_consensus_engine.i
+	@echo ... test_consensus_engine.s
 	@echo ... test_crc.obj
 	@echo ... test_crc.i
 	@echo ... test_crc.s

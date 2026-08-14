@@ -20,7 +20,7 @@ Use this checklist to track Phase 1, Phase 2, and Phase 3 rollout end-to-end.
 
 ## Phase 3: Consensus Engine
 
-- [ ] Implement Post-Completion Consensus evaluator for free-form responses
-- [ ] Implement Bounded Streaming Consensus at semantic checkpoints
-- [ ] Implement model-calibrated Cosine Similarity threshold evaluator (Vector-Space Contract #5)
-- [ ] Add unit tests for multi-worker Schwarm-Konsens voting
+- [x] Implement Post-Completion Consensus evaluator for free-form responses
+- [x] Implement Bounded Streaming Consensus at semantic checkpoints
+- [x] Implement model-calibrated Cosine Similarity threshold evaluator (Vector-Space Contract #5)
+- [x] Add unit tests for multi-worker Schwarm-Konsens voting (28/28 C++ tests passed)

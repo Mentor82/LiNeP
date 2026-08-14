@@ -58,3 +58,5 @@ add_test([=[test_task_streaming]=] "C:/ai/LiNeP/build/tests/test_task_streaming.
 set_tests_properties([=[test_task_streaming]=] PROPERTIES  _BACKTRACE_TRIPLES "C:/ai/LiNeP/tests/CMakeLists.txt;24;add_test;C:/ai/LiNeP/tests/CMakeLists.txt;54;linep_add_test;C:/ai/LiNeP/tests/CMakeLists.txt;0;")
 add_test([=[test_normalized_scoring]=] "C:/ai/LiNeP/build/tests/test_normalized_scoring.exe")
 set_tests_properties([=[test_normalized_scoring]=] PROPERTIES  _BACKTRACE_TRIPLES "C:/ai/LiNeP/tests/CMakeLists.txt;24;add_test;C:/ai/LiNeP/tests/CMakeLists.txt;55;linep_add_test;C:/ai/LiNeP/tests/CMakeLists.txt;0;")
+add_test([=[test_consensus_engine]=] "C:/ai/LiNeP/build/tests/test_consensus_engine.exe")
+set_tests_properties([=[test_consensus_engine]=] PROPERTIES  _BACKTRACE_TRIPLES "C:/ai/LiNeP/tests/CMakeLists.txt;24;add_test;C:/ai/LiNeP/tests/CMakeLists.txt;56;linep_add_test;C:/ai/LiNeP/tests/CMakeLists.txt;0;")
