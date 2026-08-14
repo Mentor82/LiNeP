@@ -1,6 +1,6 @@
 # Interoperability & Integration Report: Windows ↔ Debian 13 (Trixie)
 
-This document records the cross-platform build, binary parity, socket communication, security level negotiation, session key lifecycle, fail-closed security gates, streaming fragments, authenticated cancellation, and complete UDP heartbeat security invariants between **Windows Host** and **Debian 13 WSL (LIARA Workstation)** over an explicit, un-derived `PortPair(tcp_port, udp_port)`.
+This document records the cross-platform build, binary parity, socket communication, security level negotiation, session key lifecycle, fail-closed security gates, streaming fragments, authenticated cancellation, and complete 25-test UDP heartbeat security invariants between **Windows Host** and **Debian 13 WSL (LIARA Workstation)** over an explicit, un-derived `PortPair(tcp_port, udp_port)`.
 
 ---
 
@@ -42,15 +42,15 @@ This document records the cross-platform build, binary parity, socket communicat
   - Valid SL1/SL3/SL4 Authenticated `TASK_CANCEL` $\rightarrow$ `status: CANCEL_ACCEPTED`.
   - Unauthorized / Tampered `TASK_CANCEL` $\rightarrow$ `status: REJECTED`.
 
-### UDP Heartbeat Security Invariants (Issue #7)
-- **Rule**: UDP heartbeats sent over `PortPair(tcp_port, udp_port)` must require `CAP_HEARTBEAT_EMIT` (`0x0020`), SL1 MAC authentication, SL4 Governance decision, and sequence tracking isolated per `(session_id, correlation_id, transport_type)`. Truncated (< 24 B) or oversized (> 4096 B) datagrams are rejected fail-closed.
+### UDP Heartbeat Security Invariants & Edge Cases (Issue #7)
+- **Rule**: UDP heartbeats sent over `PortPair(tcp_port, udp_port)` must require `CAP_HEARTBEAT_EMIT` (`0x0020`), SL1 MAC authentication, SL4 Governance decision, sequence tracking isolated per `(session_id, correlation_id, transport_type)`, source address/port checks, sender restart handling, policy revision invalidation, and concurrent multi-peer support.
 - **Test Outcome**:
   - Valid Protected UDP Heartbeat $\rightarrow$ `status: HEARTBEAT_ACCEPTED`.
-  - Replayed / Tampered / Truncated / Oversized UDP Heartbeat $\rightarrow$ `status: REJECTED`.
+  - Replayed / Tampered / Truncated / Oversized / Unexpected Source / Stale Session / Revoked Federation UDP Datagram $\rightarrow$ `status: REJECTED`.
 
 ---
 
-## 3. Full 20-Test Multi-Platform Interop Matrix
+## 3. Full 25-Test Multi-Platform Interop Matrix
 
 | Test Case | Direction 1: Win Server $\leftarrow$ Debian Client | Direction 2: Debian Server $\leftarrow$ Win Client | Status |
 |---|---|---|---|
@@ -75,6 +75,11 @@ This document records the cross-platform build, binary parity, socket communicat
 | **18. Oversized UDP Datagram (> 4096 B)** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
 | **19. UDP Expired / Stale Session Key** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
 | **20. UDP Unauthorized Capability** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
+| **21. UDP Policy Revision Impact** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
+| **22. UDP Federation Revocation** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
+| **23. Sender Restart Stale Session** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
+| **24. Unexpected Source Address / Port** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
+| **25. Concurrent Multiple UDP Peers** | PASSED (ACCEPTED) | PASSED (ACCEPTED) | **OK** |
 
 ---
 

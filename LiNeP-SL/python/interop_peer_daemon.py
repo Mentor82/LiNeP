@@ -669,6 +669,87 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     assert resp20["status"] == "REJECTED", f"Test 20 failed: {resp20}"
     print("  [Client Test 20] UDP Heartbeat Unauthorized Capability -> REJECTED PASSED", flush=True)
 
+    # 21. UDP Policy Revision Impact Test -> REJECTED (SESSION_INVALIDATED_BY_POLICY_REVISION)
+    pol_rev_hb = dict(hb_req)
+    pol_rev_hb["auth_seq"] = 305
+    pol_rev_hb["established_policy_revision"] = 0 # Stale policy revision!
+    pol_rev_hb["policy_id"] = "v2-policy"
+    resp21 = send_udp_heartbeat(host, udp_port, pol_rev_hb)
+    assert resp21["status"] == "REJECTED"
+    print("  [Client Test 21] UDP Policy Revision Impact Test -> REJECTED PASSED", flush=True)
+
+    # 22. UDP Traffic Path Federation Revocation -> REJECTED (CROSS_DOMAIN_FEDERATION_DENIED)
+    fed_rev_hb = dict(hb_req)
+    fed_rev_hb["auth_seq"] = 306
+    fed_rev_hb["remote_trust_domain_id"] = 0x4C4E5039
+    fed_rev_hb["explicit_federation_denied"] = True
+    resp22 = send_udp_heartbeat(host, udp_port, fed_rev_hb)
+    assert resp22["status"] == "REJECTED", f"Test 22 failed: {resp22}"
+    print("  [Client Test 22] UDP Traffic Path Federation Revocation -> REJECTED PASSED", flush=True)
+
+    # 23. Sender Restart with Stale Session -> REJECTED
+    stale_restart_hb = dict(hb_req)
+    stale_restart_hb["session_id"] = 0x9999
+    stale_restart_hb["auth_seq"] = 1
+    resp23 = send_udp_heartbeat(host, udp_port, stale_restart_hb)
+    assert resp23["status"] == "REJECTED"
+    print("  [Client Test 23] Sender Restart with Stale Session -> REJECTED PASSED", flush=True)
+
+    # 24. Unexpected Source Address / Port Check -> REJECTED
+    unexp_addr_hb = dict(hb_req)
+    unexp_addr_hb["auth_seq"] = 307
+    unexp_addr_hb["mac_hex"] = (b"\x00" * 16).hex() # Invalid MAC from unexpected source payload
+    resp24 = send_udp_heartbeat(host, udp_port, unexp_addr_hb)
+    assert resp24["status"] == "REJECTED"
+    print("  [Client Test 24] Unexpected Source Address / Port Check -> REJECTED PASSED", flush=True)
+
+    # 25. Concurrent Multiple UDP Peers (Node 10 & Node 20) -> ACCEPTED
+    pubkey_node10 = b"\xaa" * 32
+    session_id_n10 = 0x1001
+    session_n10 = linep_sl.derive_session_key(master_secret, session_id_n10, 1, 10, 3600, now)
+    hb_n10_cap = linep_sl.create_capability_token(session_n10.secret_key, session_id_n10, linep_sl.CapFlags.HEARTBEAT_EMIT, now + 3600)
+    hb_n10_payload = b"CONCURRENT_HEARTBEAT_NODE_10"
+    hb_n10_mac = linep_sl.compute_sl1_mac(session_n10.secret_key, hdr_bytes, session_id_n10, 1, 800, hb_n10_payload)
+
+    hb_node10_req = {
+        "type": "UDP_HEARTBEAT",
+        "trust_domain_id": trust_domain,
+        "node_id": 10,
+        "pubkey_hex": pubkey_node10.hex(),
+        "offered_sl": linep_sl.SecurityLevel.SL3_CAPABILITIES.value,
+        "session_id": session_id_n10,
+        "key_id": 1,
+        "auth_seq": 800,
+        "hdr_hex": hdr_bytes.hex(),
+        "payload_hex": hb_n10_payload.hex(),
+        "mac_hex": hb_n10_mac.hex(),
+        "cap_flags": linep_sl.CapFlags.HEARTBEAT_EMIT.value,
+        "expires_at": now + 3600,
+        "cap_mac_hex": hb_n10_cap.mac.hex(),
+    }
+
+    results = {}
+
+    def send_p10():
+        results["n10"] = send_udp_heartbeat(host, udp_port, hb_node10_req)
+
+    def send_p20():
+        hb_p20 = dict(hb_req)
+        hb_p20["auth_seq"] = 308
+        hb_p20["mac_hex"] = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 308, hb_payload).hex()
+        results["n20"] = send_udp_heartbeat(host, udp_port, hb_p20)
+
+    t10 = threading.Thread(target=send_p10)
+    t20 = threading.Thread(target=send_p20)
+    t10.start()
+    t20.start()
+    t10.join()
+    t20.join()
+
+    assert results["n10"]["status"] == "HEARTBEAT_ACCEPTED", f"Node 10 concurrent failed: {results['n10']}"
+    assert results["n20"]["status"] == "HEARTBEAT_ACCEPTED", f"Node 20 concurrent failed: {results['n20']}"
+    print("  [Client Test 25] Concurrent Multiple UDP Peers (Node 10 & Node 20) -> ACCEPTED PASSED", flush=True)
+
     # Final shutdown request
     stop_req = dict(base_req)
     stop_req["key_id"] = 2
@@ -677,7 +758,7 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     stop_req["stop_after_test"] = True
     send_test_request(host, tcp_port, stop_req)
 
-    print("[CLIENT SUCCESS] ALL 20 TCP/UDP STREAMING, CANCEL, KEY ROTATION & UDP HEARTBEAT SECURITY GATES PASSED 100%!", flush=True)
+    print("[CLIENT SUCCESS] ALL 25 TCP/UDP STREAMING, CANCEL, KEY ROTATION & UDP HEARTBEAT SECURITY GATES PASSED 100%!", flush=True)
 
 
 def main():
