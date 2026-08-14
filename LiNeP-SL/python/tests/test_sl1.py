@@ -18,8 +18,8 @@ def test_sl1_mac_python():
     _ensure_linep_sl_lib_path()
     import linep_sl
 
-    secret = b"SL1_SECRET_KEY_12345"
-    hdr = b"LN\x01\x10\x38\x00\x08\x00\x08\x00\x00\x00\x64\x00\x00\x00\x2a\x00\x00\x00\x01\x00\x00\x00"
+    secret = b"SECRET_KEY_12345"
+    hdr = b"LN\x01\x10\x38\x00\x08\x00\x08\x00\x00\x00\x64\x00\x00\x00\x2a\x00\x00\x00\x01\x00\x00\xab"
     session_id = 0x12345678
     key_id = 1
     auth_seq = 100

@@ -20,24 +20,24 @@ typedef struct {
     uint8_t  cap_mac[16];
 } linep_sl_cap_ext_t;
 
-int linep_sl_compute_mac(
+int linep_sl1_compute_mac(
     const uint8_t* secret_key, uint32_t key_len,
     const void* header_ptr, uint32_t session_id,
     uint16_t key_id, uint32_t auth_seq,
     const uint8_t* payload, uint32_t payload_len,
     uint8_t out_mac[16]);
 
-int linep_sl_verify_mac(
+int linep_sl1_verify_mac(
     const uint8_t* secret_key, uint32_t key_len,
     const void* header_ptr, const linep_sl_auth_ext_t* auth_ext,
     const uint8_t* payload, uint32_t payload_len);
 
-int linep_sl_create_cap_token(
+int linep_sl3_create_cap_token(
     const uint8_t* secret_key, uint32_t key_len,
     uint32_t session_id, uint64_t granted_caps,
     uint64_t expires_at_sec, linep_sl_cap_ext_t* out_token);
 
-int linep_sl_verify_cap_token(
+int linep_sl3_verify_cap_token(
     const uint8_t* secret_key, uint32_t key_len,
     const linep_sl_cap_ext_t* cap_token,
     uint32_t expected_session_id,
@@ -84,7 +84,6 @@ for path in _candidate_libraries():
                 os.add_dll_directory(parent_dir)
             except Exception:
                 pass
-            # Also add Strawberry GCC bin directory if present on PATH
             gcc_dir = r"C:\Strawberry\c\bin"
             if os.path.exists(gcc_dir):
                 try:

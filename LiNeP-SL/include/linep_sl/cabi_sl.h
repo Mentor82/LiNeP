@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-/* Capability bitmasks */
+/* Capability bitmasks (SL3) */
 #define LINEP_CAP_NONE            0x00ULL
 #define LINEP_CAP_INFERENCE_READ  0x01ULL
 #define LINEP_CAP_INFERENCE_WRITE 0x02ULL
@@ -44,29 +44,37 @@ typedef struct {
 
 #pragma pack(pop)
 
-LINEP_SL_API int linep_sl_compute_mac(
+/* SL1 Authentication Functions */
+LINEP_SL_API int linep_sl1_compute_mac(
     const uint8_t* secret_key, uint32_t key_len,
     const void* header_ptr, uint32_t session_id,
     uint16_t key_id, uint32_t auth_seq,
     const uint8_t* payload, uint32_t payload_len,
     uint8_t out_mac[16]);
 
-LINEP_SL_API int linep_sl_verify_mac(
+LINEP_SL_API int linep_sl1_verify_mac(
     const uint8_t* secret_key, uint32_t key_len,
     const void* header_ptr, const linep_sl_auth_ext_t* auth_ext,
     const uint8_t* payload, uint32_t payload_len);
 
-LINEP_SL_API int linep_sl_create_cap_token(
+/* SL3 Authorization & Capability Functions */
+LINEP_SL_API int linep_sl3_create_cap_token(
     const uint8_t* secret_key, uint32_t key_len,
     uint32_t session_id, uint64_t granted_caps,
     uint64_t expires_at_sec, linep_sl_cap_ext_t* out_token);
 
-LINEP_SL_API int linep_sl_verify_cap_token(
+LINEP_SL_API int linep_sl3_verify_cap_token(
     const uint8_t* secret_key, uint32_t key_len,
     const linep_sl_cap_ext_t* cap_token,
     uint32_t expected_session_id,
     uint64_t current_time_sec,
     uint64_t required_capability);
+
+/* Backward compatibility aliases */
+#define linep_sl_compute_mac      linep_sl1_compute_mac
+#define linep_sl_verify_mac       linep_sl1_verify_mac
+#define linep_sl_create_cap_token linep_sl3_create_cap_token
+#define linep_sl_verify_cap_token linep_sl3_verify_cap_token
 
 #ifdef __cplusplus
 }

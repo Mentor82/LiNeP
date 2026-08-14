@@ -14,11 +14,11 @@ def _ensure_linep_sl_lib_path() -> None:
         os.environ["LINEP_SL_LIB_PATH"] = str(candidate)
 
 
-def test_sl2_capability_token_python():
+def test_sl3_capability_token_python():
     _ensure_linep_sl_lib_path()
     import linep_sl
 
-    secret = b"SL2_SECRET_KEY_99999"
+    secret = b"SL3_SECRET_KEY_99999"
     session_id = 0xCAFE0001
     granted_caps = linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.METRICS_READ
     expires_at = 2000000000

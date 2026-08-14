@@ -29,7 +29,7 @@ def create_capability_token(
     c_secret = ffi.from_buffer(bytes(secret_key))
     token_struct = ffi.new("linep_sl_cap_ext_t *")
 
-    rc = lib.linep_sl_create_cap_token(
+    rc = lib.linep_sl3_create_cap_token(
         c_secret,
         len(secret_key),
         session_id,
@@ -38,7 +38,7 @@ def create_capability_token(
         token_struct,
     )
     if rc != 1:
-        raise RuntimeError("linep_sl_create_cap_token failed")
+        raise RuntimeError("linep_sl3_create_cap_token failed")
 
     mac = bytes(ffi.buffer(token_struct.cap_mac, 16))
     return CapabilityToken(
@@ -63,7 +63,7 @@ def verify_capability_token(
     token_struct.expires_at_sec = token.expires_at_sec
     ffi.memmove(token_struct.cap_mac, token.mac, 16)
 
-    rc = lib.linep_sl_verify_cap_token(
+    rc = lib.linep_sl3_verify_cap_token(
         c_secret,
         len(secret_key),
         token_struct,

@@ -9,7 +9,7 @@
 int main() {
     std::cout << "[test_sl1_auth] Starting LiNeP-SL SL1 unit tests..." << std::endl;
 
-    const uint8_t secret[16] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10};
+    const uint8_t secret[16] = {'S', 'E', 'C', 'R', 'E', 'T', '_', 'K', 'E', 'Y', '_', '1', '2', '3', '4', '5'};
     linep::Header hdr{};
     hdr.magic = linep::MAGIC;
     hdr.version = linep::VERSION;
@@ -21,6 +21,7 @@ int main() {
     hdr.correlation_id = 42;
     hdr.worker_id = 1;
     hdr.slot_id = 0;
+    hdr.header_crc = 0xAB;
 
     const uint8_t payload[8] = {'T', 'E', 'S', 'T', 'D', 'A', 'T', 'A'};
     uint8_t mac1[16];

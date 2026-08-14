@@ -7,21 +7,22 @@
 
 namespace linep::sl {
 
-void compute_cap_token_mac(
-    const uint8_t* secret_key,
-    size_t         key_len,
-    uint32_t       session_id,
-    uint64_t       granted_caps,
-    uint64_t       expires_at_sec,
-    uint8_t        out_mac[16]) noexcept;
+// SL2: Cryptographic Identity & Key Management
+struct PeerIdentity {
+    uint32_t trust_domain_id;
+    uint16_t node_id;
+    uint8_t  pubkey[32];
+};
 
-bool verify_cap_token(
-    const uint8_t*          secret_key,
-    size_t                  key_len,
-    const linep::sl::HeaderCapExt& cap_ext,
-    uint32_t                expected_session_id,
-    uint64_t                current_time_sec,
-    CapFlags                required_capability) noexcept;
+struct SessionKey {
+    uint32_t session_id;
+    uint16_t key_id;
+    uint64_t established_at_sec;
+    uint64_t expires_at_sec;
+    uint8_t  secret_key[32];
+};
+
+bool validate_peer_identity(const PeerIdentity& peer) noexcept;
 
 } // namespace linep::sl
 

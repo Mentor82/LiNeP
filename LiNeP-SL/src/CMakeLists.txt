@@ -2,6 +2,7 @@ add_library(linep_sl_core STATIC
     sha256.cpp
     sl1.cpp
     sl2.cpp
+    sl3.cpp
 )
 target_include_directories(linep_sl_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>

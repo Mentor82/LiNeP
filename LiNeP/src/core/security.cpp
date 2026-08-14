@@ -15,6 +15,22 @@ bool constant_time_memcmp16(const uint8_t* a, const uint8_t* b) noexcept {
     return (result == 0);
 }
 
+namespace {
+
+inline void write_u16_le(uint8_t* dst, uint16_t val) noexcept {
+    dst[0] = static_cast<uint8_t>(val & 0xFF);
+    dst[1] = static_cast<uint8_t>((val >> 8) & 0xFF);
+}
+
+inline void write_u32_le(uint8_t* dst, uint32_t val) noexcept {
+    dst[0] = static_cast<uint8_t>(val & 0xFF);
+    dst[1] = static_cast<uint8_t>((val >> 8) & 0xFF);
+    dst[2] = static_cast<uint8_t>((val >> 16) & 0xFF);
+    dst[3] = static_cast<uint8_t>((val >> 24) & 0xFF);
+}
+
+} // namespace
+
 void compute_sl1_mac(
     const uint8_t*       secret_key,
     size_t               key_len,
@@ -31,25 +47,31 @@ void compute_sl1_mac(
         return;
     }
 
-    // Buffer layout to sign:
-    // [24 bytes Header] [4 bytes session_id] [2 bytes key_id] [4 bytes auth_seq] [payload...]
-    const size_t prefix_len = sizeof(linep::Header) + sizeof(session_id) + sizeof(key_id) + sizeof(auth_seq);
+    // Canonical 34-byte header+ext prefix + payload
+    const size_t prefix_len = 34;
     std::vector<uint8_t> buf(prefix_len + payload_len);
 
-    std::memcpy(buf.data(), &header, sizeof(linep::Header));
-    size_t off = sizeof(linep::Header);
+    // 1. Header (24 bytes Little-Endian)
+    write_u16_le(buf.data() + 0, header.magic);
+    buf[2] = header.version;
+    buf[3] = header.msg_type;
+    write_u16_le(buf.data() + 4, header.header_len);
+    write_u16_le(buf.data() + 6, header.flags);
+    write_u32_le(buf.data() + 8, header.payload_len);
+    write_u32_le(buf.data() + 12, header.sequence);
+    write_u32_le(buf.data() + 16, header.correlation_id);
+    write_u16_le(buf.data() + 20, header.worker_id);
+    buf[22] = header.slot_id;
+    buf[23] = header.header_crc;
 
-    std::memcpy(buf.data() + off, &session_id, sizeof(session_id));
-    off += sizeof(session_id);
+    // 2. Auth Extension fields (10 bytes Little-Endian)
+    write_u32_le(buf.data() + 24, session_id);
+    write_u16_le(buf.data() + 28, key_id);
+    write_u32_le(buf.data() + 30, auth_seq);
 
-    std::memcpy(buf.data() + off, &key_id, sizeof(key_id));
-    off += sizeof(key_id);
-
-    std::memcpy(buf.data() + off, &auth_seq, sizeof(auth_seq));
-    off += sizeof(auth_seq);
-
+    // 3. Payload
     if (payload && payload_len > 0) {
-        std::memcpy(buf.data() + off, payload, payload_len);
+        std::memcpy(buf.data() + prefix_len, payload, payload_len);
     }
 
     uint8_t full_mac[32];

@@ -1,11 +1,12 @@
 #include <linep_sl/cabi_sl.h>
 #include <linep_sl/sl1.hpp>
 #include <linep_sl/sl2.hpp>
+#include <linep_sl/sl3.hpp>
 #include <cstring>
 
 extern "C" {
 
-LINEP_SL_API int linep_sl_compute_mac(
+LINEP_SL_API int linep_sl1_compute_mac(
     const uint8_t* secret_key, uint32_t key_len,
     const void* header_ptr, uint32_t session_id,
     uint16_t key_id, uint32_t auth_seq,
@@ -18,7 +19,7 @@ LINEP_SL_API int linep_sl_compute_mac(
     return 1;
 }
 
-LINEP_SL_API int linep_sl_verify_mac(
+LINEP_SL_API int linep_sl1_verify_mac(
     const uint8_t* secret_key, uint32_t key_len,
     const void* header_ptr, const linep_sl_auth_ext_t* auth_ext,
     const uint8_t* payload, uint32_t payload_len)
@@ -29,7 +30,7 @@ LINEP_SL_API int linep_sl_verify_mac(
     return linep::sl::verify_sl1_mac(secret_key, key_len, *hdr, *ext, payload, payload_len) ? 1 : 0;
 }
 
-LINEP_SL_API int linep_sl_create_cap_token(
+LINEP_SL_API int linep_sl3_create_cap_token(
     const uint8_t* secret_key, uint32_t key_len,
     uint32_t session_id, uint64_t granted_caps,
     uint64_t expires_at_sec, linep_sl_cap_ext_t* out_token)
@@ -42,7 +43,7 @@ LINEP_SL_API int linep_sl_create_cap_token(
     return 1;
 }
 
-LINEP_SL_API int linep_sl_verify_cap_token(
+LINEP_SL_API int linep_sl3_verify_cap_token(
     const uint8_t* secret_key, uint32_t key_len,
     const linep_sl_cap_ext_t* cap_token,
     uint32_t expected_session_id,
