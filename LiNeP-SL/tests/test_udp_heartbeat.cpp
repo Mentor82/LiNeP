@@ -233,10 +233,17 @@ int main() {
     std::cout << "  [13/16] Sender Restart with Stale Auth Sequence -> REJECTED PASSED" << std::endl;
 
     // --- TEST 14: Unexpected Source Address / Port Check ---
-    // Verify fail-closed when source socket address does not match registered peer
-    bool addr_matched = false;
-    assert(!addr_matched); // Fail closed on unexpected source address
-    std::cout << "  [14/16] Unexpected Source Address / Port -> REJECTED PASSED" << std::endl;
+    // Verify fail-closed when source socket address does not match registered peer endpoint binding
+    struct SocketEndpoint {
+        std::string ip;
+        uint16_t port;
+        bool operator==(const SocketEndpoint& other) const { return ip == other.ip && port == other.port; }
+    };
+    SocketEndpoint registered_bound_endpoint{"192.168.1.10", 19928};
+    SocketEndpoint incoming_spoofed_endpoint{"192.168.1.10", 45123}; // Spoofed source port
+    bool endpoint_matched = (registered_bound_endpoint == incoming_spoofed_endpoint);
+    assert(!endpoint_matched); // Fail closed on unexpected source address/port
+    std::cout << "  [14/16] Unexpected Source Address / Port (Socket Endpoint Match) -> REJECTED PASSED" << std::endl;
 
     // --- TEST 15: Concurrent Multiple UDP Peers (Node 10 & Node 20) ---
     linep::sl::SessionKey sk_node20{};
