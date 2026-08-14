@@ -122,6 +122,133 @@ LINEP_SL_API int linep_sl3_verify_cap_token(
         static_cast<linep::sl::CapFlags>(required_capability)) ? 1 : 0;
 }
 
+struct linep_sl4_engine {
+    std::shared_ptr<linep::sl::MemoryGovernancePolicyProvider> pol_provider;
+    std::shared_ptr<linep::sl::MemoryIdentityProvider>          id_provider;
+    std::shared_ptr<linep::sl::MemoryFederationTrustProvider>  fed_provider;
+    std::shared_ptr<linep::sl::MemoryAuditSink>                 audit_sink;
+    std::unique_ptr<linep::sl::SecurityDecisionEngine>          engine;
+};
+
+LINEP_SL_API linep_sl4_engine_t* linep_sl4_engine_create(uint32_t local_trust_domain_id) {
+    auto e = new linep_sl4_engine();
+    e->pol_provider = std::make_shared<linep::sl::MemoryGovernancePolicyProvider>();
+    e->id_provider = std::make_shared<linep::sl::MemoryIdentityProvider>(local_trust_domain_id);
+    e->fed_provider = std::make_shared<linep::sl::MemoryFederationTrustProvider>();
+    e->audit_sink = std::make_shared<linep::sl::MemoryAuditSink>();
+    e->engine = std::make_unique<linep::sl::SecurityDecisionEngine>(
+        e->pol_provider, e->id_provider, e->fed_provider, e->audit_sink);
+    return reinterpret_cast<linep_sl4_engine_t*>(e);
+}
+
+LINEP_SL_API void linep_sl4_engine_free(linep_sl4_engine_t* engine) {
+    if (engine) {
+        delete reinterpret_cast<linep_sl4_engine*>(engine);
+    }
+}
+
+LINEP_SL_API int linep_sl4_engine_register_peer(
+    linep_sl4_engine_t* engine, uint16_t node_id, const uint8_t* pubkey_32bytes)
+{
+    if (!engine || !pubkey_32bytes) return 0;
+    auto* impl = reinterpret_cast<linep_sl4_engine*>(engine);
+    impl->id_provider->register_peer(node_id, pubkey_32bytes);
+    return 1;
+}
+
+LINEP_SL_API int linep_sl4_engine_set_policy(
+    linep_sl4_engine_t* engine, const char* policy_id, uint32_t revision, uint64_t allowed_caps, uint8_t allow_cross_domain)
+{
+    if (!engine || !policy_id) return 0;
+    auto* impl = reinterpret_cast<linep_sl4_engine*>(engine);
+    linep::sl::GovernancePolicy pol;
+    pol.policy_id = policy_id;
+    pol.policy_revision = revision;
+    pol.allowed_capabilities = allowed_caps;
+    pol.allow_cross_domain = (allow_cross_domain != 0);
+    impl->engine->register_policy(pol);
+    return 1;
+}
+
+LINEP_SL_API int linep_sl4_engine_add_federation(
+    linep_sl4_engine_t* engine, uint32_t local_domain, uint32_t remote_domain, uint64_t max_caps, uint32_t revision)
+{
+    if (!engine) return 0;
+    auto* impl = reinterpret_cast<linep_sl4_engine*>(engine);
+    impl->fed_provider->add_federation(local_domain, remote_domain, max_caps, revision);
+    return 1;
+}
+
+LINEP_SL_API int linep_sl4_engine_revoke_federation(
+    linep_sl4_engine_t* engine, uint32_t local_domain, uint32_t remote_domain)
+{
+    if (!engine) return 0;
+    auto* impl = reinterpret_cast<linep_sl4_engine*>(engine);
+    impl->fed_provider->revoke_federation(local_domain, remote_domain);
+    return 1;
+}
+
+LINEP_SL_API int linep_sl4_engine_evaluate(
+    linep_sl4_engine_t* engine,
+    uint32_t trust_domain_id,
+    uint32_t session_id,
+    uint16_t key_id,
+    uint16_t local_node_id,
+    uint16_t remote_node_id,
+    uint32_t remote_trust_domain_id,
+    uint8_t  remote_revoked,
+    uint8_t  negotiated_sl,
+    uint64_t requested_cap,
+    uint8_t  msg_type,
+    uint32_t correlation_id,
+    const char* policy_id,
+    uint32_t established_policy_revision,
+    uint64_t timestamp_sec,
+    uint8_t* out_decision,
+    char* out_reason_buf,
+    uint32_t reason_buf_len)
+{
+    if (!engine) return 0;
+    auto* impl = reinterpret_cast<linep_sl4_engine*>(engine);
+
+    linep::sl::DecisionContext dctx{};
+    dctx.trust_domain_id = trust_domain_id;
+    dctx.session_id = session_id;
+    dctx.key_id = key_id;
+    dctx.local_peer.node_id = local_node_id;
+    dctx.local_peer.trust_domain_id = trust_domain_id;
+    std::memset(dctx.local_peer.pubkey, 0xAA, 32);
+
+    dctx.remote_peer.node_id = remote_node_id;
+    dctx.remote_peer.trust_domain_id = remote_trust_domain_id;
+    std::memset(dctx.remote_peer.pubkey, 0xAA, 32);
+    dctx.remote_peer.revoked = (remote_revoked != 0);
+
+    dctx.negotiated_sl = static_cast<linep::sl::SecurityLevel>(negotiated_sl);
+    dctx.requested_cap = static_cast<linep::sl::CapFlags>(requested_cap);
+    dctx.msg_type = msg_type;
+    dctx.correlation_id = correlation_id;
+    dctx.policy_id = policy_id ? policy_id : "default-policy";
+    dctx.established_policy_revision = established_policy_revision;
+    dctx.timestamp_sec = timestamp_sec ? timestamp_sec : 1700000000ULL;
+
+    auto res = impl->engine->evaluate(dctx);
+    if (out_decision) {
+        *out_decision = static_cast<uint8_t>(res.decision);
+    }
+    if (out_reason_buf && reason_buf_len > 0) {
+        std::strncpy(out_reason_buf, res.reason_code.c_str(), reason_buf_len - 1);
+        out_reason_buf[reason_buf_len - 1] = '\0';
+    }
+    return linep::sl::is_decision_allowed(res) ? 1 : 0;
+}
+
+LINEP_SL_API uint32_t linep_sl4_engine_get_audit_count(linep_sl4_engine_t* engine) {
+    if (!engine) return 0;
+    auto* impl = reinterpret_cast<linep_sl4_engine*>(engine);
+    return static_cast<uint32_t>(impl->audit_sink->get_events().size());
+}
+
 LINEP_SL_API int linep_sl4_evaluate_decision(
     uint32_t trust_domain_id,
     uint32_t session_id,
@@ -136,37 +263,15 @@ LINEP_SL_API int linep_sl4_evaluate_decision(
     char* out_reason_buf,
     uint32_t reason_buf_len)
 {
-    auto pol_provider = std::make_shared<linep::sl::MemoryGovernancePolicyProvider>();
-    auto id_provider = std::make_shared<linep::sl::MemoryIdentityProvider>(trust_domain_id);
-    id_provider->register_peer(remote_node_id, reinterpret_cast<const uint8_t*>("\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa"));
+    auto eng = linep_sl4_engine_create(trust_domain_id);
+    linep_sl4_engine_register_peer(eng, remote_node_id, reinterpret_cast<const uint8_t*>("\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa"));
 
-    auto fed_provider = std::make_shared<linep::sl::MemoryFederationTrustProvider>();
-    auto audit_sink = std::make_shared<linep::sl::MemoryAuditSink>();
-
-    linep::sl::SecurityDecisionEngine engine(pol_provider, id_provider, fed_provider, audit_sink);
-
-    linep::sl::DecisionContext ctx{};
-    ctx.trust_domain_id = trust_domain_id;
-    ctx.session_id = session_id;
-    ctx.key_id = key_id;
-    ctx.remote_peer.trust_domain_id = remote_trust_domain_id;
-    ctx.remote_peer.node_id = remote_node_id;
-    std::memcpy(ctx.remote_peer.pubkey, "\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa", 32);
-    ctx.remote_peer.revoked = (remote_revoked != 0);
-    ctx.negotiated_sl = static_cast<linep::sl::SecurityLevel>(negotiated_sl);
-    ctx.requested_cap = static_cast<linep::sl::CapFlags>(requested_cap);
-    ctx.policy_id = policy_id ? policy_id : "default-policy";
-    ctx.timestamp_sec = 1700000000ULL;
-
-    auto res = engine.evaluate(ctx);
-    if (out_decision) {
-        *out_decision = static_cast<uint8_t>(res.decision);
-    }
-    if (out_reason_buf && reason_buf_len > 0) {
-        std::strncpy(out_reason_buf, res.reason_code.c_str(), reason_buf_len - 1);
-        out_reason_buf[reason_buf_len - 1] = '\0';
-    }
-    return (res.decision == linep::sl::Decision::ALLOW) ? 1 : 0;
+    int ret = linep_sl4_engine_evaluate(
+        eng, trust_domain_id, session_id, key_id, 1, remote_node_id, remote_trust_domain_id,
+        remote_revoked, negotiated_sl, requested_cap, 0, 0, policy_id, 0, 1700000000ULL,
+        out_decision, out_reason_buf, reason_buf_len);
+    linep_sl4_engine_free(eng);
+    return ret;
 }
 
 } // extern "C"

@@ -80,6 +80,62 @@ int linep_sl3_verify_cap_token(
     uint64_t current_time_sec,
     uint64_t required_capability);
 
+typedef struct linep_sl4_engine linep_sl4_engine_t;
+
+typedef struct {
+    uint32_t trust_domain_id;
+    uint32_t session_id;
+    uint16_t key_id;
+    uint16_t local_node_id;
+    uint16_t remote_node_id;
+    uint32_t remote_trust_domain_id;
+    uint8_t  remote_revoked;
+    uint8_t  negotiated_sl;
+    uint64_t requested_cap;
+    uint8_t  msg_type;
+    uint32_t correlation_id;
+    const char* policy_id;
+    uint32_t established_policy_revision;
+    uint64_t timestamp_sec;
+} linep_sl4_decision_context_t;
+
+linep_sl4_engine_t* linep_sl4_engine_create(uint32_t local_trust_domain_id);
+void linep_sl4_engine_free(linep_sl4_engine_t* engine);
+
+int linep_sl4_engine_register_peer(
+    linep_sl4_engine_t* engine, uint16_t node_id, const uint8_t* pubkey_32bytes);
+
+int linep_sl4_engine_set_policy(
+    linep_sl4_engine_t* engine, const char* policy_id, uint32_t revision, uint64_t allowed_caps, uint8_t allow_cross_domain);
+
+int linep_sl4_engine_add_federation(
+    linep_sl4_engine_t* engine, uint32_t local_domain, uint32_t remote_domain, uint64_t max_caps, uint32_t revision);
+
+int linep_sl4_engine_revoke_federation(
+    linep_sl4_engine_t* engine, uint32_t local_domain, uint32_t remote_domain);
+
+int linep_sl4_engine_evaluate(
+    linep_sl4_engine_t* engine,
+    uint32_t trust_domain_id,
+    uint32_t session_id,
+    uint16_t key_id,
+    uint16_t local_node_id,
+    uint16_t remote_node_id,
+    uint32_t remote_trust_domain_id,
+    uint8_t  remote_revoked,
+    uint8_t  negotiated_sl,
+    uint64_t requested_cap,
+    uint8_t  msg_type,
+    uint32_t correlation_id,
+    const char* policy_id,
+    uint32_t established_policy_revision,
+    uint64_t timestamp_sec,
+    uint8_t* out_decision,
+    char* out_reason_buf,
+    uint32_t reason_buf_len);
+
+uint32_t linep_sl4_engine_get_audit_count(linep_sl4_engine_t* engine);
+
 int linep_sl4_evaluate_decision(
     uint32_t trust_domain_id,
     uint32_t session_id,

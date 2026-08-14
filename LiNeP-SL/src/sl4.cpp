@@ -49,12 +49,12 @@ bool MemoryGovernancePolicyProvider::get_policy(const std::string& policy_id, Go
 }
 
 // MemoryFederationTrustProvider implementation
-void MemoryFederationTrustProvider::add_federation(uint32_t local_domain, uint32_t remote_domain, uint64_t max_caps) {
+void MemoryFederationTrustProvider::add_federation(uint32_t local_domain, uint32_t remote_domain, uint64_t max_caps, uint32_t revision) {
     DomainPairKey k{local_domain, remote_domain};
     FederationTrust ft;
     ft.local_domain_id = local_domain;
     ft.federated_domain_id = remote_domain;
-    ft.federation_revision = 1;
+    ft.federation_revision = revision;
     ft.max_granted_caps = max_caps;
     ft.active = true;
     trusts_[k] = ft;
@@ -90,6 +90,21 @@ SecurityDecisionEngine::SecurityDecisionEngine(
       audit_sink_(std::move(audit_sink))
 {}
 
+void SecurityDecisionEngine::register_policy(const GovernancePolicy& policy) {
+    if (policy_provider_) {
+        policy_provider_->set_policy(policy);
+        if (audit_sink_) {
+            AuditEvent evt{};
+            evt.event_type = AuditEventType::POLICY_REVISION_CHANGED;
+            evt.policy_id = policy.policy_id;
+            evt.policy_revision = policy.policy_revision;
+            evt.decision = Decision::ALLOW;
+            evt.reason_code = "POLICY_REVISION_UPDATED";
+            audit_sink_->log_event(evt);
+        }
+    }
+}
+
 DecisionResult SecurityDecisionEngine::evaluate(const DecisionContext& ctx) noexcept {
     DecisionResult res;
     res.decision = Decision::INDETERMINATE;
@@ -99,15 +114,24 @@ DecisionResult SecurityDecisionEngine::evaluate(const DecisionContext& ctx) noex
     audit_evt.timestamp_sec = ctx.timestamp_sec;
     audit_evt.session_id = ctx.session_id;
     audit_evt.key_id = ctx.key_id;
-    audit_evt.node_id = ctx.remote_peer.node_id;
-    audit_evt.trust_domain_id = ctx.trust_domain_id;
+    audit_evt.local_node_id = ctx.local_peer.node_id;
+    audit_evt.remote_node_id = ctx.remote_peer.node_id;
+    audit_evt.local_trust_domain_id = ctx.trust_domain_id;
+    audit_evt.remote_trust_domain_id = ctx.remote_peer.trust_domain_id;
+    audit_evt.policy_id = ctx.policy_id;
+    audit_evt.requested_cap = static_cast<uint64_t>(ctx.requested_cap);
+    audit_evt.msg_type = ctx.msg_type;
+    audit_evt.correlation_id = ctx.correlation_id;
 
-    // Helper lambda to emit audit and return result
+    // Helper lambda to emit full audit record and return result
     auto emit_result = [&](Decision dec, const char* reason, AuditEventType evt_type) -> DecisionResult {
         res.decision = dec;
         res.reason_code = reason;
+        audit_evt.decision = dec;
         audit_evt.event_type = evt_type;
         audit_evt.reason_code = reason;
+        audit_evt.policy_revision = res.policy_revision;
+        audit_evt.federation_revision = res.federation_revision;
 
         if (audit_sink_) {
             bool audit_ok = audit_sink_->log_event(audit_evt);
@@ -119,6 +143,11 @@ DecisionResult SecurityDecisionEngine::evaluate(const DecisionContext& ctx) noex
         }
         return res;
     };
+
+    // 0. Check for INDETERMINATE evaluation path (e.g. CAP_NONE / unspecified capability)
+    if (ctx.requested_cap == CapFlags::CAP_NONE) {
+        return emit_result(Decision::INDETERMINATE, "INDETERMINATE_NO_CAPABILITY_SPECIFIED", AuditEventType::CAPABILITY_DENIED);
+    }
 
     // 1. Fetch Governance Policy
     GovernancePolicy policy;
@@ -141,26 +170,40 @@ DecisionResult SecurityDecisionEngine::evaluate(const DecisionContext& ctx) noex
         return emit_result(Decision::DENY, "IDENTITY_REVOKED_IN_PROVIDER", AuditEventType::SESSION_REJECTED);
     }
 
-    // 4. Same-Domain vs Federation Trust Evaluation
+    // 4. Policy Revision Invalidation Check for Active Sessions
     bool is_same_domain = (ctx.remote_peer.trust_domain_id == ctx.trust_domain_id);
+    if (ctx.established_policy_revision > 0 && policy.policy_revision > ctx.established_policy_revision) {
+        if (!has_capability(policy.allowed_capabilities, ctx.requested_cap) || (!is_same_domain && !policy.allow_cross_domain)) {
+            return emit_result(Decision::DENY, "SESSION_INVALIDATED_BY_POLICY_REVISION", AuditEventType::SESSION_INVALIDATED);
+        }
+    }
+
+    // 5. Cross-Domain vs Same-Domain Federation Evaluation
     if (!is_same_domain) {
-        // Cross-domain traffic -> Requires explicit Federation Trust!
+        // Gate A: Check explicit Federation Trust exists
         FederationTrust fed_trust;
         if (!federation_provider_ || !federation_provider_->is_federation_trusted(ctx.trust_domain_id, ctx.remote_peer.trust_domain_id, fed_trust)) {
             return emit_result(Decision::DENY, "CROSS_DOMAIN_FEDERATION_DENIED", AuditEventType::FEDERATION_DENIED);
         }
-        // Enforce maximum granted capabilities for federated trust
+        res.federation_revision = fed_trust.federation_revision;
+
+        // Gate B: Governing policy MUST explicitly allow cross-domain traffic (policy.allow_cross_domain == true)
+        if (!policy.allow_cross_domain) {
+            return emit_result(Decision::DENY, "GOVERNANCE_POLICY_CROSS_DOMAIN_DENIED", AuditEventType::GOVERNANCE_DENIED);
+        }
+
+        // Gate C: Requested capability must fit within BOTH governing policy bounds AND federation trust max caps
         if (!has_capability(fed_trust.max_granted_caps, ctx.requested_cap)) {
             return emit_result(Decision::DENY, "FEDERATION_CAPABILITY_EXCEEDED", AuditEventType::CAPABILITY_DENIED);
         }
     } else {
-        // Same-domain -> Check if identity is trusted
+        // Same-domain -> Check if identity is trusted by identity provider
         if (identity_provider_ && !identity_provider_->is_peer_trusted(ctx.remote_peer, ctx.trust_domain_id)) {
             return emit_result(Decision::DENY, "SAME_DOMAIN_IDENTITY_UNTRUSTED", AuditEventType::SESSION_REJECTED);
         }
     }
 
-    // 5. Governance Policy Capability Filter
+    // 6. Governance Policy Capability Filter
     if (!has_capability(policy.allowed_capabilities, ctx.requested_cap)) {
         return emit_result(Decision::DENY, "GOVERNANCE_POLICY_CAPABILITY_DENIED", AuditEventType::CAPABILITY_DENIED);
     }
