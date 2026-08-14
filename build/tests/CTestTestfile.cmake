@@ -56,3 +56,5 @@ add_test([=[test_udp_control_frames]=] "C:/ai/LiNeP/build/tests/test_udp_control
 set_tests_properties([=[test_udp_control_frames]=] PROPERTIES  _BACKTRACE_TRIPLES "C:/ai/LiNeP/tests/CMakeLists.txt;24;add_test;C:/ai/LiNeP/tests/CMakeLists.txt;53;linep_add_test;C:/ai/LiNeP/tests/CMakeLists.txt;0;")
 add_test([=[test_task_streaming]=] "C:/ai/LiNeP/build/tests/test_task_streaming.exe")
 set_tests_properties([=[test_task_streaming]=] PROPERTIES  _BACKTRACE_TRIPLES "C:/ai/LiNeP/tests/CMakeLists.txt;24;add_test;C:/ai/LiNeP/tests/CMakeLists.txt;54;linep_add_test;C:/ai/LiNeP/tests/CMakeLists.txt;0;")
+add_test([=[test_normalized_scoring]=] "C:/ai/LiNeP/build/tests/test_normalized_scoring.exe")
+set_tests_properties([=[test_normalized_scoring]=] PROPERTIES  _BACKTRACE_TRIPLES "C:/ai/LiNeP/tests/CMakeLists.txt;24;add_test;C:/ai/LiNeP/tests/CMakeLists.txt;55;linep_add_test;C:/ai/LiNeP/tests/CMakeLists.txt;0;")

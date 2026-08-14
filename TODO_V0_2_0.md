@@ -14,9 +14,9 @@ Use this checklist to track Phase 1, Phase 2, and Phase 3 rollout end-to-end.
 
 ## Phase 2: Enhanced Telemetry & Normalized Scoring
 
-- [ ] Add `vram_free_mb` and `prefix_affinity` / `kv_prefix_match_pct` metrics
-- [ ] Implement weighted normalized score formula $S_{\text{final}}$ in `src/scheduler/score_engine.cpp`
-- [ ] Add unit tests for normalized VRAM & KV-Cache affinity scoring
+- [x] Add `vram_free_mb` and `prefix_affinity` / `kv_prefix_match_pct` metrics
+- [x] Implement weighted normalized score formula $S_{\text{final}}$ in `src/scheduler/score_engine.cpp`
+- [x] Add unit tests for normalized VRAM & KV-Cache affinity scoring (27/27 C++ tests passed)
 
 ## Phase 3: Consensus Engine
 

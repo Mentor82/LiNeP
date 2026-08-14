@@ -50,11 +50,14 @@ struct SlotState {
     bool thermal_limit{false};
     bool model_loading{false};
 
-    // Load metrics
+    // Load metrics & KI Telemetry
     uint8_t  load{0};
     uint8_t  queue_depth{0};
     uint8_t  seq{0};
     uint16_t worker_score{0};
+    uint32_t vram_free_mb{0};
+    uint8_t  prefix_affinity{0}; // 0..100% (cached_prefix_tokens / requested_prefix_tokens)
+    uint16_t tokens_per_sec{0};
 
     // Performance history
     double   avg_latency_ms{0.0};

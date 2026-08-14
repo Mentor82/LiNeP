@@ -26,19 +26,37 @@ bool is_eligible(const SlotState& slot,
 
 double score_slot(const SlotState& slot) noexcept
 {
-    const double scheduler_score =
-        slot.load * 1.0 +
-        slot.queue_depth * 10.0;
-    const double worker_score = static_cast<double>(slot.worker_score) * 0.1;
+    const double norm_load  = std::min(1.0, static_cast<double>(slot.load) / 100.0);
+    const double norm_queue = std::min(1.0, static_cast<double>(slot.queue_depth) / 8.0);
 
-    // V0.1.0 baseline: blend coworker telemetry with scheduler-side estimate.
-    double s = 0.35 * worker_score + 0.65 * scheduler_score;
-    s += slot.avg_latency_ms * 0.02;
-    if (slot.busy)          s += 20.0;
-    if (slot.degraded)      s += 50.0;
-    if (slot.thermal_limit) s += 100.0;
-    s += slot.timeout_count * 15.0;
-    s += slot.error_count   * 25.0;
+    const double vram_base = (slot.vram_free_mb > 0u) ? static_cast<double>(slot.vram_free_mb) : 8192.0;
+    const double vram_pressure = 1.0 - std::min(1.0, vram_base / 16384.0);
+
+    const double norm_prefix = std::min(1.0, static_cast<double>(slot.prefix_affinity) / 100.0);
+    const double norm_tps    = std::min(1.0, static_cast<double>(slot.tokens_per_sec) / 100.0);
+
+    constexpr double w_load  = 1.0;
+    constexpr double w_queue = 2.0;
+    constexpr double w_vram  = 1.5;
+    constexpr double w_cache = 3.0;
+    constexpr double w_tps   = 0.5;
+
+    double s = (w_load * norm_load) +
+               (w_queue * norm_queue) +
+               (w_vram * vram_pressure) -
+               (w_cache * norm_prefix) -
+               (w_tps * norm_tps);
+
+    const double norm_worker_score = std::min(1.0, static_cast<double>(slot.worker_score) / 100.0);
+    s = 0.35 * norm_worker_score + 0.65 * s;
+
+    s += (slot.avg_latency_ms / 1000.0) * 0.5;
+    if (slot.busy)          s += 2.0;
+    if (slot.degraded)      s += 5.0;
+    if (slot.thermal_limit) s += 10.0;
+    s += slot.timeout_count * 1.5;
+    s += slot.error_count   * 2.5;
+
     return s;
 }
 

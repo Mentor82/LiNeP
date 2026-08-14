@@ -489,6 +489,20 @@ test_task_streaming/fast:
 	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_streaming.dir\build.make tests/CMakeFiles/test_task_streaming.dir/build
 .PHONY : test_task_streaming/fast
 
+# Convenience name for target.
+tests/CMakeFiles/test_normalized_scoring.dir/rule:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 tests/CMakeFiles/test_normalized_scoring.dir/rule
+.PHONY : tests/CMakeFiles/test_normalized_scoring.dir/rule
+
+# Convenience name for target.
+test_normalized_scoring: tests/CMakeFiles/test_normalized_scoring.dir/rule
+.PHONY : test_normalized_scoring
+
+# fast build rule for target.
+test_normalized_scoring/fast:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_normalized_scoring.dir\build.make tests/CMakeFiles/test_normalized_scoring.dir/build
+.PHONY : test_normalized_scoring/fast
+
 test_crc.obj: test_crc.cpp.obj
 .PHONY : test_crc.obj
 
@@ -608,6 +622,30 @@ test_heartbeat_compact.s: test_heartbeat_compact.cpp.s
 test_heartbeat_compact.cpp.s:
 	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_heartbeat_compact.dir\build.make tests/CMakeFiles/test_heartbeat_compact.dir/test_heartbeat_compact.cpp.s
 .PHONY : test_heartbeat_compact.cpp.s
+
+test_normalized_scoring.obj: test_normalized_scoring.cpp.obj
+.PHONY : test_normalized_scoring.obj
+
+# target to build an object file
+test_normalized_scoring.cpp.obj:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_normalized_scoring.dir\build.make tests/CMakeFiles/test_normalized_scoring.dir/test_normalized_scoring.cpp.obj
+.PHONY : test_normalized_scoring.cpp.obj
+
+test_normalized_scoring.i: test_normalized_scoring.cpp.i
+.PHONY : test_normalized_scoring.i
+
+# target to preprocess a source file
+test_normalized_scoring.cpp.i:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_normalized_scoring.dir\build.make tests/CMakeFiles/test_normalized_scoring.dir/test_normalized_scoring.cpp.i
+.PHONY : test_normalized_scoring.cpp.i
+
+test_normalized_scoring.s: test_normalized_scoring.cpp.s
+.PHONY : test_normalized_scoring.s
+
+# target to generate assembly for a file
+test_normalized_scoring.cpp.s:
+	cd /d C:\ai\LiNeP\build && $(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_normalized_scoring.dir\build.make tests/CMakeFiles/test_normalized_scoring.dir/test_normalized_scoring.cpp.s
+.PHONY : test_normalized_scoring.cpp.s
 
 test_register_frame.obj: test_register_frame.cpp.obj
 .PHONY : test_register_frame.obj
@@ -1127,6 +1165,7 @@ help:
 	@echo ... test_error_frame_handling
 	@echo ... test_header_reject_bad_fields
 	@echo ... test_heartbeat_compact
+	@echo ... test_normalized_scoring
 	@echo ... test_register_frame
 	@echo ... test_result_parsing
 	@echo ... test_scheduler_applies_busy_penalty
@@ -1163,6 +1202,9 @@ help:
 	@echo ... test_heartbeat_compact.obj
 	@echo ... test_heartbeat_compact.i
 	@echo ... test_heartbeat_compact.s
+	@echo ... test_normalized_scoring.obj
+	@echo ... test_normalized_scoring.i
+	@echo ... test_normalized_scoring.s
 	@echo ... test_register_frame.obj
 	@echo ... test_register_frame.i
 	@echo ... test_register_frame.s

@@ -554,6 +554,19 @@ test_task_streaming/fast:
 	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_task_streaming.dir\build.make tests/CMakeFiles/test_task_streaming.dir/build
 .PHONY : test_task_streaming/fast
 
+#=============================================================================
+# Target rules for targets named test_normalized_scoring
+
+# Build rule for target.
+test_normalized_scoring: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 test_normalized_scoring
+.PHONY : test_normalized_scoring
+
+# fast build rule for target.
+test_normalized_scoring/fast:
+	$(MAKE) $(MAKESILENT) -f tests\CMakeFiles\test_normalized_scoring.dir\build.make tests/CMakeFiles/test_normalized_scoring.dir/build
+.PHONY : test_normalized_scoring/fast
+
 # Help Target
 help:
 	@echo The following are some of the valid targets for this Makefile:
@@ -575,6 +588,7 @@ help:
 	@echo ... test_error_frame_handling
 	@echo ... test_header_reject_bad_fields
 	@echo ... test_heartbeat_compact
+	@echo ... test_normalized_scoring
 	@echo ... test_register_frame
 	@echo ... test_result_parsing
 	@echo ... test_scheduler_applies_busy_penalty
