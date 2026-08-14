@@ -4,6 +4,8 @@ add_library(linep_sl_core STATIC
     sl2.cpp
     sl3.cpp
 )
+set_target_properties(linep_sl_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 target_include_directories(linep_sl_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../LiNeP/include>
