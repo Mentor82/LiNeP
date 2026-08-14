@@ -2,25 +2,20 @@
 #include <linep_sl/sl1.hpp>
 #include "sha256.hpp"
 #include <cstring>
-#include <algorithm>
 
 namespace linep::sl {
 
-namespace {
-
-inline void write_u16_le(uint8_t* dst, uint16_t val) noexcept {
-    dst[0] = static_cast<uint8_t>(val & 0xFF);
-    dst[1] = static_cast<uint8_t>((val >> 8) & 0xFF);
+static inline void write_u16_le(uint8_t* p, uint16_t v) noexcept {
+    p[0] = static_cast<uint8_t>(v & 0xFF);
+    p[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
 }
 
-inline void write_u32_le(uint8_t* dst, uint32_t val) noexcept {
-    dst[0] = static_cast<uint8_t>(val & 0xFF);
-    dst[1] = static_cast<uint8_t>((val >> 8) & 0xFF);
-    dst[2] = static_cast<uint8_t>((val >> 16) & 0xFF);
-    dst[3] = static_cast<uint8_t>((val >> 24) & 0xFF);
+static inline void write_u32_le(uint8_t* p, uint32_t v) noexcept {
+    p[0] = static_cast<uint8_t>(v & 0xFF);
+    p[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
+    p[2] = static_cast<uint8_t>((v >> 16) & 0xFF);
+    p[3] = static_cast<uint8_t>((v >> 24) & 0xFF);
 }
-
-} // namespace
 
 NegotiationResult negotiate_security_level(
     SecurityLevel peer_supported,
@@ -67,31 +62,47 @@ bool validate_peer_identity(const PeerIdentity& peer, uint32_t expected_trust_do
 }
 
 void MemoryIdentityProvider::register_peer(uint16_t node_id, const uint8_t pubkey[32]) {
+    register_peer_for_domain(trust_domain_id_, node_id, pubkey);
+}
+
+void MemoryIdentityProvider::register_peer_for_domain(uint32_t trust_domain_id, uint16_t node_id, const uint8_t pubkey[32]) {
     if (node_id == 0 || !pubkey) return;
+    DomainNodeKey key{trust_domain_id, node_id};
     std::vector<uint8_t> pk(pubkey, pubkey + 32);
-    trusted_nodes_[node_id] = pk;
-    revoked_nodes_.erase(node_id);
+    trusted_nodes_[key] = pk;
+    revoked_nodes_.erase(key);
 }
 
 void MemoryIdentityProvider::revoke_peer(uint16_t node_id) {
+    revoke_peer_for_domain(trust_domain_id_, node_id);
+}
+
+void MemoryIdentityProvider::revoke_peer_for_domain(uint32_t trust_domain_id, uint16_t node_id) {
     if (node_id == 0) return;
-    revoked_nodes_.insert(node_id);
+    DomainNodeKey key{trust_domain_id, node_id};
+    revoked_nodes_.insert(key);
 }
 
 bool MemoryIdentityProvider::is_node_revoked(uint16_t node_id) const noexcept {
-    return revoked_nodes_.find(node_id) != revoked_nodes_.end();
+    return is_node_revoked_in_domain(trust_domain_id_, node_id);
+}
+
+bool MemoryIdentityProvider::is_node_revoked_in_domain(uint32_t trust_domain_id, uint16_t node_id) const noexcept {
+    DomainNodeKey key{trust_domain_id, node_id};
+    return revoked_nodes_.find(key) != revoked_nodes_.end();
 }
 
 bool MemoryIdentityProvider::is_peer_trusted(const PeerIdentity& peer, uint32_t expected_trust_domain) const noexcept {
-    if (peer.revoked || is_node_revoked(peer.node_id)) {
+    if (peer.revoked || is_node_revoked_in_domain(expected_trust_domain, peer.node_id)) {
         return false;
     }
     if (!validate_peer_identity(peer, expected_trust_domain)) {
         return false;
     }
-    auto it = trusted_nodes_.find(peer.node_id);
+    DomainNodeKey key{expected_trust_domain, peer.node_id};
+    auto it = trusted_nodes_.find(key);
     if (it == trusted_nodes_.end()) {
-        return false; // Unknown node -> fail closed
+        return false; // Unknown node in expected trust domain -> fail closed
     }
 
     // Check pubkey match
@@ -100,12 +111,13 @@ bool MemoryIdentityProvider::is_peer_trusted(const PeerIdentity& peer, uint32_t 
 
 bool MemoryIdentityProvider::get_peer_identity(uint16_t node_id, uint32_t trust_domain_id, PeerIdentity& out_peer) const noexcept {
     if (node_id == 0) return false;
-    auto it = trusted_nodes_.find(node_id);
+    DomainNodeKey key{trust_domain_id, node_id};
+    auto it = trusted_nodes_.find(key);
     if (it == trusted_nodes_.end()) return false;
 
     out_peer.node_id = node_id;
     out_peer.trust_domain_id = trust_domain_id;
-    out_peer.revoked = is_node_revoked(node_id);
+    out_peer.revoked = is_node_revoked_in_domain(trust_domain_id, node_id);
     std::memcpy(out_peer.pubkey, it->second.data(), 32);
     return true;
 }

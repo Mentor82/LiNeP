@@ -156,6 +156,15 @@ LINEP_SL_API int linep_sl4_engine_register_peer(
     return 1;
 }
 
+LINEP_SL_API int linep_sl4_engine_register_peer_for_domain(
+    linep_sl4_engine_t* engine, uint32_t trust_domain_id, uint16_t node_id, const uint8_t* pubkey_32bytes)
+{
+    if (!engine || !pubkey_32bytes) return 0;
+    auto* impl = reinterpret_cast<linep_sl4_engine*>(engine);
+    impl->id_provider->register_peer_for_domain(trust_domain_id, node_id, pubkey_32bytes);
+    return 1;
+}
+
 LINEP_SL_API int linep_sl4_engine_set_policy(
     linep_sl4_engine_t* engine, const char* policy_id, uint32_t revision, uint64_t allowed_caps, uint8_t allow_cross_domain)
 {

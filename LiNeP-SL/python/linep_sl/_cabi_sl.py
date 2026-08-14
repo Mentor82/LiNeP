@@ -105,6 +105,9 @@ void linep_sl4_engine_free(linep_sl4_engine_t* engine);
 int linep_sl4_engine_register_peer(
     linep_sl4_engine_t* engine, uint16_t node_id, const uint8_t* pubkey_32bytes);
 
+int linep_sl4_engine_register_peer_for_domain(
+    linep_sl4_engine_t* engine, uint32_t trust_domain_id, uint16_t node_id, const uint8_t* pubkey_32bytes);
+
 int linep_sl4_engine_set_policy(
     linep_sl4_engine_t* engine, const char* policy_id, uint32_t revision, uint64_t allowed_caps, uint8_t allow_cross_domain);
 

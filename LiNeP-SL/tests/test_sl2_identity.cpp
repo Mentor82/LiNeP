@@ -24,10 +24,13 @@ public:
 };
 
 int main() {
-    std::cout << "[test_sl2_identity] Running complete Issue #3 test suite (13/13 checklist items)..." << std::endl;
+    std::cout << "[test_sl2_identity] Running complete Issue #3 test suite (14/14 checklist items)..." << std::endl;
 
     const uint32_t trust_domain = 0x4C4E5031; // "LNP1"
+    const uint32_t domain_b = 0x4C4E5032;     // "LNP2"
     const uint8_t pubkey_a[32] = {0xAA, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+                                  0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F};
+    const uint8_t pubkey_b[32] = {0xBB, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
                                   0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F};
 
     // --- 1. Valid mutual identity authentication ---
@@ -41,21 +44,38 @@ int main() {
     peer_a.revoked = false;
 
     assert(provider.is_peer_trusted(peer_a, trust_domain) == true);
-    std::cout << "  [1/13] Valid mutual identity authentication PASSED" << std::endl;
+    std::cout << "  [1/14] Valid mutual identity authentication PASSED" << std::endl;
 
-    // --- 2. Unknown identity rejected ---
+    // --- 2. Domain-Scoped Peer Registration & Isolation ---
+    provider.register_peer_for_domain(domain_b, 20, pubkey_b);
+
+    linep::sl::PeerIdentity peer_20_b{};
+    peer_20_b.trust_domain_id = domain_b;
+    peer_20_b.node_id = 20;
+    std::memcpy(peer_20_b.pubkey, pubkey_b, 32);
+    peer_20_b.revoked = false;
+
+    assert(provider.is_peer_trusted(peer_20_b, domain_b) == true);
+
+    // Node 20 claiming Domain A with Pubkey B -> MUST BE REJECTED!
+    linep::sl::PeerIdentity peer_20_a_fake = peer_20_b;
+    peer_20_a_fake.trust_domain_id = trust_domain;
+    assert(provider.is_peer_trusted(peer_20_a_fake, trust_domain) == false);
+    std::cout << "  [2/14] Domain-scoped peer identity isolation PASSED" << std::endl;
+
+    // --- 3. Unknown identity rejected ---
     linep::sl::PeerIdentity unknown_peer = peer_a;
     unknown_peer.node_id = 99; // Unregistered node
     assert(provider.is_peer_trusted(unknown_peer, trust_domain) == false);
-    std::cout << "  [2/13] Unknown identity rejected PASSED" << std::endl;
+    std::cout << "  [3/14] Unknown identity rejected PASSED" << std::endl;
 
-    // --- 3. Revoked identity rejected ---
+    // --- 4. Revoked identity rejected ---
     provider.revoke_peer(10);
     assert(provider.is_peer_trusted(peer_a, trust_domain) == false);
     provider.register_peer(10, pubkey_a); // Un-revoke for further tests
-    std::cout << "  [3/13] Revoked identity rejected PASSED" << std::endl;
+    std::cout << "  [4/14] Revoked identity rejected PASSED" << std::endl;
 
-    // --- 4. Expired session/key rejected ---
+    // --- 5. Expired session/key rejected ---
     const uint8_t master_secret[16] = {'M', 'A', 'S', 'T', 'E', 'R', '_', 'S', 'E', 'C', 'R', 'E', 'T', '_', '0', '1'};
     const uint64_t now = 1700000000ULL;
     const uint64_t ttl = 3600ULL;
@@ -63,19 +83,19 @@ int main() {
     linep::sl::SessionKey sk{};
     assert(linep::sl::derive_session_key(master_secret, sizeof(master_secret), 0x1001, 1, 10, ttl, now, sk) == true);
     assert(linep::sl::verify_session_key_freshness(sk, now + ttl + 1) == false);
-    std::cout << "  [4/13] Expired session key rejected PASSED" << std::endl;
+    std::cout << "  [5/14] Expired session key rejected PASSED" << std::endl;
 
-    // --- 5. Trust-domain mismatch rejected ---
+    // --- 6. Trust-domain mismatch rejected ---
     assert(linep::sl::validate_peer_identity(peer_a, 0x99999999) == false);
-    std::cout << "  [5/13] Trust-domain mismatch rejected PASSED" << std::endl;
+    std::cout << "  [6/14] Trust-domain mismatch rejected PASSED" << std::endl;
 
-    // --- 6. Session key establishment produces fresh keys ---
+    // --- 7. Session key establishment produces fresh keys ---
     assert(sk.session_id == 0x1001 && sk.key_id == 1);
     uint8_t zero_buf[32] = {0};
     assert(std::memcmp(sk.secret_key, zero_buf, 32) != 0);
-    std::cout << "  [6/13] Session key establishment produces fresh keys PASSED" << std::endl;
+    std::cout << "  [7/14] Session key establishment produces fresh keys PASSED" << std::endl;
 
-    // --- 7. Key rotation succeeds without corrupting active protocol state ---
+    // --- 8. Key rotation succeeds without corrupting active protocol state ---
     linep::sl::SessionStore store(0x2002, 10, ttl);
     assert(store.initialize(master_secret, sizeof(master_secret), now) == true);
     linep::sl::SessionKey active_key1{};
@@ -87,9 +107,9 @@ int main() {
     assert(store.get_active_key(active_key2) == true);
     assert(active_key2.key_id == 2);
     assert(std::memcmp(active_key1.secret_key, active_key2.secret_key, 32) != 0);
-    std::cout << "  [7/13] Key rotation succeeds PASSED" << std::endl;
+    std::cout << "  [8/14] Key rotation succeeds PASSED" << std::endl;
 
-    // --- 8. Old key rejected after rotation boundary ---
+    // --- 9. Old key rejected after rotation boundary ---
     // Active key (id 2) and previous key (id 1) are valid
     assert(store.is_key_valid(2, active_key2.secret_key, now + 100) == true);
     assert(store.is_key_valid(1, active_key1.secret_key, now + 100) == true);
@@ -97,34 +117,34 @@ int main() {
     // Rotate again -> active is 3, previous is 2. Old key id 1 is now PAST rotation boundary!
     assert(store.rotate_key(master_secret, sizeof(master_secret), now + 200) == true);
     assert(store.is_key_valid(1, active_key1.secret_key, now + 200) == false); // REJECTED!
-    std::cout << "  [8/13] Old key rejected after rotation boundary PASSED" << std::endl;
+    std::cout << "  [9/14] Old key rejected after rotation boundary PASSED" << std::endl;
 
-    // --- 9. Reconnect triggers correct re-authentication behavior ---
+    // --- 10. Reconnect triggers correct re-authentication behavior ---
     linep::sl::SessionStore new_session_store(0x2003, 10, ttl);
     assert(new_session_store.initialize(master_secret, sizeof(master_secret), now + 300) == true);
     linep::sl::SessionKey reauth_key{};
     assert(new_session_store.get_active_key(reauth_key) == true);
     assert(reauth_key.session_id == 0x2003);
-    std::cout << "  [9/13] Reconnect re-authentication PASSED" << std::endl;
+    std::cout << "  [10/14] Reconnect re-authentication PASSED" << std::endl;
 
-    // --- 10. Unsupported required security level fails closed ---
+    // --- 11. Unsupported required security level fails closed ---
     auto res_unsupported = linep::sl::negotiate_security_level(
         linep::sl::SecurityLevel::SL1_AUTH,
         linep::sl::SecurityLevel::SL2_IDENTITY,
         linep::sl::SecurityLevel::SL2_IDENTITY);
     assert(res_unsupported.success == false);
-    std::cout << "  [10/13] Unsupported required security level fails closed PASSED" << std::endl;
+    std::cout << "  [11/14] Unsupported required security level fails closed PASSED" << std::endl;
 
-    // --- 11. Downgrade attempt rejected ---
+    // --- 12. Downgrade attempt rejected ---
     auto res_downgrade = linep::sl::negotiate_security_level(
         linep::sl::SecurityLevel::SL0_NONE, // Client attempts downgrade to SL0
         linep::sl::SecurityLevel::SL3_CAPABILITIES,
         linep::sl::SecurityLevel::SL2_IDENTITY); // Policy requires SL2 minimum
     assert(res_downgrade.success == false);
     assert(res_downgrade.negotiated_sl == linep::sl::SecurityLevel::SL0_NONE);
-    std::cout << "  [11/13] Downgrade attempt rejected PASSED" << std::endl;
+    std::cout << "  [12/14] Downgrade attempt rejected PASSED" << std::endl;
 
-    // --- 12. Provider abstraction tested with custom backend ---
+    // --- 13. Provider abstraction tested with custom backend ---
     MockCustomProvider mock_backend;
     linep::sl::PeerIdentity mock_peer{};
     mock_peer.trust_domain_id = trust_domain;
@@ -133,13 +153,13 @@ int main() {
     assert(mock_backend.is_peer_trusted(mock_peer, trust_domain) == true);
     mock_peer.node_id = 888;
     assert(mock_backend.is_peer_trusted(mock_peer, trust_domain) == false);
-    std::cout << "  [12/13] Provider abstraction PASSED" << std::endl;
+    std::cout << "  [13/14] Provider abstraction PASSED" << std::endl;
 
-    // --- 13. No secret material in logs/errors ---
+    // --- 14. No secret material in logs/errors ---
     assert(res_downgrade.error_reason != nullptr);
     assert(std::strstr(res_downgrade.error_reason, "Downgrade rejected") != nullptr);
-    std::cout << "  [13/13] No secret material exposure PASSED" << std::endl;
+    std::cout << "  [14/14] No secret material exposure PASSED" << std::endl;
 
-    std::cout << "[test_sl2_identity] ALL 13 ISSUE #3 CHECKLIST ITEMS PASSED 100%!" << std::endl;
+    std::cout << "[test_sl2_identity] ALL 14 ISSUE #3 CHECKLIST ITEMS PASSED 100%!" << std::endl;
     return 0;
 }

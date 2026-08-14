@@ -47,6 +47,22 @@ struct PeerIdentity {
     bool     revoked;         // Revocation flag
 };
 
+// Domain-Scoped Node Key for Trust Anchors
+struct DomainNodeKey {
+    uint32_t trust_domain_id;
+    uint16_t node_id;
+
+    bool operator==(const DomainNodeKey& o) const noexcept {
+        return trust_domain_id == o.trust_domain_id && node_id == o.node_id;
+    }
+};
+
+struct DomainNodeKeyHasher {
+    std::size_t operator()(const DomainNodeKey& k) const noexcept {
+        return (static_cast<std::size_t>(k.trust_domain_id) << 16) ^ static_cast<std::size_t>(k.node_id);
+    }
+};
+
 // Abstract Identity Provider Interface
 class IdentityProvider {
 public:
@@ -56,23 +72,26 @@ public:
     virtual bool get_peer_identity(uint16_t node_id, uint32_t trust_domain_id, PeerIdentity& out_peer) const noexcept = 0;
 };
 
-// Memory-backed Identity Provider implementation
+// Memory-backed Identity Provider implementation (Domain-Scoped Trust Anchors)
 class MemoryIdentityProvider : public IdentityProvider {
 public:
     explicit MemoryIdentityProvider(uint32_t trust_domain_id)
         : trust_domain_id_(trust_domain_id) {}
 
     void register_peer(uint16_t node_id, const uint8_t pubkey[32]);
+    void register_peer_for_domain(uint32_t trust_domain_id, uint16_t node_id, const uint8_t pubkey[32]);
     void revoke_peer(uint16_t node_id);
+    void revoke_peer_for_domain(uint32_t trust_domain_id, uint16_t node_id);
 
     bool is_peer_trusted(const PeerIdentity& peer, uint32_t expected_trust_domain) const noexcept override;
     bool is_node_revoked(uint16_t node_id) const noexcept override;
+    bool is_node_revoked_in_domain(uint32_t trust_domain_id, uint16_t node_id) const noexcept;
     bool get_peer_identity(uint16_t node_id, uint32_t trust_domain_id, PeerIdentity& out_peer) const noexcept override;
 
 private:
     uint32_t trust_domain_id_;
-    std::unordered_map<uint16_t, std::vector<uint8_t>> trusted_nodes_;
-    std::unordered_set<uint16_t> revoked_nodes_;
+    std::unordered_map<DomainNodeKey, std::vector<uint8_t>, DomainNodeKeyHasher> trusted_nodes_;
+    std::unordered_set<DomainNodeKey, DomainNodeKeyHasher> revoked_nodes_;
 };
 
 // Session Key

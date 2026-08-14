@@ -53,15 +53,15 @@ def run_udp_server(udp_port: int, session_store: ServerSessionStore, trust_domai
     pubkey_win = b"\xaa" * 32
     pubkey_deb = b"\xbb" * 32
 
-    # Pre-provision trusted identities and policy at server startup
+    # Pre-provision trusted identities with domain-scoped keying at server startup
     sl4_engine = linep_sl.SecurityDecisionEngine(trust_domain)
-    sl4_engine.register_peer(10, pubkey_win)
-    sl4_engine.register_peer(20, pubkey_deb)
+    sl4_engine.register_peer(10, pubkey_win, trust_domain_id=trust_domain)
+    sl4_engine.register_peer(20, pubkey_deb, trust_domain_id=trust_domain)
 
     pol_init = linep_sl.GovernancePolicy(
         policy_id="default-policy",
         policy_revision=1,
-        allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.INFERENCE_WRITE | linep_sl.CapFlags.METRICS_READ | linep_sl.CapFlags.HEARTBEAT_EMIT,
+        allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.INFERENCE_WRITE | linep_sl.CapFlags.METRICS_READ | linep_sl.CapFlags.HEARTBEAT_EMIT | linep_sl.CapFlags.ADMIN,
         allow_cross_domain=False,
     )
     sl4_engine.set_policy(pol_init)
@@ -138,7 +138,6 @@ def run_udp_server(udp_port: int, session_store: ServerSessionStore, trust_domai
             continue
 
         # 5. Verify SL4 Engine
-        # Check if federation exists for cross-domain requests
         remote_td = req.get("remote_trust_domain_id", trust_domain)
         if req.get("explicit_federation_denied"):
             pol = linep_sl.GovernancePolicy(
@@ -181,8 +180,8 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
     pubkey_deb = b"\xbb" * 32
 
     provider = linep_sl.MemoryIdentityProvider(trust_domain)
-    provider.register_peer(10, pubkey_win) # Windows Node 10
-    provider.register_peer(20, pubkey_deb) # Debian Node 20
+    provider.register_peer(10, pubkey_win) # Windows Node 10 (Domain-scoped)
+    provider.register_peer(20, pubkey_deb) # Debian Node 20 (Domain-scoped)
 
     session_store = ServerSessionStore(master_secret)
 
@@ -195,15 +194,15 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
     # Establish an expired session for explicit testing
     session_store.establish_session(0x9999, 1, 20, 10, now_init - 5000) # Expired 5000s ago!
 
-    # Persistent Engine pre-provisioned with trusted identities and policy
+    # Persistent Engine pre-provisioned with domain-scoped trusted identities and policy
     sl4_engine = linep_sl.SecurityDecisionEngine(trust_domain)
-    sl4_engine.register_peer(10, pubkey_win)
-    sl4_engine.register_peer(20, pubkey_deb)
+    sl4_engine.register_peer(10, pubkey_win, trust_domain_id=trust_domain)
+    sl4_engine.register_peer(20, pubkey_deb, trust_domain_id=trust_domain)
 
     pol_init = linep_sl.GovernancePolicy(
         policy_id="default-policy",
         policy_revision=1,
-        allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.INFERENCE_WRITE | linep_sl.CapFlags.METRICS_READ | linep_sl.CapFlags.HEARTBEAT_EMIT,
+        allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.INFERENCE_WRITE | linep_sl.CapFlags.METRICS_READ | linep_sl.CapFlags.HEARTBEAT_EMIT | linep_sl.CapFlags.ADMIN,
         allow_cross_domain=False,
     )
     sl4_engine.set_policy(pol_init)
@@ -229,14 +228,6 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
 
         req = json.loads(data.decode("utf-8"))
         msg_type = req.get("type", "TASK")
-
-        # Command to simulate key rotation during tests
-        if req.get("action") == "ROTATE_KEY":
-            session_store.revoke_key_id(req["session_id"], req["revoke_key_id"], req["node_id"])
-            resp = {"status": "KEY_ROTATED", "reason": f"Key ID {req['revoke_key_id']} revoked"}
-            conn.sendall(json.dumps(resp).encode("utf-8"))
-            conn.close()
-            continue
 
         # 1. Peer Identity Validation (SL2 Identity Anchor)
         peer_id = linep_sl.PeerIdentity(
@@ -311,11 +302,11 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
             pol = linep_sl.GovernancePolicy(
                 policy_id="default-policy",
                 policy_revision=1,
-                allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.HEARTBEAT_EMIT,
+                allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.HEARTBEAT_EMIT | linep_sl.CapFlags.ADMIN,
                 allow_cross_domain=False,
             )
             sl4_engine.set_policy(pol)
-            sl4_engine.add_federation(trust_domain, remote_td, linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.HEARTBEAT_EMIT)
+            sl4_engine.add_federation(trust_domain, remote_td, linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.HEARTBEAT_EMIT | linep_sl.CapFlags.ADMIN)
 
         sl4_dec, sl4_reason = sl4_engine.evaluate(
             trust_domain_id=trust_domain,
@@ -338,6 +329,14 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
             continue
 
         # 7. AFTER SL1-SL4 GATING HAS PASSED: Process message-type specific handlers!
+        if msg_type == "ROTATE_KEY":
+            # Authenticated key rotation command (Passed SL1, SL2, SL3 ADMIN capability & SL4 Governance!)
+            session_store.revoke_key_id(req["session_id"], req["revoke_key_id"], req["node_id"])
+            resp = {"status": "KEY_ROTATED", "reason": f"Key ID {req['revoke_key_id']} revoked after SL1-SL4 authentication"}
+            conn.sendall(json.dumps(resp).encode("utf-8"))
+            conn.close()
+            continue
+
         if msg_type == "STREAM_CHUNK":
             chunk_seq = req.get("chunk_seq", 1)
             corr_id = req.get("correlation_id", 0)
@@ -535,7 +534,7 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     assert "Expired, revoked or non-existent session key" in resp_expired["reason"]
     print("  [Client Test 11] Stale / Expired Session Key -> REJECTED (Session Store PASSED)", flush=True)
 
-    # 12. Key Rotation Lifecycle Test
+    # 12. Authenticated Key Rotation Lifecycle Test
     # Key ID 2 active for Debian Node 20
     session_k2 = linep_sl.derive_session_key(master_secret, session_id, 2, node_id, 3600, now)
     mac_k2 = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 20, payload)
@@ -548,8 +547,20 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     resp_k2 = send_test_request(host, tcp_port, k2_req)
     assert resp_k2["status"] == "ACCEPTED"
 
-    # Revoke Key ID 1 on Server
-    rotate_req = {"action": "ROTATE_KEY", "session_id": session_id, "revoke_key_id": 1, "node_id": node_id}
+    # Send Authenticated ROTATE_KEY command (signed with session_k2 and ADMIN capability token!)
+    rotate_cap_token = linep_sl.create_capability_token(session_k2.secret_key, session_id, linep_sl.CapFlags.ADMIN, now + 3600)
+    rotate_payload = b"ROTATE_KEY_ID_1"
+    rotate_mac = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 400, rotate_payload)
+    rotate_req = dict(base_req)
+    rotate_req["type"] = "ROTATE_KEY"
+    rotate_req["key_id"] = 2
+    rotate_req["revoke_key_id"] = 1
+    rotate_req["auth_seq"] = 400
+    rotate_req["payload_hex"] = rotate_payload.hex()
+    rotate_req["mac_hex"] = rotate_mac.hex()
+    rotate_req["required_cap"] = int(linep_sl.CapFlags.ADMIN)
+    rotate_req["cap_flags"] = linep_sl.CapFlags.ADMIN.value
+    rotate_req["cap_mac_hex"] = rotate_cap_token.mac.hex()
     resp_rot = send_test_request(host, tcp_port, rotate_req)
     assert resp_rot["status"] == "KEY_ROTATED"
 
@@ -557,7 +568,7 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     resp_k1_revoked = send_test_request(host, tcp_port, base_req)
     assert resp_k1_revoked["status"] == "REJECTED"
     assert "Expired, revoked or non-existent session key" in resp_k1_revoked["reason"]
-    print("  [Client Test 12] Key Rotation (Revoked Key ID 1 -> REJECTED, Key ID 2 -> ACCEPTED) PASSED", flush=True)
+    print("  [Client Test 12] Authenticated Key Rotation (Revoked Key ID 1 -> REJECTED, Key ID 2 -> ACCEPTED) PASSED", flush=True)
 
     # --- UDP HEARTBEAT TESTS (Tests 13-16) ---
     hb_cap_token = linep_sl.create_capability_token(

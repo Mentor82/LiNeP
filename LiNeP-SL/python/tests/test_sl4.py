@@ -98,7 +98,8 @@ def test_sl4_persistent_security_engine_with_real_identity():
     assert dec4 == linep_sl.Decision.DENY
     assert reason4 == "CROSS_DOMAIN_FEDERATION_DENIED"
 
-    # 5. Add Federation Trust AND enable allow_cross_domain -> ALLOW!
+    # 5. Add Federation Trust AND register peer for Domain B AND enable allow_cross_domain -> ALLOW!
+    engine.register_peer(10, pubkey_node10, trust_domain_id=domain_b)
     engine.add_federation(domain_a, domain_b, linep_sl.CapFlags.INFERENCE_READ)
     pol = linep_sl.GovernancePolicy(
         policy_id="default-policy",

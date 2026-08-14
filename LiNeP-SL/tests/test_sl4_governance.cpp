@@ -119,8 +119,8 @@ int main() {
     assert(res_untrusted_cross.reason_code == "CROSS_DOMAIN_IDENTITY_UNTRUSTED");
     std::cout << "  [8] Cross-Domain with Federation BUT Untrusted Federated Peer Identity -> DENY PASSED" << std::endl;
 
-    // 9. Register remote federated peer identity with valid pubkey -> ALLOW!
-    id_provider->register_peer(20, real_pubkey_deb); // Node 20 registered with real_pubkey_deb
+    // 9. Register remote federated peer identity in Domain B -> ALLOW!
+    id_provider->register_peer_for_domain(domain_b, 20, real_pubkey_deb); // Node 20 registered for Domain B
     std::memcpy(ctx_cross.remote_peer.pubkey, real_pubkey_deb, 32);
     auto res7_allowed = engine.evaluate(ctx_cross);
     assert(linep::sl::is_decision_allowed(res7_allowed));

@@ -47,10 +47,13 @@ class SecurityDecisionEngine:
             lib.linep_sl4_engine_free(self._handle)
             self._handle = None
 
-    def register_peer(self, node_id: int, pubkey_32bytes: bytes) -> None:
+    def register_peer(self, node_id: int, pubkey_32bytes: bytes, trust_domain_id: int | None = None) -> None:
         if len(pubkey_32bytes) != 32:
             raise ValueError("Pubkey must be exactly 32 bytes")
-        lib.linep_sl4_engine_register_peer(self._handle, node_id, pubkey_32bytes)
+        if trust_domain_id is not None:
+            lib.linep_sl4_engine_register_peer_for_domain(self._handle, trust_domain_id, node_id, pubkey_32bytes)
+        else:
+            lib.linep_sl4_engine_register_peer(self._handle, node_id, pubkey_32bytes)
 
     def set_policy(self, policy: GovernancePolicy) -> None:
         lib.linep_sl4_engine_set_policy(
