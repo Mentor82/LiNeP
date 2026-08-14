@@ -1,0 +1,7 @@
+add_executable(test_sl1_auth test_sl1_auth.cpp)
+target_link_libraries(test_sl1_auth PRIVATE linep_sl_core)
+add_test(NAME test_sl1_auth COMMAND test_sl1_auth)
+
+add_executable(test_sl2_capabilities test_sl2_capabilities.cpp)
+target_link_libraries(test_sl2_capabilities PRIVATE linep_sl_core)
+add_test(NAME test_sl2_capabilities COMMAND test_sl2_capabilities)
