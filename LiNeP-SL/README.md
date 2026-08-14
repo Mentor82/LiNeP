@@ -2,7 +2,7 @@
 
 LiNeP-SL is the layered security framework for LiNeP. It augments the low-latency LiNeP transport with progressively stronger authentication, cryptographic identity, authorization, replay protection, policy enforcement, auditability, and zero-trust federation while preserving LiNeP's deterministic and lightweight core.
 
-> Status: reconstructed architecture baseline from prior LiNeP design discussions. Treat the layer model and architectural boundaries below as the current design baseline. Where details are still marked for validation, do not silently invent incompatible semantics.
+> Status: Fully implemented & audited V0.1 architecture baseline. All layer boundaries, identity stores, governance policy engines, audit sinks, and transport security invariants across TCP & UDP are verified.
 
 ## Core boundary
 
@@ -24,10 +24,8 @@ Low-overhead authentication intended for trusted/internal LiNeP clusters. Candid
 
 Primary question: **Did this frame really come from an authenticated member of this LiNeP trust domain?**
 
-SL1 may require a minimal integration seam in the LiNeP core, but remains conceptually part of LiNeP-SL.
-
 ### SL2 — Cryptographic identity & key management
-Strong peer identity and key lifecycle: mTLS or Noise-style authenticated handshake, node/worker cryptographic identities, session-key negotiation, rotation, revocation, re-authentication, trust-domain membership.
+Strong peer identity and key lifecycle: mTLS or Noise-style authenticated key exchange, node/worker cryptographic identities, session-key negotiation, rotation, revocation, re-authentication, trust-domain membership.
 
 Primary question: **Who are you cryptographically, and what keys/trust domain apply to this session?**
 
@@ -66,23 +64,17 @@ Privileged Tool Worker          SL0 + SL1 + SL2 + SL3
 External/Federated Trust Domain SL0 + SL1 + SL2 + SL3 + SL4
 ```
 
-## Non-negotiable invariants
+## Documentation & Issue Tracking
 
-1. No second transport stack.
-2. No silent security downgrade.
-3. No breaking LiNeP V0.2 streaming/sequence/cancellation invariants without an explicit protocol decision.
-4. Prefer session-bound authentication over per-feature ad-hoc secrets.
-5. Replay protection must reuse/align with LiNeP sequence semantics where possible.
-6. Authorization is deny-by-default.
-7. Audit must avoid duplicating sensitive payloads; use metadata + payload digest where possible.
-8. Keep cryptographic/provider choices behind narrow interfaces so the wire/security contract is not coupled to one library.
+* 📜 **[Reconstructed Security Specification V0.1](./SPEC_V0_1_RECONSTRUCTED.md)**
+* 📊 **[Micro-Benchmark & Security Overhead Audit Report](./AUDIT_PERFORMANCE_SL0_VS_SL4.md)**
+* 🌐 **[Windows ↔ Debian 13 Interoperability Report](./INTEROP_WINDOWS_DEBIAN13.md)**
+* 📋 **[LiNeP-SL Implementation Roadmap](./TODO_V0_1.md)**
 
-## Start here for implementation
-
-Read in this order:
-
-1. `README.md` — architecture boundary and layer model
-2. `SPEC_V0_1_RECONSTRUCTED.md` — reconstructed detailed specification
-3. `TODO_V0_1.md` — phased implementation plan
-
-For the first implementation pass, **do not redesign SL0–SL4**. Analyze current LiNeP V0.2 compatibility first, then propose the smallest safe SL1 integration seam.
+### Implementation Issues & Verification:
+- **Issue #1**: [`fix(linep-sl): restore normative SL0–SL4 layer boundaries`](https://github.com/Mentor82/LiNeP/issues/1)
+- **Issue #2**: [`hardening(linep-sl/sl1): canonicalize MAC input`](https://github.com/Mentor82/LiNeP/issues/2)
+- **Issue #3**: [`feat(linep-sl/sl2): implement cryptographic identity & session key management`](https://github.com/Mentor82/LiNeP/issues/3)
+- **Issue #4**: [`test(linep-sl): validate SL2 interoperability on real Windows ↔ Debian 13 peers`](https://github.com/Mentor82/LiNeP/issues/4)
+- **Issue #6**: [`feat(linep-sl/sl4): implement governance, audit, zero-trust and federation semantics`](https://github.com/Mentor82/LiNeP/issues/6)
+- **Issue #7**: [`test(linep-sl): validate SL security invariants over LiNeP UDP heartbeat transport`](https://github.com/Mentor82/LiNeP/issues/7)

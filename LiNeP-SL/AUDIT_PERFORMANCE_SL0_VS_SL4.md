@@ -95,7 +95,7 @@ Iterations per Benchmark: 100,000 messages
 | **SL1 HMAC-SHA256 MAC** | 85,920 msg/s | 11.64 µs | 34,399 msg/s | 29.07 µs |
 | **SL2 Session Key Derivation** | 145,753 msg/s | 6.86 µs | 60,584 msg/s | 16.51 µs |
 | **SL3 Capability Verification** | 163,066 msg/s | 6.13 µs | 61,413 msg/s | 16.28 µs |
-| **SL4 Governance & Audit Engine** | 210,689 msg/s | 4.75 µs | 54,600 msg/s | 18.31 µs |
+| **SL4 Governance Engine & Audit** | 210,689 msg/s | 4.75 µs | 54,600 msg/s | 18.31 µs |
 | **FULL STACK (SL1–SL4 with SL2)** | **43,693 msg/s** | **22.89 µs** | **16,141 msg/s** | **61.95 µs** |
 
 ---
@@ -103,15 +103,35 @@ Iterations per Benchmark: 100,000 messages
 ## 5. Security Invariant & Enforcement Verification Checklist
 
 - [x] **No Gate Bypass for Message Types**: `TASK`, `STREAM_CHUNK`, `TASK_CANCEL`, and `UDP_HEARTBEAT` all undergo mandatory SL1 MAC, SL3 Capability Authorization, and SL4 Zero-Trust Governance checks.
-- [x] **Identity Provider Anchor**: Server engine uses pre-provisioned trusted peer identity anchors. Incoming packets cannot dynamically register untrusted public keys.
+- [x] **Domain-Scoped Identity Provider Anchor**: Server engine uses pre-provisioned trusted peer identity anchors keyed by `(trust_domain_id, node_id)`. Incoming packets cannot dynamically register untrusted public keys or spoof trust domains.
 - [x] **Transport Isolation**: Replay state is scoped per `(session_id, correlation_id, transport_type)` avoiding sequence collisions between TCP and UDP.
 - [x] **Zero Secrets in Audit Logs**: Audit records track policy revisions, capabilities, and decision codes without exposing private keys or raw secrets.
 
 ---
 
-## 6. Audit Conclusion & Status
+## 6. Normative References & GitHub Issue Tracking
 
-The **LiNeP-SL Security Layer** demonstrates exceptional in-memory performance, adding **only ~15.1 microseconds** of CPU processing overhead per message while enforcing full Zero-Trust security guarantees.
+### Primary References for Issue #6 & Issue #7:
 
-- **Status**: **EMPIRICAL MICRO-BENCHMARK AUDITED & VERIFIED**
-- **Git Verification**: Commit `c1d23cc` on branch `main`.
+1. **GitHub Issue #6**: [`feat(linep-sl/sl4): implement governance, audit, zero-trust and federation semantics`](https://github.com/Mentor82/LiNeP/issues/6)
+   - **Scope**: SL4 Zero-Trust Governance, Policy Engine, Secret-Free Audit Sink, Cross-Domain Federation Gates, Domain-Scoped Identity (`(trust_domain_id, node_id)`), Policy Revision Invalidation.
+   - **Key Verification Commits**: `d9b89e0`, `8c8d16d`, `024ebde`, `f2ac035`, `fc0e0c6`, `6d57fd5`.
+
+2. **GitHub Issue #7**: [`test(linep-sl): validate SL security invariants over LiNeP UDP heartbeat transport`](https://github.com/Mentor82/LiNeP/issues/7)
+   - **Scope**: UDP Heartbeat Security Invariants, `PortPair(tcp_port, udp_port)`, `CAP_HEARTBEAT_EMIT` (`0x0020`), Sequence Isolation per `(session_id, correlation_id, transport_type)`, 16-Test Interop Matrix across Windows Host & Debian 13 WSL.
+   - **Key Verification Commits**: `5f47dee`, `c1d23cc`, `f2ac035`, `fc0e0c6`, `6d57fd5`.
+
+### Prior Architectural Baseline References:
+- **GitHub Issue #1**: `fix(linep-sl): restore normative SL0–SL4 layer boundaries` (Commit `e39d693`).
+- **GitHub Issue #2**: `hardening(linep-sl/sl1): canonicalize MAC input` (Commit `e39d693`).
+- **GitHub Issue #3**: `feat(linep-sl/sl2): implement cryptographic identity & session key management` (Commits `268bb73`, `03f3496`).
+- **GitHub Issue #4**: `test(linep-sl): validate SL2 interoperability on real Windows ↔ Debian 13 peers` (Commits `634c350`, `7244583`, `bb6625f`, `bbbca74`).
+
+---
+
+## 7. Audit Conclusion & Status
+
+The **LiNeP-SL Security Layer** demonstrates exceptional in-memory performance, adding **only ~15.1 microseconds** of CPU processing overhead per message while enforcing full Zero-Trust security guarantees across both TCP and UDP transports.
+
+- **Status**: **EMPIRICAL MICRO-BENCHMARK AUDITED & VERIFIED (ISSUES #6 & #7 CLOSED)**
+- **Git Verification**: Commit `6d57fd5` on branch `main`.

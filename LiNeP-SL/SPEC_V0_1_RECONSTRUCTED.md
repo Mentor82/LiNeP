@@ -311,3 +311,14 @@ Cross-language parity is required where C++ and Python both expose security/fram
 ## 10. Definition
 
 **LiNeP-SL (Liara Neural Protocol Security Layers) is the layered security framework for LiNeP. It augments the low-latency LiNeP transport with progressively stronger authentication, cryptographic identity, authorization, replay protection, policy enforcement, auditability, and zero-trust federation while preserving LiNeP's deterministic and lightweight core.**
+
+---
+
+## 11. Normative Issue References & Implementation History
+
+- **Issue #1**: [`fix(linep-sl): restore normative SL0–SL4 layer boundaries`](https://github.com/Mentor82/LiNeP/issues/1) (Commit `e39d693`)
+- **Issue #2**: [`hardening(linep-sl/sl1): canonicalize MAC input`](https://github.com/Mentor82/LiNeP/issues/2) (Commit `e39d693`)
+- **Issue #3**: [`feat(linep-sl/sl2): implement cryptographic identity & session key management`](https://github.com/Mentor82/LiNeP/issues/3) (Commits `268bb73`, `03f3496`)
+- **Issue #4**: [`test(linep-sl): validate SL2 interoperability on real Windows ↔ Debian 13 peers`](https://github.com/Mentor82/LiNeP/issues/4) (Commits `634c350`, `7244583`, `bb6625f`, `bbbca74`)
+- **Issue #6**: [`feat(linep-sl/sl4): implement governance, audit, zero-trust and federation semantics`](https://github.com/Mentor82/LiNeP/issues/6) (Commits `d9b89e0`, `8c8d16d`, `024ebde`, `f2ac035`, `fc0e0c6`, `6d57fd5`)
+- **Issue #7**: [`test(linep-sl): validate SL security invariants over LiNeP UDP heartbeat transport`](https://github.com/Mentor82/LiNeP/issues/7) (Commits `5f47dee`, `c1d23cc`, `f2ac035`, `fc0e0c6`, `6d57fd5`)
