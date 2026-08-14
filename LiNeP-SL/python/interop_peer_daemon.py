@@ -39,7 +39,8 @@ def run_server(port: int, master_secret: bytes, trust_domain: int):
     s.listen(5)
     print(f"[SERVER READY] Listening on 0.0.0.0:{port}", flush=True)
 
-    last_stream_seq = 0
+    # Track sequence state per (session_id, correlation_id) stream scope
+    stream_sequences: dict[tuple[int, int], int] = {}
 
     while True:
         conn, addr = s.accept()
@@ -118,20 +119,23 @@ def run_server(port: int, master_secret: bytes, trust_domain: int):
         # Handling Specific Message Types:
         if msg_type == "STREAM_CHUNK":
             chunk_seq = req["chunk_seq"]
-            # Enforce strictly monotonic fragment sequence numbers
-            if chunk_seq <= last_stream_seq or chunk_seq > last_stream_seq + 1:
+            stream_key = (req["session_id"], req.get("correlation_id", 42))
+            last_seq = stream_sequences.get(stream_key, 0)
+
+            # Enforce strictly monotonic fragment sequence numbers per stream scope
+            if chunk_seq <= last_seq or chunk_seq > last_seq + 1:
                 resp = {"status": "REJECTED", "reason": f"Stream sequence error (duplicate/reordered chunk {chunk_seq})"}
                 conn.sendall(json.dumps(resp).encode("utf-8"))
                 conn.close()
                 continue
-            last_stream_seq = chunk_seq
+
+            stream_sequences[stream_key] = chunk_seq
             resp = {"status": "ACCEPTED", "chunk_seq": chunk_seq, "negotiated_sl": int(sl)}
 
         elif msg_type == "TASK_CANCEL":
             resp = {"status": "CANCEL_ACCEPTED", "correlation_id": req.get("correlation_id", 42)}
 
         else: # Standard TASK
-            # Send key fingerprint hash, never raw secret key!
             key_fingerprint = hashlib.sha256(session.secret_key).hexdigest()[:16]
             resp = {
                 "status": "ACCEPTED",
@@ -195,7 +199,7 @@ def run_client(host: str, port: int, master_secret: bytes, trust_domain: int):
     # 1. Valid Standard TASK Request -> MUST be ACCEPTED
     resp = send_test_request(host, port, base_req)
     assert resp["status"] == "ACCEPTED"
-    assert "derived_key_hex" not in resp # Verify no secret key leakage over wire!
+    assert "derived_key_hex" not in resp
     print("  [Client Test 1] Valid SL1/SL2/SL3 TASK Request -> ACCEPTED", flush=True)
 
     # 2. Tampered MAC -> MUST be REJECTED (Fail Closed Gate 1)
@@ -233,7 +237,7 @@ def run_client(host: str, port: int, master_secret: bytes, trust_domain: int):
     # 5. Duplicate Stream Fragment (retransmitted Chunk 2) -> MUST be REJECTED
     stream_dup_req = dict(base_req)
     stream_dup_req["type"] = "STREAM_CHUNK"
-    stream_dup_req["chunk_seq"] = 2 # Duplicate!
+    stream_dup_req["chunk_seq"] = 2
     resp_dup = send_test_request(host, port, stream_dup_req)
     assert resp_dup["status"] == "REJECTED"
     assert "Stream sequence error" in resp_dup["reason"]
