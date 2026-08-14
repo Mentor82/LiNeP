@@ -30,6 +30,22 @@ LINEP_SL_API int linep_sl1_verify_mac(
     return linep::sl::verify_sl1_mac(secret_key, key_len, *hdr, *ext, payload, payload_len) ? 1 : 0;
 }
 
+LINEP_SL_API int linep_sl2_negotiate_level(
+    uint8_t peer_supported,
+    uint8_t local_supported,
+    uint8_t local_required,
+    uint8_t* out_negotiated)
+{
+    auto res = linep::sl::negotiate_security_level(
+        static_cast<linep::sl::SecurityLevel>(peer_supported),
+        static_cast<linep::sl::SecurityLevel>(local_supported),
+        static_cast<linep::sl::SecurityLevel>(local_required));
+    if (out_negotiated) {
+        *out_negotiated = static_cast<uint8_t>(res.negotiated_sl);
+    }
+    return res.success ? 1 : 0;
+}
+
 LINEP_SL_API int linep_sl2_validate_peer_identity(
     const linep_sl2_peer_identity_t* peer,
     uint32_t expected_trust_domain)

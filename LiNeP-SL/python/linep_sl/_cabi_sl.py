@@ -47,6 +47,12 @@ int linep_sl1_verify_mac(
     const void* header_ptr, const linep_sl_auth_ext_t* auth_ext,
     const uint8_t* payload, uint32_t payload_len);
 
+int linep_sl2_negotiate_level(
+    uint8_t peer_supported,
+    uint8_t local_supported,
+    uint8_t local_required,
+    uint8_t* out_negotiated);
+
 int linep_sl2_validate_peer_identity(
     const linep_sl2_peer_identity_t* peer,
     uint32_t expected_trust_domain);

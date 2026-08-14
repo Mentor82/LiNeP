@@ -1,6 +1,42 @@
 from __future__ import annotations
 
+from enum import IntEnum
 from linep_sl._cabi_sl import ffi, lib
+
+
+class SecurityLevel(IntEnum):
+    SL0_NONE         = 0
+    SL1_AUTH         = 1
+    SL2_IDENTITY     = 2
+    SL3_CAPABILITIES = 3
+    SL4_GOVERNANCE   = 4
+
+
+class SecurityPolicy:
+    __slots__ = ("supported_sl", "required_sl")
+
+    def __init__(
+        self,
+        supported_sl: SecurityLevel | int = SecurityLevel.SL2_IDENTITY,
+        required_sl: SecurityLevel | int = SecurityLevel.SL2_IDENTITY,
+    ) -> None:
+        self.supported_sl = SecurityLevel(supported_sl)
+        self.required_sl = SecurityLevel(required_sl)
+
+
+def negotiate_security_level(
+    peer_supported: SecurityLevel | int,
+    local_supported: SecurityLevel | int,
+    local_required: SecurityLevel | int,
+) -> tuple[bool, SecurityLevel]:
+    out_negotiated = ffi.new("uint8_t *")
+    rc = lib.linep_sl2_negotiate_level(
+        int(peer_supported),
+        int(local_supported),
+        int(local_required),
+        out_negotiated,
+    )
+    return rc == 1, SecurityLevel(out_negotiated[0])
 
 
 class PeerIdentity:
@@ -17,6 +53,32 @@ class PeerIdentity:
         self.node_id = node_id
         self.pubkey = pubkey
         self.revoked = revoked
+
+
+class MemoryIdentityProvider:
+    def __init__(self, trust_domain_id: int) -> None:
+        self.trust_domain_id = trust_domain_id
+        self.trusted_nodes: dict[int, bytes] = {}
+        self.revoked_nodes: set[int] = set()
+
+    def register_peer(self, node_id: int, pubkey: bytes) -> None:
+        if len(pubkey) != 32:
+            raise ValueError("pubkey must be exactly 32 bytes")
+        self.trusted_nodes[node_id] = pubkey
+        self.revoked_nodes.discard(node_id)
+
+    def revoke_peer(self, node_id: int) -> None:
+        self.revoked_nodes.add(node_id)
+
+    def is_peer_trusted(self, peer: PeerIdentity, expected_trust_domain: int) -> bool:
+        if peer.revoked or peer.node_id in self.revoked_nodes:
+            return False
+        if not validate_peer_identity(peer, expected_trust_domain):
+            return False
+        stored_pk = self.trusted_nodes.get(peer.node_id)
+        if stored_pk is None:
+            return False
+        return stored_pk == peer.pubkey
 
 
 class SessionKey:

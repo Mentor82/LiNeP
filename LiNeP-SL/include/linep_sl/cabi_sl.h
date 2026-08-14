@@ -73,6 +73,12 @@ LINEP_SL_API int linep_sl1_verify_mac(
     const uint8_t* payload, uint32_t payload_len);
 
 /* SL2 Cryptographic Identity & Session Key Management Functions */
+LINEP_SL_API int linep_sl2_negotiate_level(
+    uint8_t peer_supported,
+    uint8_t local_supported,
+    uint8_t local_required,
+    uint8_t* out_negotiated);
+
 LINEP_SL_API int linep_sl2_validate_peer_identity(
     const linep_sl2_peer_identity_t* peer,
     uint32_t expected_trust_domain);
