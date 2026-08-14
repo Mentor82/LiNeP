@@ -26,14 +26,45 @@ _ensure_lib_path()
 import linep_sl
 
 
-def run_udp_server(udp_port: int, master_secret: bytes, trust_domain: int, stop_event: threading.Event):
+class ServerSessionStore:
+    """Persistent Server SessionStore enforcing key rotation, TTL freshness, and active key ID lookups."""
+    def __init__(self, master_secret: bytes):
+        self.master_secret = master_secret
+        self.sessions: dict[tuple[int, int, int], linep_sl.SessionKey] = {} # (session_id, key_id, node_id) -> SessionKey
+
+    def establish_session(self, session_id: int, key_id: int, node_id: int, ttl_sec: int, established_at_sec: int) -> linep_sl.SessionKey:
+        sk = linep_sl.derive_session_key(self.master_secret, session_id, key_id, node_id, ttl_sec, established_at_sec)
+        self.sessions[(session_id, key_id, node_id)] = sk
+        return sk
+
+    def revoke_key_id(self, session_id: int, key_id: int, node_id: int):
+        self.sessions.pop((session_id, key_id, node_id), None)
+
+    def get_session(self, session_id: int, key_id: int, node_id: int, current_time_sec: int) -> linep_sl.SessionKey | None:
+        sk = self.sessions.get((session_id, key_id, node_id))
+        if not sk:
+            return None # Revoked or non-existent key ID -> Fail closed!
+        if not linep_sl.verify_session_key_freshness(sk, current_time_sec):
+            return None # Expired session key -> Fail closed!
+        return sk
+
+
+def run_udp_server(udp_port: int, session_store: ServerSessionStore, trust_domain: int, stop_event: threading.Event):
     pubkey_win = b"\xaa" * 32
     pubkey_deb = b"\xbb" * 32
 
-    # Pre-provision trusted identities at server startup
+    # Pre-provision trusted identities and policy at server startup
     sl4_engine = linep_sl.SecurityDecisionEngine(trust_domain)
     sl4_engine.register_peer(10, pubkey_win)
     sl4_engine.register_peer(20, pubkey_deb)
+
+    pol_init = linep_sl.GovernancePolicy(
+        policy_id="default-policy",
+        policy_revision=1,
+        allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.INFERENCE_WRITE | linep_sl.CapFlags.METRICS_READ | linep_sl.CapFlags.HEARTBEAT_EMIT,
+        allow_cross_domain=False,
+    )
+    sl4_engine.set_policy(pol_init)
 
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -63,12 +94,12 @@ def run_udp_server(udp_port: int, master_secret: bytes, trust_domain: int, stop_
         node_id = req["node_id"]
         seq = req["auth_seq"]
         pubkey_bytes = bytes.fromhex(req["pubkey_hex"])
-
-        # 1. Derive Session Key
         now = int(time.time())
-        session = linep_sl.derive_session_key(master_secret, session_id, key_id, node_id, 3600, now)
+
+        # 1. Look up active session from persistent SessionStore & verify freshness
+        session = session_store.get_session(session_id, key_id, node_id, now)
         if not session:
-            resp = {"status": "REJECTED", "reason": "Failed to derive session key"}
+            resp = {"status": "REJECTED", "reason": "Expired, revoked or non-existent session key"}
             s.sendto(json.dumps(resp).encode("utf-8"), addr)
             continue
 
@@ -107,8 +138,9 @@ def run_udp_server(udp_port: int, master_secret: bytes, trust_domain: int, stop_
             continue
 
         # 5. Verify SL4 Engine
-        if req.get("remote_trust_domain_id") and req["remote_trust_domain_id"] != trust_domain:
-            sl4_engine.add_federation(trust_domain, req["remote_trust_domain_id"], linep_sl.CapFlags.HEARTBEAT_EMIT)
+        # Check if federation exists for cross-domain requests
+        remote_td = req.get("remote_trust_domain_id", trust_domain)
+        if req.get("explicit_federation_denied"):
             pol = linep_sl.GovernancePolicy(
                 policy_id="default-policy",
                 policy_revision=1,
@@ -116,14 +148,7 @@ def run_udp_server(udp_port: int, master_secret: bytes, trust_domain: int, stop_
                 allow_cross_domain=False,
             )
             sl4_engine.set_policy(pol)
-        else:
-            pol = linep_sl.GovernancePolicy(
-                policy_id="default-policy",
-                policy_revision=1,
-                allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.HEARTBEAT_EMIT,
-                allow_cross_domain=False,
-            )
-            sl4_engine.set_policy(pol)
+            sl4_engine.add_federation(trust_domain, remote_td, linep_sl.CapFlags.HEARTBEAT_EMIT)
 
         sl4_dec, sl4_reason = sl4_engine.evaluate(
             trust_domain_id=trust_domain,
@@ -131,7 +156,7 @@ def run_udp_server(udp_port: int, master_secret: bytes, trust_domain: int, stop_
             key_id=key_id,
             local_node_id=1,
             remote_node_id=node_id,
-            remote_trust_domain_id=req.get("remote_trust_domain_id", trust_domain),
+            remote_trust_domain_id=remote_td,
             remote_revoked=False,
             negotiated_sl=linep_sl.SecurityLevel(req["offered_sl"]),
             requested_cap=req_cap,
@@ -159,13 +184,32 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
     provider.register_peer(10, pubkey_win) # Windows Node 10
     provider.register_peer(20, pubkey_deb) # Debian Node 20
 
-    # Persistent Engine pre-provisioned with trusted identities
+    session_store = ServerSessionStore(master_secret)
+
+    # Establish initial session keys in persistent SessionStore
+    now_init = int(time.time())
+    session_store.establish_session(0x1001, 1, 10, 3600, now_init) # Session 0x1001 key 1 for Win Node 10
+    session_store.establish_session(0x2001, 1, 20, 3600, now_init) # Session 0x2001 key 1 for Debian Node 20
+    session_store.establish_session(0x2001, 2, 20, 3600, now_init) # Session 0x2001 rotated key 2 for Debian Node 20
+
+    # Establish an expired session for explicit testing
+    session_store.establish_session(0x9999, 1, 20, 10, now_init - 5000) # Expired 5000s ago!
+
+    # Persistent Engine pre-provisioned with trusted identities and policy
     sl4_engine = linep_sl.SecurityDecisionEngine(trust_domain)
     sl4_engine.register_peer(10, pubkey_win)
     sl4_engine.register_peer(20, pubkey_deb)
 
+    pol_init = linep_sl.GovernancePolicy(
+        policy_id="default-policy",
+        policy_revision=1,
+        allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.INFERENCE_WRITE | linep_sl.CapFlags.METRICS_READ | linep_sl.CapFlags.HEARTBEAT_EMIT,
+        allow_cross_domain=False,
+    )
+    sl4_engine.set_policy(pol_init)
+
     stop_udp = threading.Event()
-    udp_thread = threading.Thread(target=run_udp_server, args=(udp_port, master_secret, trust_domain, stop_udp), daemon=True)
+    udp_thread = threading.Thread(target=run_udp_server, args=(udp_port, session_store, trust_domain, stop_udp), daemon=True)
     udp_thread.start()
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -185,6 +229,14 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
 
         req = json.loads(data.decode("utf-8"))
         msg_type = req.get("type", "TASK")
+
+        # Command to simulate key rotation during tests
+        if req.get("action") == "ROTATE_KEY":
+            session_store.revoke_key_id(req["session_id"], req["revoke_key_id"], req["node_id"])
+            resp = {"status": "KEY_ROTATED", "reason": f"Key ID {req['revoke_key_id']} revoked"}
+            conn.sendall(json.dumps(resp).encode("utf-8"))
+            conn.close()
+            continue
 
         # 1. Peer Identity Validation (SL2 Identity Anchor)
         peer_id = linep_sl.PeerIdentity(
@@ -210,9 +262,14 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
             conn.close()
             continue
 
-        # 3. Derive Session Key
+        # 3. Look up active session key from persistent SessionStore & verify freshness
         now = int(time.time())
-        session = linep_sl.derive_session_key(master_secret, req["session_id"], req["key_id"], req["node_id"], 3600, now)
+        session = session_store.get_session(req["session_id"], req["key_id"], req["node_id"], now)
+        if not session:
+            resp = {"status": "REJECTED", "reason": "Expired, revoked or non-existent session key"}
+            conn.sendall(json.dumps(resp).encode("utf-8"))
+            conn.close()
+            continue
 
         # 4. Verify SL1 MAC
         hdr_bytes = bytes.fromhex(req["hdr_hex"])
@@ -249,15 +306,16 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
             continue
 
         # 6. Verify SL4 Governance, Zero-Trust & Federation Engine (ALL MESSAGE TYPES MUST PASS SL4!)
-        if req.get("remote_trust_domain_id") and req["remote_trust_domain_id"] != trust_domain:
-            sl4_engine.add_federation(trust_domain, req["remote_trust_domain_id"], linep_sl.CapFlags.INFERENCE_READ)
+        remote_td = req.get("remote_trust_domain_id", trust_domain)
+        if req.get("explicit_federation_denied"):
             pol = linep_sl.GovernancePolicy(
                 policy_id="default-policy",
                 policy_revision=1,
-                allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ,
+                allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.HEARTBEAT_EMIT,
                 allow_cross_domain=False,
             )
             sl4_engine.set_policy(pol)
+            sl4_engine.add_federation(trust_domain, remote_td, linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.HEARTBEAT_EMIT)
 
         sl4_dec, sl4_reason = sl4_engine.evaluate(
             trust_domain_id=trust_domain,
@@ -265,7 +323,7 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
             key_id=req["key_id"],
             local_node_id=1,
             remote_node_id=req["node_id"],
-            remote_trust_domain_id=req.get("remote_trust_domain_id", trust_domain),
+            remote_trust_domain_id=remote_td,
             remote_revoked=False,
             negotiated_sl=linep_sl.SecurityLevel(req["offered_sl"]),
             requested_cap=req_cap,
@@ -432,13 +490,17 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     assert resp_cancel["status"] == "CANCEL_ACCEPTED"
     print("  [Client Test 7] Authenticated TASK_CANCEL -> CANCEL_ACCEPTED PASSED", flush=True)
 
-    # 8. TASK_CANCEL with Unauthorized Capability -> MUST BE REJECTED!
+    # 8. TASK_CANCEL with Unauthorized Capability (SL3 Gate Test with VALID MAC recalculation!)
+    unauth_cancel_payload = b"CANCEL_TASK_42"
+    valid_unauth_mac = linep_sl.compute_sl1_mac(session.secret_key, hdr_bytes, session_id, key_id, 102, unauth_cancel_payload)
     unauth_cancel_req = dict(cancel_req)
     unauth_cancel_req["auth_seq"] = 102
+    unauth_cancel_req["mac_hex"] = valid_unauth_mac.hex()
     unauth_cancel_req["required_cap"] = int(linep_sl.CapFlags.ADMIN)
     resp_unauth_cancel = send_test_request(host, tcp_port, unauth_cancel_req)
     assert resp_unauth_cancel["status"] == "REJECTED"
-    print("  [Client Test 8] TASK_CANCEL with Unauthorized Capability -> REJECTED PASSED", flush=True)
+    assert "Capability authorization failed" in resp_unauth_cancel["reason"]
+    print("  [Client Test 8] TASK_CANCEL with Unauthorized Capability (Valid MAC) -> REJECTED (SL3 Gate PASSED)", flush=True)
 
     # 9. Tampered TASK_CANCEL -> REJECTED
     tampered_cancel_req = dict(cancel_req)
@@ -448,19 +510,61 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     assert resp_tampered_cancel["status"] == "REJECTED"
     print("  [Client Test 9] Tampered TASK_CANCEL -> REJECTED PASSED", flush=True)
 
-    # 10. SL4 Cross-Domain without Federation -> REJECTED
-    cross_domain_req = dict(base_req)
-    cross_domain_req["remote_trust_domain_id"] = 0x4C4E5039
-    resp_cross_domain = send_test_request(host, tcp_port, cross_domain_req)
-    assert resp_cross_domain["status"] == "REJECTED"
-    print("  [Client Test 10] SL4 Cross-Domain without Federation -> REJECTED (Fail Closed Gate 3 PASSED)", flush=True)
+    # 10A. SL4 Cross-Domain WITHOUT Federation Trust -> REJECTED (CROSS_DOMAIN_FEDERATION_DENIED)
+    no_fed_cross_req = dict(base_req)
+    no_fed_cross_req["remote_trust_domain_id"] = 0x4C4E5039 # Foreign trust domain without federation
+    resp_no_fed = send_test_request(host, tcp_port, no_fed_cross_req)
+    assert resp_no_fed["status"] == "REJECTED"
+    assert "CROSS_DOMAIN_FEDERATION_DENIED" in resp_no_fed["reason"]
+    print("  [Client Test 10A] Cross-Domain WITHOUT Federation Trust -> REJECTED PASSED", flush=True)
 
-    # --- UDP HEARTBEAT TESTS (Tests 11-14) ---
+    # 10B. SL4 Cross-Domain WITH Federation Trust BUT Policy allow_cross_domain = False -> REJECTED
+    fed_denied_cross_req = dict(base_req)
+    fed_denied_cross_req["remote_trust_domain_id"] = 0x4C4E5039
+    fed_denied_cross_req["explicit_federation_denied"] = True
+    resp_fed_denied = send_test_request(host, tcp_port, fed_denied_cross_req)
+    assert resp_fed_denied["status"] == "REJECTED"
+    assert "GOVERNANCE_POLICY_CROSS_DOMAIN_DENIED" in resp_fed_denied["reason"]
+    print("  [Client Test 10B] Cross-Domain WITH Federation Trust BUT Policy allow_cross_domain = False -> REJECTED PASSED", flush=True)
+
+    # 11. Stale / Expired Session Key Test -> REJECTED
+    expired_sess_req = dict(base_req)
+    expired_sess_req["session_id"] = 0x9999 # Pre-established expired session
+    resp_expired = send_test_request(host, tcp_port, expired_sess_req)
+    assert resp_expired["status"] == "REJECTED"
+    assert "Expired, revoked or non-existent session key" in resp_expired["reason"]
+    print("  [Client Test 11] Stale / Expired Session Key -> REJECTED (Session Store PASSED)", flush=True)
+
+    # 12. Key Rotation Lifecycle Test
+    # Key ID 2 active for Debian Node 20
+    session_k2 = linep_sl.derive_session_key(master_secret, session_id, 2, node_id, 3600, now)
+    mac_k2 = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 20, payload)
+    cap_token_k2 = linep_sl.create_capability_token(session_k2.secret_key, session_id, linep_sl.CapFlags.INFERENCE_READ, now + 3600)
+    k2_req = dict(base_req)
+    k2_req["key_id"] = 2
+    k2_req["auth_seq"] = 20
+    k2_req["mac_hex"] = mac_k2.hex()
+    k2_req["cap_mac_hex"] = cap_token_k2.mac.hex()
+    resp_k2 = send_test_request(host, tcp_port, k2_req)
+    assert resp_k2["status"] == "ACCEPTED"
+
+    # Revoke Key ID 1 on Server
+    rotate_req = {"action": "ROTATE_KEY", "session_id": session_id, "revoke_key_id": 1, "node_id": node_id}
+    resp_rot = send_test_request(host, tcp_port, rotate_req)
+    assert resp_rot["status"] == "KEY_ROTATED"
+
+    # Try using Revoked Key ID 1 -> MUST BE REJECTED!
+    resp_k1_revoked = send_test_request(host, tcp_port, base_req)
+    assert resp_k1_revoked["status"] == "REJECTED"
+    assert "Expired, revoked or non-existent session key" in resp_k1_revoked["reason"]
+    print("  [Client Test 12] Key Rotation (Revoked Key ID 1 -> REJECTED, Key ID 2 -> ACCEPTED) PASSED", flush=True)
+
+    # --- UDP HEARTBEAT TESTS (Tests 13-16) ---
     hb_cap_token = linep_sl.create_capability_token(
-        session.secret_key, session_id, linep_sl.CapFlags.HEARTBEAT_EMIT, now + 3600
+        session_k2.secret_key, session_id, linep_sl.CapFlags.HEARTBEAT_EMIT, now + 3600
     )
     hb_payload = b"UDP_HEARTBEAT_NODE_20"
-    hb_mac = linep_sl.compute_sl1_mac(session.secret_key, hdr_bytes, session_id, key_id, 200, hb_payload)
+    hb_mac = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 300, hb_payload)
 
     hb_req = {
         "type": "UDP_HEARTBEAT",
@@ -469,8 +573,8 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
         "pubkey_hex": pubkey_debian.hex(),
         "offered_sl": linep_sl.SecurityLevel.SL3_CAPABILITIES.value,
         "session_id": session_id,
-        "key_id": key_id,
-        "auth_seq": 200,
+        "key_id": 2,
+        "auth_seq": 300,
         "hdr_hex": hdr_bytes.hex(),
         "payload_hex": hb_payload.hex(),
         "mac_hex": hb_mac.hex(),
@@ -479,42 +583,45 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
         "cap_mac_hex": hb_cap_token.mac.hex(),
     }
 
-    # 11. Valid Protected UDP Heartbeat -> HEARTBEAT_ACCEPTED
-    resp11 = send_udp_heartbeat(host, udp_port, hb_req)
-    assert resp11["status"] == "HEARTBEAT_ACCEPTED"
-    print("  [Client Test 11] Protected UDP Heartbeat -> ACCEPTED PASSED", flush=True)
+    # 13. Valid Protected UDP Heartbeat -> HEARTBEAT_ACCEPTED
+    resp13 = send_udp_heartbeat(host, udp_port, hb_req)
+    assert resp13["status"] == "HEARTBEAT_ACCEPTED", f"Test 13 failed: {resp13}"
+    print("  [Client Test 13] Protected UDP Heartbeat -> ACCEPTED PASSED", flush=True)
 
-    # 12. Tampered UDP Heartbeat MAC -> REJECTED
+    # 14. Tampered UDP Heartbeat MAC -> REJECTED
     tampered_hb = dict(hb_req)
-    tampered_hb["auth_seq"] = 201
+    tampered_hb["auth_seq"] = 301
     tampered_hb["mac_hex"] = (b"\xff" * 16).hex()
-    resp12 = send_udp_heartbeat(host, udp_port, tampered_hb)
-    assert resp12["status"] == "REJECTED"
-    print("  [Client Test 12] Tampered UDP Heartbeat MAC -> REJECTED PASSED", flush=True)
-
-    # 13. Duplicate UDP Heartbeat Replay (retransmitted seq 200) -> REJECTED
-    dup_hb = dict(hb_req)
-    dup_hb["auth_seq"] = 200
-    resp13 = send_udp_heartbeat(host, udp_port, dup_hb)
-    assert resp13["status"] == "REJECTED"
-    assert "Replay Error" in resp13["reason"]
-    print("  [Client Test 13] Duplicate UDP Heartbeat Replay -> REJECTED PASSED", flush=True)
-
-    # 14. Cross-Domain UDP Heartbeat without Federation -> REJECTED
-    cross_hb = dict(hb_req)
-    cross_hb["auth_seq"] = 202
-    cross_hb["mac_hex"] = linep_sl.compute_sl1_mac(session.secret_key, hdr_bytes, session_id, key_id, 202, hb_payload).hex()
-    cross_hb["remote_trust_domain_id"] = 0x4C4E5039
-    resp14 = send_udp_heartbeat(host, udp_port, cross_hb)
+    resp14 = send_udp_heartbeat(host, udp_port, tampered_hb)
     assert resp14["status"] == "REJECTED"
-    print("  [Client Test 14] Cross-Domain UDP Heartbeat without Federation -> REJECTED PASSED", flush=True)
+    print("  [Client Test 14] Tampered UDP Heartbeat MAC -> REJECTED PASSED", flush=True)
+
+    # 15. Duplicate UDP Heartbeat Replay (retransmitted seq 300) -> REJECTED
+    dup_hb = dict(hb_req)
+    dup_hb["auth_seq"] = 300
+    resp15 = send_udp_heartbeat(host, udp_port, dup_hb)
+    assert resp15["status"] == "REJECTED"
+    assert "Replay Error" in resp15["reason"]
+    print("  [Client Test 15] Duplicate UDP Heartbeat Replay -> REJECTED PASSED", flush=True)
+
+    # 16. Cross-Domain UDP Heartbeat WITHOUT Federation Trust -> REJECTED
+    cross_hb = dict(hb_req)
+    cross_hb["auth_seq"] = 302
+    cross_hb["mac_hex"] = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 302, hb_payload).hex()
+    cross_hb["remote_trust_domain_id"] = 0x4C4E5039
+    resp16 = send_udp_heartbeat(host, udp_port, cross_hb)
+    assert resp16["status"] == "REJECTED"
+    print("  [Client Test 16] Cross-Domain UDP Heartbeat without Federation -> REJECTED PASSED", flush=True)
 
     # Final shutdown request
     stop_req = dict(base_req)
+    stop_req["key_id"] = 2
+    stop_req["auth_seq"] = 500
+    stop_req["mac_hex"] = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 500, payload).hex()
     stop_req["stop_after_test"] = True
     send_test_request(host, tcp_port, stop_req)
 
-    print("[CLIENT SUCCESS] ALL STREAMING, CANCEL & UDP HEARTBEAT SL1-SL4 SECURITY GATES PASSED 100%!", flush=True)
+    print("[CLIENT SUCCESS] ALL TCP STREAMING, CANCEL, KEY ROTATION & UDP HEARTBEAT SL1-SL4 SECURITY GATES PASSED 100%!", flush=True)
 
 
 def main():

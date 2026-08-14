@@ -181,7 +181,7 @@ DecisionResult SecurityDecisionEngine::evaluate(const DecisionContext& ctx) noex
         }
     }
 
-    // 5. Cross-Domain vs Same-Domain Federation Evaluation
+    // 5. Cross-Domain vs Same-Domain Federation & Identity Evaluation
     if (!is_same_domain) {
         // Gate A: Check explicit Federation Trust exists
         FederationTrust fed_trust;
@@ -198,6 +198,11 @@ DecisionResult SecurityDecisionEngine::evaluate(const DecisionContext& ctx) noex
         // Gate C: Requested capability must fit within BOTH governing policy bounds AND federation trust max caps
         if (!has_capability(fed_trust.max_granted_caps, ctx.requested_cap)) {
             return emit_result(Decision::DENY, "FEDERATION_CAPABILITY_EXCEEDED", AuditEventType::CAPABILITY_DENIED);
+        }
+
+        // Gate D: Cryptographic identity check for remote federated peer in Identity Provider (if registered for remote domain)
+        if (identity_provider_ && !identity_provider_->is_peer_trusted(ctx.remote_peer, ctx.remote_peer.trust_domain_id)) {
+            return emit_result(Decision::DENY, "CROSS_DOMAIN_IDENTITY_UNTRUSTED", AuditEventType::SESSION_REJECTED);
         }
     } else {
         // Same-domain -> Check if identity is trusted by identity provider

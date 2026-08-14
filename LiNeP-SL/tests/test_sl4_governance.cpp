@@ -88,6 +88,7 @@ int main() {
     // 6. Cross-Domain Traffic without Federation Trust -> DENY
     linep::sl::DecisionContext ctx_cross = ctx;
     ctx_cross.remote_peer.trust_domain_id = domain_b; // Foreign Domain B
+    ctx_cross.remote_peer.node_id = 20; // Federated Node 20
     auto res5 = engine.evaluate(ctx_cross);
     assert(!linep::sl::is_decision_allowed(res5));
     assert(res5.decision == linep::sl::Decision::DENY);
@@ -102,7 +103,7 @@ int main() {
     assert(res6_denied.reason_code == "GOVERNANCE_POLICY_CROSS_DOMAIN_DENIED");
     std::cout << "  [7] Federation Trust present BUT policy.allow_cross_domain == false -> DENY PASSED" << std::endl;
 
-    // 8. Policy updated with allow_cross_domain = true -> ALLOW!
+    // 8. Policy updated with allow_cross_domain = true BUT remote peer identity untrusted in Provider -> DENY!
     linep::sl::GovernancePolicy fed_policy;
     fed_policy.policy_id = "default-policy";
     fed_policy.policy_revision = 2;
@@ -111,13 +112,23 @@ int main() {
     engine.register_policy(fed_policy);
 
     ctx_cross.established_policy_revision = 2;
+    std::memcpy(ctx_cross.remote_peer.pubkey, wrong_pubkey, 32); // Untrusted pubkey
+    auto res_untrusted_cross = engine.evaluate(ctx_cross);
+    assert(!linep::sl::is_decision_allowed(res_untrusted_cross));
+    assert(res_untrusted_cross.decision == linep::sl::Decision::DENY);
+    assert(res_untrusted_cross.reason_code == "CROSS_DOMAIN_IDENTITY_UNTRUSTED");
+    std::cout << "  [8] Cross-Domain with Federation BUT Untrusted Federated Peer Identity -> DENY PASSED" << std::endl;
+
+    // 9. Register remote federated peer identity with valid pubkey -> ALLOW!
+    id_provider->register_peer(20, real_pubkey_deb); // Node 20 registered with real_pubkey_deb
+    std::memcpy(ctx_cross.remote_peer.pubkey, real_pubkey_deb, 32);
     auto res7_allowed = engine.evaluate(ctx_cross);
     assert(linep::sl::is_decision_allowed(res7_allowed));
     assert(res7_allowed.decision == linep::sl::Decision::ALLOW);
     assert(res7_allowed.reason_code == "GOVERNANCE_POLICY_ALLOWED");
-    std::cout << "  [8] Federation Trust + policy.allow_cross_domain == true -> ALLOW PASSED" << std::endl;
+    std::cout << "  [9] Federation Trust + policy.allow_cross_domain == true + Trusted Peer -> ALLOW PASSED" << std::endl;
 
-    // 9. Policy Revision Invalidation Check for Active Sessions
+    // 10. Policy Revision Invalidation Check for Active Sessions
     linep::sl::GovernancePolicy v3_policy;
     v3_policy.policy_id = "default-policy";
     v3_policy.policy_revision = 3;
@@ -131,25 +142,25 @@ int main() {
     assert(!linep::sl::is_decision_allowed(res_invalidated));
     assert(res_invalidated.decision == linep::sl::Decision::DENY);
     assert(res_invalidated.reason_code == "SESSION_INVALIDATED_BY_POLICY_REVISION");
-    std::cout << "  [9] Session Invalidated by Policy Revision Update -> DENY PASSED" << std::endl;
+    std::cout << "  [10] Session Invalidated by Policy Revision Update -> DENY PASSED" << std::endl;
 
-    // 10. Full Secret-Free Audit Provenance Verification
+    // 11. Full Secret-Free Audit Provenance Verification
     auto events = audit_sink->get_events();
     assert(!events.empty());
     for (const auto& evt : events) {
         assert(evt.session_id == 0 || evt.session_id == 0x1001);
         assert(!evt.reason_code.empty());
     }
-    std::cout << "  [10] Full Audit Provenance Verified (" << events.size() << " secret-free events recorded)" << std::endl;
+    std::cout << "  [11] Full Audit Provenance Verified (" << events.size() << " secret-free events recorded)" << std::endl;
 
-    // 11. Mandatory Audit Sink Failure -> Fail Closed (DENY)
+    // 12. Mandatory Audit Sink Failure -> Fail Closed (DENY)
     audit_sink->set_fail_closed_mode(true);
     auto res11 = engine.evaluate(ctx);
     assert(!linep::sl::is_decision_allowed(res11));
     assert(res11.decision == linep::sl::Decision::DENY);
     assert(res11.reason_code == "AUDIT_LOG_COMMIT_FAILED_FAIL_CLOSED");
-    std::cout << "  [11] Mandatory Audit Commit Failure -> Fail Closed DENY PASSED" << std::endl;
+    std::cout << "  [12] Mandatory Audit Commit Failure -> Fail Closed DENY PASSED" << std::endl;
 
-    std::cout << "[test_sl4_governance] ALL HARDENED SL4 REAL IDENTITY TESTS PASSED 100%!" << std::endl;
+    std::cout << "[test_sl4_governance] ALL HARDENED SL4 REAL IDENTITY & CROSS-DOMAIN TRUST TESTS PASSED 100%!" << std::endl;
     return 0;
 }
