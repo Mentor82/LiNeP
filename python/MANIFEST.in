@@ -1,0 +1,5 @@
+include README.md
+include LICENSE
+recursive-include linep *.py py.typed
+recursive-include docs *.rst *.py *.md *.png *.svg
+global-exclude __pycache__ *.py[cod] *.so *.dll *.pyd

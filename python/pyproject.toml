@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linep"
+version = "0.1.0"
+description = "Python bindings for LiNeP — Liara Neural Protocol"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+keywords = ["neural", "protocol", "ai", "inference", "distributed", "cffi"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Networking",
+]
+dependencies = ["cffi>=1.15"]
+
+[project.optional-dependencies]
+docs = [
+    "sphinx>=7.0",
+    "furo>=2024.1",
+    "sphinx-autodoc-typehints>=1.25",
+    "myst-parser>=2.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-timeout>=2.0",
+]
+
+[project.urls]
+"Source Code" = "https://github.com/your-org/LiNeP"
+"Bug Tracker"  = "https://github.com/your-org/LiNeP/issues"
+"Documentation" = "https://linep.readthedocs.io"
+
+[project.scripts]
+linep-doctor = "linep_doctor:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["linep*"]
+
+[tool.setuptools]
+py-modules = ["linep_doctor"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+linep = ["py.typed", "*.dylib", "*.dll", "*.so", "*.so.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 10

@@ -1,9 +1,11 @@
-// Test: busy flag adds +20 to the score.
-//   Worker 1 / load 20 / not busy → score = 20
-//   Worker 2 / load  5 / busy     → score = 5 + 20 = 25
+// Test: busy flag adds +20 to the blended score.
+// With worker_score defaulting to 0 in this test setup:
+//   base(load=20) = 0.65*20 = 13.0
+//   base(load=5)  = 0.65*5  = 3.25
+//   busy penalty on worker 2 => 3.25 + 20 = 23.25
 // Expected: Worker 1 wins despite higher raw load, because Worker 2's busy
 //           penalty is large enough to push its score above Worker 1.
-//   Worker 1 / load 20 → score 20   <   Worker 2 / load 5 + busy 20 = 25
+//   Worker 1 score 13.0 < Worker 2 score 23.25
 #include "sched_helper.hpp"
 #include <cassert>
 #include <cstdio>
@@ -19,9 +21,9 @@ int main() {
     auto s2 = make_good_slot(2u, 0u, linep::TASK_INSTRUCT,  5u, 0u);
     s2.busy = true;   // +20
 
-    // Verify the score formula.
-    assert(score_slot(s1) == 20.0);
-    assert(score_slot(s2) == 25.0);
+    // Verify the score formula (floating-point tolerant).
+    assert(score_slot(s1) > 12.999 && score_slot(s1) < 13.001);
+    assert(score_slot(s2) > 23.249 && score_slot(s2) < 23.251);
 
     std::map<SlotKey, SlotState> slots;
     slots[{1, 0}] = s1;

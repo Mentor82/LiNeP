@@ -1,0 +1,53 @@
+Name: config.yaml
+Version: 0.0.1
+Schema: v1
+models:
+  - title: GPT-OSS 120b Cloud
+    provider: ollama
+    model: gpt-oss:120b-cloud
+    apiBase: http://localhost:11434
+    contextLength: 32768
+    roles:
+      - chat
+      - edit
+      - apply
+      - summarize
+
+  - title: GPT-OSS 20b Cloud
+    provider: ollama
+    model: gpt-oss:20b-cloud
+    apiBase: http://localhost:11434
+    contextLength: 16384
+    roles:
+      - chat
+      - edit
+
+    tabAutocompleteModel:
+      title: GPT-OSS 20b Cloud (Autocomplete)
+      provider: ollama
+      model: gpt-oss:20b-cloud
+      apiBase: http://localhost:11434
+
+embeddingsProvider:
+  provider: ollama
+  model: nomic-embed-text
+  apiBase: http://localhost:11434
+
+contextProviders:
+  - name: code
+  - name: docs
+  - name: diff
+  - name: terminal
+  - name: problems
+  - name: folder
+  - name: codebase
+
+slashCommands:
+  - name: edit
+    description: Edit selected code
+  - name: comment
+    description: Write comments for code
+  - name: share
+    description: Export conversation as markdown
+  - name: cmd
+    description: Generate a shell command

@@ -22,7 +22,8 @@ int main() {
     h.sequence ^= 0x01u;
     assert(!linep::core::validate_header(h));
 
-    auto hb = linep::core::make_heartbeat_compact(1u, 0u, linep::SLOT_ALIVE, 10u, 0u, 1u);
+    auto hb = linep::core::make_heartbeat_compact(1u, 0u, linep::SLOT_ALIVE, 10u, 0u, 1u,
+                                                  100u, 5u, 3u, 14u, 9u, 55u);
     assert(linep::core::validate_heartbeat_compact(hb));
     hb.queue_depth ^= 0x01u;
     assert(!linep::core::validate_heartbeat_compact(hb));

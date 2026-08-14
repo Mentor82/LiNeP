@@ -1,0 +1,2 @@
+﻿#!/bin/bash
+sshpass -p 'm20m24m26' ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=no mirkowaldhauer@192.168.178.145 'uname -m; sw_vers --productVersion; xcode-select -p 2>/dev/null || echo no_xcode; which cmake 2>/dev/null || echo cmake_missing; which ninja 2>/dev/null || echo ninja_missing; which brew 2>/dev/null || echo brew_missing'

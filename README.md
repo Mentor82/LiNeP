@@ -12,6 +12,9 @@
 
 **LiNeP — Liara Neural Protocol** | C++17 | CMake 3.20+ | zero external dependencies
 
+Aktuelle Entwicklungs-Baseline (nicht abwaertskompatibel): siehe [PROTOCOL_V0_1_0.md](PROTOCOL_V0_1_0.md)
+Mac Testpartner Referenz (C/C++ plus Python): siehe [REFERENCE_V0_1_0_MAC.md](REFERENCE_V0_1_0_MAC.md)
+
 Binäres Netzwerk-Protokoll für die Liara-KI-Inferenz-Infrastruktur.  
 Worker-Knoten melden sich beim Scheduler an, senden periodische Heartbeats und
 tauschen Inferenz-Aufträge (TASK / RESULT) über TCP aus.
@@ -33,6 +36,8 @@ tauschen Inferenz-Aufträge (TASK / RESULT) über TCP aus.
 11. [Cross-Compile](#11-cross-compile)
 12. [Tests](#12-tests)
 13. [Design-Entscheidungen](#13-design-entscheidungen)
+14. [Python-Paket](#14-python-paket-)
+15. [linep-doctor](#15-linep-doctor)
 
 ---
 
@@ -40,20 +45,114 @@ tauschen Inferenz-Aufträge (TASK / RESULT) über TCP aus.
 
 | Transport | Verwendung |
 |-----------|------------|
-| **UDP** | Heartbeat (Präsenz, Slot-Status, Last) |
-| **TCP** | Aufträge: TASK → RESULT / ERROR |
+| **UDP** | HeartbeatCompact (19 Bytes: Präsenz, Slot-Status, Last, Score, UTC Timestamp, CRC-8), Control Pings, INVITE / ACK |
+| **TCP** | Inferenz-Aufträge: TASK → RESULT / ERROR, REGISTER, BYE, EMBED, SIMILARITY, CONSENSUS |
 
 ```
-Worker                          Scheduler
-  │──── REGISTER (TCP) ──────────▶│
-  │◀─── REGISTER_ACK ─────────────│
-  │                                │
-  │════ HeartbeatCompact (UDP) ═══▶│  jede Sekunde
-  │                                │
-  │──── TASK (TCP) ───────────────▶│  Auftrag annehmen
-  │◀─── RESULT / MSG_ERROR ────────│
-  │                                │
-  │──── BYE (TCP) ────────────────▶│
+Worker / Coworker                              Scheduler
+  │──── REGISTER (TCP) ──────────────────────────▶│
+  │◀─── REGISTER_ACK ─────────────────────────────│
+  │                                               │
+  │════ HeartbeatCompact (UDP, 1000ms ± 10%) ════▶│  jede Sekunde
+  │◀─── INVITE / HEARTBEAT_ACK (UDP) ──────────────│  Control Acks
+  │                                               │
+  │──── TASK (TCP) ──────────────────────────────▶│  Auftrag annehmen
+  │◀─── RESULT / MSG_ERROR ───────────────────────│  Ergebnis zurückgeben
+  │                                               │
+  │──── BYE (TCP) ───────────────────────────────▶│  Geordnetes Trennen
+```
+
+### 1.1  Systemarchitektur (Mainworker ↔ Scheduler ↔ Coworker)
+
+```mermaid
+flowchart TD
+    subgraph ClientLayer ["Client & Ingress Layer"]
+        MW["Mainworker / User Client"]
+    end
+
+    subgraph ControlAndData ["Transport Planes"]
+        HTTP["HTTP API / REST"]
+        UDP["LiNeP UDP Control Plane<br/>(Heartbeats 1000ms, Telemetry, Invites)"]
+        TCP["LiNeP TCP Data Plane<br/>(Tasks, Results, Errors)"]
+    end
+
+    subgraph SchedulerCore ["Scheduler (LiNeP Engine)"]
+        SR["Slot Registry"]
+        SE["Score Engine<br/>(S_final = 0.35*S_worker + 0.65*S_sched + Penalties)"]
+        TQ["Task Queue & Dispatcher"]
+        CB["Circuit Breaker & Cooldown"]
+    end
+
+    subgraph CoworkerPool ["Distributed KI Worker Cluster"]
+        W1["Worker 1 (NVIDIA GPU)<br/>Slot 0: Llama-3-Coder"]
+        W2["Worker 2 (Apple Silicon)<br/>Slot 0: Embeddings & Consensus"]
+        W3["Worker 3 (Redundant Replica)<br/>Slot 0: Llama-3-Coder"]
+    end
+
+    MW -->|HTTP Requests| HTTP
+    HTTP --> TQ
+    
+    W1 -.->|UDP Heartbeat 19-Byte| UDP
+    W2 -.->|UDP Heartbeat 19-Byte| UDP
+    W3 -.->|UDP Heartbeat 19-Byte| UDP
+
+    UDP --> SR
+    SR --> SE
+    SE --> TQ
+    CB -.-> SE
+
+    TQ ==>|TCP Task Dispatch| W1
+    TQ ==>|TCP Task Dispatch / Fallback| W3
+    TQ ==>|TCP Embed / Consensus| W2
+
+    W1 ==>|TCP Result / Status| TQ
+    W2 ==>|TCP Result / Status| TQ
+    W3 ==>|TCP Result / Status| TQ
+```
+
+### 1.2  Inter-AI Communication & Redundanz-Konzept
+
+LiNeP unterstützt neben dem klassischen Inferenz-Dispatching auch die **direkte Kommunikation zwischen KI-Systemen (Agent-to-Agent / Model-to-Model)**:
+
+* **Spezialisierung (`TaskType`)**: Routing von Aufgaben an KI-Spezialisten (`TASK_CODE`, `TASK_INSTRUCT`, `TASK_SUMMARIZE`, `TASK_VALIDATE`, `TASK_EDGE_TEXT_EVAL`).
+* **Vektor-Austausch (`EMBED_*` / `SIMILARITY_*`)**: Direct-Passing von hochdimensionalen Embeddings ohne Konvertierungsverluste.
+* **Schwarm-Konsens (`CONSENSUS_*`)**: Abstimmungsverfahren zwischen mehreren KI-Agenten zur Vermeidung von Halluzinationen.
+* **Redundanz & Automatic Failover**: Gleiche Modelle laufen auf mehreren Worker-Knoten. Fällt ein Worker aus, schaltet die Score Engine per Cooldown in Millisekunden auf den nächsten gesunden Replika-Knoten um.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Main as Main Agent / Scheduler
+    participant W1 as Worker 1 (Code Gen)
+    participant W2 as Worker 2 (Validator)
+    participant W3 as Worker 3 (Redundant Replica)
+
+    Note over Main, W3: 1. Continuous Control Plane (UDP Heartbeats)
+    W1-->>Main: HeartbeatCompact (Load 20%, Score 90, SLOT_READY)
+    W2-->>Main: HeartbeatCompact (Load 15%, Score 95, SLOT_READY)
+    W3-->>Main: HeartbeatCompact (Load 10%, Score 95, SLOT_READY)
+
+    Note over Main, W3: 2. Inter-AI Task Execution & Redundant Routing
+    Main->>W1: TCP TASK (TASK_CODE: "Generate Parser")
+    alt Worker 1 succeeds
+        W1-->>Main: TCP RESULT (RESULT_OK: Code Payload)
+    else Worker 1 Timeout / Error
+        Note over Main: Circuit Breaker triggers Cooldown (5s) for Worker 1
+        Main->>W3: TCP TASK (Automatic Failover to Worker 3)
+        W3-->>Main: TCP RESULT (RESULT_OK: Code Payload)
+    end
+
+    Note over Main, W3: 3. Inter-AI Verification & Multi-Agent Consensus
+    Main->>W2: TCP TASK (TASK_VALIDATE: Code Payload)
+    W2-->>Main: TCP RESULT (RESULT_OK: Validation Passed)
+
+    Main->>W1: TCP CONSENSUS_REQUEST (Vote on Architecture)
+    Main->>W2: TCP CONSENSUS_REQUEST (Vote on Architecture)
+    Main->>W3: TCP CONSENSUS_REQUEST (Vote on Architecture)
+    W1-->>Main: TCP CONSENSUS_RESPONSE (Approved)
+    W2-->>Main: TCP CONSENSUS_RESPONSE (Approved)
+    W3-->>Main: TCP CONSENSUS_RESPONSE (Approved)
+    Note over Main: 100% Schwarm-Konsens erreicht
 ```
 
 ---
@@ -524,6 +623,82 @@ Timeout — ohne reale Inferenz-Hardware testen (s. auch §13).
 | Shared lib (Linux) | `__attribute__((visibility("default")))` |
 | Static lib         | *(leer)* |
 
+### 9.1  Quickstart-Vergleich (C++ vs. Python)
+
+#### C++ Native Usage
+
+```cpp
+#include <linep/types.hpp>
+#include <linep/messages.hpp>
+#include <linep/export.h>
+#include "src/pal/socket.hpp"
+#include "src/scheduler/scheduler.hpp"
+
+// Net-Layer initialisieren (WSAStartup auf Windows)
+linep::pal::net_init();
+
+// Scheduler Instanz erzeugen und starten
+auto* sched = linep::scheduler::create_scheduler();
+sched->start();
+
+// Worker-Slot registrieren (Target Host + Port)
+sched->register_slot(/*worker_id=*/1, /*slot_id=*/0, linep::TASK_INSTRUCT, "127.0.0.1", 9000);
+
+// Inferenz-Auftrag asynchron submitte
+const char* prompt = "Erklaere Quicksort in 3 Saetzen.";
+sched->submit(
+    linep::TASK_INSTRUCT,
+    reinterpret_cast<const uint8_t*>(prompt),
+    static_cast<uint32_t>(std::strlen(prompt)),
+    /*timeout_ms=*/5000,
+    /*max_attempts=*/3,
+    [](uint32_t corr_id, linep::ResultStatus status, const uint8_t* payload, uint32_t len, void*) {
+        if (status == linep::RESULT_OK) {
+            std::cout << "C++ Result: " << std::string(reinterpret_cast<const char*>(payload), len) << std::endl;
+        }
+    },
+    nullptr
+);
+
+sched->stop();
+linep::scheduler::destroy_scheduler(sched);
+linep::pal::net_cleanup();
+```
+
+#### Python Usage
+
+```python
+import linep
+from linep import TaskType, ResultStatus, Sender, HeartbeatCompact, SlotFlags
+
+# Net-Layer initialisieren
+linep.net_init()
+
+# 1. UDP Heartbeat Frame erzeugen (19 Bytes V0.1.0 Baseline)
+hb = HeartbeatCompact.build(
+    worker_id=1, slot_id=0,
+    slot_flags=SlotFlags.ALIVE | SlotFlags.READY,
+    load=15, queue_depth=0, sequence=1,
+    worker_score=95,
+)
+hb.validate()
+raw_udp_bytes = hb.to_bytes()  # Bereit fuer UDP Broadcast
+
+# 2. Inferenz-Task senden via TCP
+with Sender() as sender:
+    result = sender.send_task(
+        host="127.0.0.1",
+        port=9000,
+        task_type=TaskType.INSTRUCT,
+        payload=b"Erklaere Quicksort in 3 Saetzen.",
+        timeout_ms=5000,
+    )
+    if result.status == ResultStatus.OK:
+        print("Python Result:", result.text)
+
+linep.net_cleanup()
+```
+
 ---
 
 ## 10  Build
@@ -674,3 +849,243 @@ Nach einem Timeout schreibt `handle_failure()` einen exponentiell wachsenden
 `cooldown_until`-Zeitstempel in den Slot. `is_eligible()` prüft diesen Stempel vor
 jeder Auswahl. Dadurch kann ein flaky Worker nicht den Scheduler in eine
 Infinite-Retry-Schleife zwingen.
+
+---
+
+## 14  Python-Paket (`python/`)
+
+### Voraussetzungen
+
+- Python ≥ 3.10
+- **Windows**: `liblinep.dll` + runtime DLLs (siehe unten)
+- **macOS**: `liblinep.dylib` (universal arm64+x86_64, oder gezielt x64/arm64)
+- **Linux**: `liblinep.so` oder `liblinep.so.1`
+
+Alle nativen Binaries sind im PyPI-Wheel gebündelt (keine separaten DLL-Kopien nötig).
+
+### Installation
+
+#### macOS (empfohlen: pip from PyPI)
+
+```bash
+# Erstelle Venv und installiere das Paket mit gebündelter dylib
+python3 -m venv .venv
+source .venv/bin/activate
+pip install linep
+```
+
+Falls aus der lokalen Quelle mit selbstgebautem Binary:
+
+```bash
+cd python
+python -m venv .venv
+source .venv/bin/activate
+
+# Stelle sicher, dass die macOS dylib im Python-Package-Verzeichnis ist
+# (wird automatisch von build-mac.ps1 -Fetch ins Windows-Verzeichnis kopiert)
+# Du kannst sie auch manuell kopieren:
+# cp ../build-macos-universal/liblinep.dylib linep/
+
+pip install -e ".[dev]"
+```
+
+#### Windows (PyPI oder lokal)
+
+```powershell
+cd python
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install linep              # von PyPI
+# oder: pip install -e ".[dev]"  # lokale Quelle
+```
+
+#### Manuelles DLL-Setup (nur nötig ohne Wheel)
+
+```powershell
+# Option A — Umgebungsvariable setzen
+$env:LINEP_LIB_PATH = "C:\ai\LiNeP\build\liblinep.dll"
+
+# Option B — DLLs ins Python-Package-Verzeichnis kopieren
+Copy-Item C:\ai\LiNeP\build\liblinep.dll python\linep\
+Copy-Item C:\ai\LiNeP\build\libstdc++-6.dll python\linep\
+Copy-Item C:\ai\LiNeP\build\libgcc_s_seh-1.dll python\linep\
+```
+
+#### Linux
+
+```bash
+# Baue das C++ Library zunächst
+cd <repo-root>
+cmake -S . -B build -DLINEP_BUILD_TESTS=OFF
+cmake --build build
+
+# Installiere (oder setze LD_LIBRARY_PATH)
+export LD_LIBRARY_PATH=$(pwd)/build:$LD_LIBRARY_PATH
+
+cd python
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+### DLL-Discovery
+
+Die Python-Bibliothek sucht die native Shared Library in dieser Reihenfolge:
+
+1. **Umgebungsvariable** `LINEP_LIB_PATH` (falls gesetzt)
+2. **Paket-Verzeichnis** `linep/` (im PyPI-Wheel oder lokaler Installation)
+3. **System-Library-Pfade**:  
+   - Windows: `PATH`  
+   - macOS: `/usr/local/lib`, `/opt/homebrew/lib`, etc.  
+   - Linux: `LD_LIBRARY_PATH`, `/usr/local/lib`, etc.
+
+### Schnellstart
+
+#### macOS
+
+```bash
+# Installation
+pip install linep
+
+# Test
+python3 << 'EOF'
+import linep
+from linep import Sender, Receiver, TaskType
+
+linep.net_init()
+
+# Echo-Server starten (in echtem Code: eigener Thread)
+def handler(task_type, correlation_id, worker_id, slot_id, payload):
+    return linep.ResultStatus.OK, b"Echo: " + payload
+
+with Receiver() as recv:
+    recv.start(port=9000, handler=handler)
+    import time; time.sleep(0.05)
+    
+    with Sender() as sender:
+        result = sender.send_task(
+            host="127.0.0.1",
+            port=9000,
+            task_type=TaskType.INSTRUCT,
+            payload=b"Hello",
+            timeout_ms=2000,
+        )
+        print(f"Status: {result.status}, Body: {result.body}")
+
+linep.net_cleanup()
+EOF
+```
+
+#### Windows
+
+```powershell
+# Installation
+pip install linep
+
+# Test
+python << 'EOF'
+import linep
+from linep import Sender, Receiver, TaskType
+
+linep.net_init()
+
+def handler(task_type, correlation_id, worker_id, slot_id, payload):
+    return linep.ResultStatus.OK, b"Echo: " + payload
+
+with Receiver() as recv:
+    recv.start(port=9000, handler=handler)
+    import time; time.sleep(0.05)
+    
+    with Sender() as sender:
+        result = sender.send_task(
+            host="127.0.0.1",
+            port=9000,
+            task_type=TaskType.INSTRUCT,
+            payload=b"Hello",
+            timeout_ms=2000,
+        )
+        print(f"Status: {result.status}, Body: {result.body}")
+
+linep.net_cleanup()
+EOF
+```
+
+### Tests
+
+```bash
+# macOS / Linux
+cd python
+source .venv/bin/activate
+python -m pytest -q tests/
+# 7 passed in ~0.2s
+```
+
+```powershell
+# Windows
+cd python
+.\.venv\Scripts\Activate.ps1
+python -m pytest -q tests\
+# 7 passed in ~0.2s
+```
+
+---
+
+## 15  linep-doctor
+
+`linep-doctor` ist ein CLI-Diagnosetool (wird mit dem Python-Paket installiert).
+Es prüft, ob die Shared Library ladbar ist, ob ein TCP-Port erreichbar ist und
+ob der UDP-Heartbeat-Loopback funktioniert.
+
+### 2-Port-Modell
+
+LiNeP verwendet **zwei Ports pro Worker**:
+
+| Port | Protokoll | Zweck |
+|------|-----------|-------|
+| `--tcp-port` | TCP | TASK / RESULT / REGISTER-Frames |
+| `--udp-port` | UDP | HeartbeatCompact (Präsenz, Last, Slot-Status) |
+
+### Verwendung
+
+```bash
+# macOS / Linux
+linep-doctor --host 192.168.1.10 --tcp-port 9000 --udp-port 9001
+linep-doctor --host 127.0.0.1 --tcp-port 9000 --udp-port 9001 --skip-tcp
+```
+
+```powershell
+# Windows
+linep-doctor --host 192.168.1.10 --tcp-port 9000 --udp-port 9001
+
+# Nur DLL + UDP-Loopback (kein Server notwendig)
+linep-doctor --host 127.0.0.1 --tcp-port 9000 --udp-port 9001 --skip-tcp
+
+# Nur DLL + TCP-Erreichbarkeit (kein UDP-Test)
+linep-doctor --host 192.168.1.10 --tcp-port 9000 --udp-port 9001 --skip-udp
+
+# Abweichenden DLL-Pfad angeben
+linep-doctor --lib C:\ai\LiNeP\build\liblinep.dll --skip-tcp --skip-udp
+```
+
+### Alle Optionen
+
+| Option | Standard | Beschreibung |
+|--------|----------|--------------|
+| `--host HOST` | `127.0.0.1` | Ziel-Host für TCP-Verbindungstest |
+| `--tcp-port PORT` | `9000` | TCP-Port des Workers |
+| `--udp-port PORT` | `9001` | UDP-Port für Heartbeat |
+| `--lib PATH` | auto | Expliziter Pfad zur `liblinep.dll/.so` |
+| `--skip-tcp` | — | TCP-Verbindungstest überspringen |
+| `--skip-udp` | — | UDP-Heartbeat-Loopback überspringen |
+
+### Erwartete Ausgabe (alles OK)
+
+```
+[OK] shared-library   liblinep.dll loaded
+[OK] tcp-connect      127.0.0.1:9000 reachable
+[OK] udp-heartbeat    loopback roundtrip ok
+all checks passed
+```
+
+Bei einem Fehler gibt `linep-doctor` einen Exit-Code `!= 0` zurück —
+geeignet für CI-Health-Checks und Start-Skripte.

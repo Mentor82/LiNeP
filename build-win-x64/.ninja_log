@@ -1,0 +1,25 @@
+# ninja log v6
+3716	4002	7994594978937033	liblinep.dll.a	7b84a56be948b48c
+29	3385	7994594939396803	src/pal/CMakeFiles/linep_pal.dir/clock_win.cpp.obj	ae18325a22c3163f
+65	2418	7994594939748861	src/tcp/CMakeFiles/linep_tcp.dir/tcp.cpp.obj	245169aedcc2b0aa
+24	3613	7994594939326802	src/pal/CMakeFiles/linep_pal.dir/socket_win.cpp.obj	63228e90cad178ff
+95	1135	7994594940044350	src/cabi/CMakeFiles/linep_cabi.dir/cabi.cpp.obj	9798c50e9456fa16
+43	408	7994594939539344	src/core/CMakeFiles/linep_core.dir/framing.cpp.obj	30ce9d6b4f7e5bc0
+84	3710	7994594939963561	src/scheduler/CMakeFiles/linep_scheduler.dir/scheduler.cpp.obj	53bf428813896060
+51	1523	7994594939602426	src/udp/CMakeFiles/linep_udp.dir/heartbeat.cpp.obj	8ee2f925099751a9
+36	389	7994594939469360	src/core/CMakeFiles/linep_core.dir/crc.cpp.obj	e99b7737e3cbe90
+3716	4002	7994594978937033	liblinep.dll	7b84a56be948b48c
+73	1877	7994594939837376	src/scheduler/CMakeFiles/linep_scheduler.dir/score_engine.cpp.obj	7d2d3090259a6dea
+58	157	7994594939602426	src/tcp/CMakeFiles/linep_tcp.dir/tcp_stub.cpp.obj	863e3c3a349dc129
+81	196	7994595125185105	src/tcp/CMakeFiles/linep_tcp.dir/tcp_stub.cpp.obj	20fa8f92c8dda45a
+57	216	7994595124913962	src/core/CMakeFiles/linep_core.dir/crc.cpp.obj	c15b0f12fc4e279d
+65	232	7994595125002502	src/core/CMakeFiles/linep_core.dir/framing.cpp.obj	92eedd5ffe508c60
+122	562	7994595125565434	src/cabi/CMakeFiles/linep_cabi.dir/cabi.cpp.obj	8553390666c95a62
+74	857	7994595125077233	src/udp/CMakeFiles/linep_udp.dir/heartbeat.cpp.obj	ca1251901a6fbefe
+100	1059	7994595125352920	src/scheduler/CMakeFiles/linep_scheduler.dir/score_engine.cpp.obj	47ac83a4de34ae02
+47	1326	7994595124835160	src/pal/CMakeFiles/linep_pal.dir/clock_win.cpp.obj	6013710991eea273
+42	1395	7994595124734083	src/pal/CMakeFiles/linep_pal.dir/socket_win.cpp.obj	9d96d49e7befc263
+92	1478	7994595125257404	src/tcp/CMakeFiles/linep_tcp.dir/tcp.cpp.obj	95fb624a377c767a
+111	2495	7994595125466503	src/scheduler/CMakeFiles/linep_scheduler.dir/scheduler.cpp.obj	dacbdb80ec315b24
+2498	2640	7994595150571264	liblinep.dll	7b84a56be948b48c
+2498	2640	7994595150571264	liblinep.dll.a	7b84a56be948b48c

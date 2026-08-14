@@ -1,7 +1,8 @@
-// Test: degraded flag adds +50 to the score — a degraded slot is strongly
-//       avoided even when its base load is very low.
-//   Worker 1 / load 50 / not degraded → score = 50
-//   Worker 2 / load  5 / degraded     → score = 5 + 50 = 55
+// Test: degraded flag adds +50 to the blended score — a degraded slot is
+//       strongly avoided even when its raw load is very low.
+// With worker_score defaulting to 0 in this test setup:
+//   Worker 1 / load 50 / not degraded => 0.65*50 = 32.5
+//   Worker 2 / load  5 / degraded     => 0.65*5 + 50 = 53.25
 // Expected: Worker 1 wins.
 #include "sched_helper.hpp"
 #include <cassert>
@@ -17,8 +18,8 @@ int main() {
     auto s2 = make_good_slot(2u, 0u, linep::TASK_INSTRUCT,  5u, 0u);
     s2.degraded = true;   // +50
 
-    assert(score_slot(s1) == 50.0);
-    assert(score_slot(s2) == 55.0);
+    assert(score_slot(s1) > 32.499 && score_slot(s1) < 32.501);
+    assert(score_slot(s2) > 53.249 && score_slot(s2) < 53.251);
 
     std::map<SlotKey, SlotState> slots;
     slots[{1, 0}] = s1;

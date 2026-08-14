@@ -93,11 +93,19 @@ public:
         pal::Socket s = pal::tcp_connect(host, port, timeout_ms);
         if (!s.valid()) return static_cast<uint8_t>(RESULT_TIMEOUT);
 
+        // TASK wire payload layout: [1 byte task_type] [task body bytes...]
+        std::vector<uint8_t> task_payload;
+        task_payload.reserve(static_cast<size_t>(payload_len) + 1u);
+        task_payload.push_back(task_type);
+        if (payload && payload_len > 0u) {
+            task_payload.insert(task_payload.end(), payload, payload + payload_len);
+        }
+
         // ── Send TASK header ──────────────────────────────────────────────
         const auto hdr = core::make_header(
             static_cast<uint8_t>(MsgType::TASK),
             static_cast<uint16_t>(FLAG_ACK_REQUIRED),
-            payload_len,
+            static_cast<uint32_t>(task_payload.size()),
             seq_++,
             correlation_id,
             worker_id,
@@ -137,9 +145,9 @@ public:
         }
 
         // ── Send payload ──────────────────────────────────────────────────
-        if (payload_len > 0u) {
-            r = pal::tcp_send_all(s, payload, static_cast<int>(payload_len));
-            if (r != static_cast<int>(payload_len)) {
+        if (!task_payload.empty()) {
+            r = pal::tcp_send_all(s, task_payload.data(), static_cast<int>(task_payload.size()));
+            if (r != static_cast<int>(task_payload.size())) {
                 pal::socket_close(s);
                 return static_cast<uint8_t>(RESULT_TIMEOUT);
             }
@@ -193,8 +201,7 @@ public:
 
         const uint8_t status = res_payload[0];
 
-        if (status == static_cast<uint8_t>(RESULT_OK) &&
-            result_buf && result_len && res_payload.size() > 1u)
+        if (result_buf && result_len && res_payload.size() > 1u)
         {
             const uint32_t body_len =
                 static_cast<uint32_t>(res_payload.size()) - 1u;
@@ -235,6 +242,10 @@ public:
 
     void stop() override {
         running_.store(false);
+        {
+            std::lock_guard<std::mutex> lk(listen_mtx_);
+            pal::socket_close(listen_socket_);  // unblock blocking accept()
+        }
         if (accept_thread_.joinable()) accept_thread_.join();
         // Wait for all active handlers to finish.
         std::lock_guard<std::mutex> lk(handlers_mtx_);
@@ -248,6 +259,10 @@ private:
     void accept_loop() {
         pal::Socket ls = pal::tcp_listen(port_, 16);
         if (!ls.valid()) { running_.store(false); return; }
+        {
+            std::lock_guard<std::mutex> lk(listen_mtx_);
+            listen_socket_ = ls;
+        }
 
         // We need accept to be interruptible → 500 ms recv timeout trick
         // (tcp_accept blocks on the OS accept(); we rely on running_ check
@@ -265,6 +280,10 @@ private:
                                    this, cs);
         }
         pal::socket_close(ls);
+        {
+            std::lock_guard<std::mutex> lk(listen_mtx_);
+            listen_socket_ = {};
+        }
     }
 
     // ── Per-connection handler ────────────────────────────────────────────────
@@ -310,6 +329,18 @@ private:
             }
         }
 
+        // TASK payload convention: first byte is task_type, remaining bytes are body.
+        uint8_t task_type = 0u;
+        const uint8_t* task_body = nullptr;
+        uint32_t task_body_len = 0u;
+        if (!payload.empty()) {
+            task_type = payload[0];
+            if (payload.size() > 1u) {
+                task_body = payload.data() + 1;
+                task_body_len = static_cast<uint32_t>(payload.size() - 1u);
+            }
+        }
+
         // Dispatch to callback.
         std::vector<uint8_t> result_body(65536u);
         uint32_t result_len = static_cast<uint32_t>(result_body.size());
@@ -317,12 +348,12 @@ private:
         uint8_t status = static_cast<uint8_t>(RESULT_MODEL_ERROR);
         if (callback_) {
             status = callback_(
-                in_hdr.msg_type,      // task_type (reused — caller knows it's TASK)
+                task_type,
                 in_hdr.correlation_id,
                 in_hdr.worker_id,
                 in_hdr.slot_id,
-                payload.empty() ? nullptr : payload.data(),
-                in_hdr.payload_len,
+                task_body,
+                task_body_len,
                 result_body.data(),
                 static_cast<uint32_t>(result_body.size()),
                 &result_len,
@@ -333,7 +364,7 @@ private:
         std::vector<uint8_t> res_payload;
         res_payload.reserve(1u + result_len);
         res_payload.push_back(status);
-        if (status == static_cast<uint8_t>(RESULT_OK) && result_len > 0u)
+        if (result_len > 0u)
             res_payload.insert(res_payload.end(),
                                result_body.begin(),
                                result_body.begin() + result_len);
@@ -390,6 +421,8 @@ private:
     void*                user_data_{nullptr};
     std::atomic<bool>    running_{false};
     std::thread          accept_thread_;
+    std::mutex           listen_mtx_;
+    pal::Socket          listen_socket_{};
     std::mutex           handlers_mtx_;
     std::vector<std::thread> handlers_;
 };

@@ -40,6 +40,7 @@ add_subdirectory(src/core)
 add_subdirectory(src/udp)
 add_subdirectory(src/tcp)
 add_subdirectory(src/scheduler)
+add_subdirectory(src/cabi)
 
 # ── Main linep library ───────────────────────────────────────────────────────
 if(LINEP_BUILD_SHARED)
@@ -54,6 +55,7 @@ add_library(linep ${_LINEP_TYPE}
     $<TARGET_OBJECTS:linep_udp>
     $<TARGET_OBJECTS:linep_tcp>
     $<TARGET_OBJECTS:linep_scheduler>
+    $<TARGET_OBJECTS:linep_cabi>
 )
 
 target_include_directories(linep PUBLIC

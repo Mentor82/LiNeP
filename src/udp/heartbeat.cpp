@@ -4,10 +4,40 @@
 #include "../core/framing.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <string>
 #include <thread>
+#include <ctime>
 
 namespace linep::udp {
+
+namespace {
+
+static uint16_t compute_worker_score(uint8_t load, uint8_t queue_depth) noexcept {
+    // Lower is better. Keep bounded in uint16 space.
+    return static_cast<uint16_t>(static_cast<uint16_t>(load) * 10u + queue_depth * 100u);
+}
+
+static void utc_timestamp_bytes(uint8_t& month,
+                                uint8_t& day,
+                                uint8_t& hour,
+                                uint8_t& minute,
+                                uint8_t& second) noexcept {
+    const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm tm_utc{};
+#if defined(_WIN32)
+    gmtime_s(&tm_utc, &now);
+#else
+    gmtime_r(&now, &tm_utc);
+#endif
+    month  = static_cast<uint8_t>(tm_utc.tm_mon + 1);
+    day    = static_cast<uint8_t>(tm_utc.tm_mday);
+    hour   = static_cast<uint8_t>(tm_utc.tm_hour);
+    minute = static_cast<uint8_t>(tm_utc.tm_min);
+    second = static_cast<uint8_t>(tm_utc.tm_sec);
+}
+
+} // namespace
 
 // ── Heartbeat Sender implementation (hidden, not exported) ───────────────────
 
@@ -47,12 +77,22 @@ private:
         if (!sock.valid()) { running_.store(false); return; }
 
         while (running_.load()) {
+            const uint8_t load = load_.load();
+            const uint8_t queue_depth = queue_depth_.load();
+            uint8_t ts_month = 1u, ts_day = 1u, ts_hour = 0u, ts_minute = 0u, ts_second = 0u;
+            utc_timestamp_bytes(ts_month, ts_day, ts_hour, ts_minute, ts_second);
             auto frame = core::make_heartbeat_compact(
                 worker_id_, slot_id_,
                 slot_flags_.load(),
-                load_.load(),
-                queue_depth_.load(),
-                seq_++);
+                load,
+                queue_depth,
+                seq_++,
+                compute_worker_score(load, queue_depth),
+                ts_month,
+                ts_day,
+                ts_hour,
+                ts_minute,
+                ts_second);
 
             pal::udp_sendto(sock,
                 target_ip_.c_str(), target_port_,

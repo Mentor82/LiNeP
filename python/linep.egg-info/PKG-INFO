@@ -1,0 +1,32 @@
+Metadata-Version: 2.4
+Name: linep
+Version: 1.0.0
+Summary: Python bindings for LiNeP — Liara Neural Protocol
+License: MIT
+Project-URL: Source Code, https://github.com/your-org/LiNeP
+Project-URL: Bug Tracker, https://github.com/your-org/LiNeP/issues
+Project-URL: Documentation, https://linep.readthedocs.io
+Keywords: neural,protocol,ai,inference,distributed,cffi
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: Topic :: System :: Networking
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: cffi>=1.15
+Provides-Extra: docs
+Requires-Dist: sphinx>=7.0; extra == "docs"
+Requires-Dist: furo>=2024.1; extra == "docs"
+Requires-Dist: sphinx-autodoc-typehints>=1.25; extra == "docs"
+Requires-Dist: myst-parser>=2.0; extra == "docs"
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: pytest-timeout>=2.0; extra == "dev"

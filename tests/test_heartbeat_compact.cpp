@@ -6,8 +6,8 @@
 #include <cstring>
 
 static void test_sizes() {
-    static_assert(sizeof(linep::HeartbeatCompact) == 12,
-                  "HeartbeatCompact must be 12 bytes");
+    static_assert(sizeof(linep::HeartbeatCompact) == 19,
+                  "HeartbeatCompact must be 19 bytes");
     static_assert(sizeof(linep::Header) == 24,
                   "Header must be 24 bytes");
 }
@@ -19,7 +19,13 @@ static void test_compact_fields() {
         /*slot_flags*/   static_cast<uint8_t>(linep::SLOT_ALIVE | linep::SLOT_READY),
         /*load*/        42u,
         /*queue_depth*/  3u,
-        /*sequence*/     0u);
+        /*sequence*/     0u,
+        /*worker_score*/ 234u,
+        /*ts_month*/     5u,
+        /*ts_day*/       3u,
+        /*ts_hour*/      14u,
+        /*ts_minute*/    9u,
+        /*ts_second*/    55u);
 
     assert(f.magic       == linep::MAGIC);
     assert(f.version     == linep::VERSION);
@@ -29,15 +35,19 @@ static void test_compact_fields() {
     assert(f.load        == 42u);
     assert(f.queue_depth ==  3u);
     assert(f.sequence    ==  0u);
+    assert(f.worker_score == 234u);
+    assert(f.ts_month == 5u);
 }
 
 static void test_compact_validate_ok() {
-    auto f = linep::core::make_heartbeat_compact(7u, 0u, linep::SLOT_ALIVE, 10u, 0u, 5u);
+    auto f = linep::core::make_heartbeat_compact(7u, 0u, linep::SLOT_ALIVE, 10u, 0u, 5u,
+                                                 120u, 5u, 3u, 14u, 9u, 55u);
     assert(linep::core::validate_heartbeat_compact(f));
 }
 
 static void test_compact_reject_corrupted_field() {
-    auto f = linep::core::make_heartbeat_compact(7u, 0u, linep::SLOT_ALIVE, 10u, 0u, 5u);
+    auto f = linep::core::make_heartbeat_compact(7u, 0u, linep::SLOT_ALIVE, 10u, 0u, 5u,
+                                                 120u, 5u, 3u, 14u, 9u, 55u);
 
     // Modify a field without recomputing CRC — must be rejected.
     linep::HeartbeatCompact bad = f;
@@ -46,16 +56,26 @@ static void test_compact_reject_corrupted_field() {
 }
 
 static void test_compact_reject_bad_magic() {
-    auto f = linep::core::make_heartbeat_compact(7u, 0u, linep::SLOT_ALIVE, 10u, 0u, 5u);
+    auto f = linep::core::make_heartbeat_compact(7u, 0u, linep::SLOT_ALIVE, 10u, 0u, 5u,
+                                                 120u, 5u, 3u, 14u, 9u, 55u);
     linep::HeartbeatCompact bad = f;
     bad.magic = 0xDEADu;
     assert(!linep::core::validate_heartbeat_compact(bad));
 }
 
 static void test_compact_reject_wrong_version() {
-    auto f = linep::core::make_heartbeat_compact(7u, 0u, linep::SLOT_ALIVE, 10u, 0u, 5u);
+    auto f = linep::core::make_heartbeat_compact(7u, 0u, linep::SLOT_ALIVE, 10u, 0u, 5u,
+                                                 120u, 5u, 3u, 14u, 9u, 55u);
     linep::HeartbeatCompact bad = f;
     bad.version = 0x02u;
+    assert(!linep::core::validate_heartbeat_compact(bad));
+}
+
+static void test_compact_reject_invalid_timestamp() {
+    auto f = linep::core::make_heartbeat_compact(7u, 0u, linep::SLOT_ALIVE, 10u, 0u, 5u,
+                                                 120u, 5u, 3u, 14u, 9u, 55u);
+    linep::HeartbeatCompact bad = f;
+    bad.ts_month = 13u;
     assert(!linep::core::validate_heartbeat_compact(bad));
 }
 
@@ -91,6 +111,7 @@ int main() {
     test_compact_reject_corrupted_field();
     test_compact_reject_bad_magic();
     test_compact_reject_wrong_version();
+    test_compact_reject_invalid_timestamp();
     test_header_validate_ok();
     test_header_reject_corrupted();
     std::puts("[PASS] test_heartbeat_compact");

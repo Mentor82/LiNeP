@@ -1,0 +1,7 @@
+mcpServers:
+  - name: git
+    command: uvx
+    args:
+      - mcp-server-git
+      - --repository
+      - C:\ai\LiNeP

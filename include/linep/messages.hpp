@@ -11,6 +11,9 @@ enum MsgType : uint8_t {
     REGISTER         = 0x02,
     REGISTER_ACK     = 0x03,
     BYE              = 0x04,
+    INVITE           = 0x05,
+    INVITE_ACK       = 0x06,
+    HEARTBEAT_ACK    = 0x07,
 
     // Inference
     TASK             = 0x10,
@@ -172,6 +175,9 @@ inline bool is_known_msg_type(uint8_t t) noexcept {
         case REGISTER:
         case REGISTER_ACK:
         case BYE:
+        case INVITE:
+        case INVITE_ACK:
+        case HEARTBEAT_ACK:
         case TASK:
         case TASK_ACK:
         case RESULT:

@@ -23,5 +23,6 @@ inline linep::scheduler::SlotState make_good_slot(
     s.load           = load;
     s.queue_depth    = queue;
     s.last_heartbeat = std::chrono::steady_clock::now();
+    s.conn_state     = linep::scheduler::ConnectionState::ACTIVE;  // bypass handshake in unit tests
     return s;
 }

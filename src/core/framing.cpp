@@ -29,7 +29,11 @@ namespace linep::core {
 linep::HeartbeatCompact make_heartbeat_compact(
     uint16_t worker_id, uint8_t slot_id,
     uint8_t  slot_flags, uint8_t load,
-    uint8_t  queue_depth, uint8_t sequence) noexcept
+    uint8_t  queue_depth, uint8_t sequence,
+    uint16_t worker_score,
+    uint8_t  ts_month, uint8_t ts_day,
+    uint8_t  ts_hour, uint8_t ts_minute,
+    uint8_t  ts_second) noexcept
 {
     linep::HeartbeatCompact f{};
     f.magic       = linep::MAGIC;
@@ -41,8 +45,14 @@ linep::HeartbeatCompact make_heartbeat_compact(
     f.load        = load;
     f.queue_depth = queue_depth;
     f.sequence    = sequence;
-    // CRC-8 covers bytes [0..10] (all fields except crc8 itself)
-    f.crc8 = crc8(reinterpret_cast<const uint8_t*>(&f), 11u);
+    f.worker_score = worker_score;
+    f.ts_month     = ts_month;
+    f.ts_day       = ts_day;
+    f.ts_hour      = ts_hour;
+    f.ts_minute    = ts_minute;
+    f.ts_second    = ts_second;
+    // CRC-8 covers bytes [0..17] (all fields except crc8 itself)
+    f.crc8 = crc8(reinterpret_cast<const uint8_t*>(&f), 18u);
     return f;
 }
 
@@ -52,7 +62,77 @@ bool validate_heartbeat_compact(
     if (f.magic    != linep::MAGIC)   return false;
     if (f.version  != linep::VERSION) return false;
     if (f.msg_type != static_cast<uint8_t>(linep::MsgType::HEARTBEAT)) return false;
-    const uint8_t expected = crc8(reinterpret_cast<const uint8_t*>(&f), 11u);
+    if (f.ts_month == 0u || f.ts_month > 12u) return false;
+    if (f.ts_day == 0u || f.ts_day > 31u) return false;
+    if (f.ts_hour > 23u) return false;
+    if (f.ts_minute > 59u) return false;
+    if (f.ts_second > 59u) return false;
+    const uint8_t expected = crc8(reinterpret_cast<const uint8_t*>(&f), 18u);
+    return f.crc8 == expected;
+}
+
+// ── UDP Control Frames (V0.1.0 Baseline) ─────────────────────────────────────
+
+linep::UdpInviteFrame make_udp_invite(
+    uint8_t invite_seq, uint16_t worker_id, uint8_t slot_id,
+    uint32_t lease_ttl_ms, uint32_t session_token) noexcept
+{
+    linep::UdpInviteFrame f{};
+    f.msg_type      = static_cast<uint8_t>(linep::MsgType::INVITE);
+    f.invite_seq    = invite_seq;
+    f.worker_id     = worker_id;
+    f.slot_id       = slot_id;
+    f.lease_ttl_ms  = lease_ttl_ms;
+    f.session_token = session_token;
+    f.crc8          = crc8(reinterpret_cast<const uint8_t*>(&f), 13u);
+    return f;
+}
+
+bool validate_udp_invite(const linep::UdpInviteFrame& f) noexcept {
+    if (f.msg_type != static_cast<uint8_t>(linep::MsgType::INVITE)) return false;
+    const uint8_t expected = crc8(reinterpret_cast<const uint8_t*>(&f), 13u);
+    return f.crc8 == expected;
+}
+
+linep::UdpInviteAckFrame make_udp_invite_ack(
+    uint8_t invite_seq, uint16_t worker_id, uint8_t slot_id,
+    uint8_t accepted, uint32_t session_token) noexcept
+{
+    linep::UdpInviteAckFrame f{};
+    f.msg_type      = static_cast<uint8_t>(linep::MsgType::INVITE_ACK);
+    f.invite_seq    = invite_seq;
+    f.worker_id     = worker_id;
+    f.slot_id       = slot_id;
+    f.accepted      = (accepted != 0u) ? 1u : 0u;
+    f.session_token = session_token;
+    f.crc8          = crc8(reinterpret_cast<const uint8_t*>(&f), 10u);
+    return f;
+}
+
+bool validate_udp_invite_ack(const linep::UdpInviteAckFrame& f) noexcept {
+    if (f.msg_type != static_cast<uint8_t>(linep::MsgType::INVITE_ACK)) return false;
+    if (f.accepted > 1u) return false;
+    const uint8_t expected = crc8(reinterpret_cast<const uint8_t*>(&f), 10u);
+    return f.crc8 == expected;
+}
+
+linep::UdpHeartbeatAckFrame make_udp_heartbeat_ack(
+    uint8_t heartbeat_seq, uint16_t worker_id, uint8_t slot_id,
+    uint32_t scheduler_time_sec) noexcept
+{
+    linep::UdpHeartbeatAckFrame f{};
+    f.msg_type           = static_cast<uint8_t>(linep::MsgType::HEARTBEAT_ACK);
+    f.heartbeat_seq      = heartbeat_seq;
+    f.worker_id          = worker_id;
+    f.slot_id            = slot_id;
+    f.scheduler_time_sec = scheduler_time_sec;
+    f.crc8               = crc8(reinterpret_cast<const uint8_t*>(&f), 9u);
+    return f;
+}
+
+bool validate_udp_heartbeat_ack(const linep::UdpHeartbeatAckFrame& f) noexcept {
+    if (f.msg_type != static_cast<uint8_t>(linep::MsgType::HEARTBEAT_ACK)) return false;
+    const uint8_t expected = crc8(reinterpret_cast<const uint8_t*>(&f), 9u);
     return f.crc8 == expected;
 }
 

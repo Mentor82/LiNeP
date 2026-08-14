@@ -14,11 +14,48 @@ LINEP_API linep::HeartbeatCompact make_heartbeat_compact(
     uint8_t  slot_flags,
     uint8_t  load,
     uint8_t  queue_depth,
-    uint8_t  sequence) noexcept;
+    uint8_t  sequence,
+    uint16_t worker_score,
+    uint8_t  ts_month,
+    uint8_t  ts_day,
+    uint8_t  ts_hour,
+    uint8_t  ts_minute,
+    uint8_t  ts_second) noexcept;
 
-// Validate magic, version, msg_type and CRC-8.
+// Validate magic, version, msg_type, CRC-8, and timestamp ranges.
 LINEP_API bool validate_heartbeat_compact(
     const linep::HeartbeatCompact& f) noexcept;
+
+// ── UDP Control Frames (V0.1.0 Baseline) ─────────────────────────────────────
+
+LINEP_API linep::UdpInviteFrame make_udp_invite(
+    uint8_t  invite_seq,
+    uint16_t worker_id,
+    uint8_t  slot_id,
+    uint32_t lease_ttl_ms,
+    uint32_t session_token) noexcept;
+
+LINEP_API bool validate_udp_invite(
+    const linep::UdpInviteFrame& f) noexcept;
+
+LINEP_API linep::UdpInviteAckFrame make_udp_invite_ack(
+    uint8_t  invite_seq,
+    uint16_t worker_id,
+    uint8_t  slot_id,
+    uint8_t  accepted,
+    uint32_t session_token) noexcept;
+
+LINEP_API bool validate_udp_invite_ack(
+    const linep::UdpInviteAckFrame& f) noexcept;
+
+LINEP_API linep::UdpHeartbeatAckFrame make_udp_heartbeat_ack(
+    uint8_t  heartbeat_seq,
+    uint16_t worker_id,
+    uint8_t  slot_id,
+    uint32_t scheduler_time_sec) noexcept;
+
+LINEP_API bool validate_udp_heartbeat_ack(
+    const linep::UdpHeartbeatAckFrame& f) noexcept;
 
 // ── Common Header ─────────────────────────────────────────────────────────────
 

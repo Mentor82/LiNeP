@@ -1,0 +1,3 @@
+C:\Strawberry\c\bin\cmake.exe -E rm -f CMakeFiles\test_scheduler_ignores_not_ready.dir/objects.a
+C:\Strawberry\c\bin\ar.exe qc CMakeFiles\test_scheduler_ignores_not_ready.dir/objects.a @CMakeFiles\test_scheduler_ignores_not_ready.dir\objects1.rsp
+C:\Strawberry\c\bin\c++.exe -Wl,--whole-archive CMakeFiles\test_scheduler_ignores_not_ready.dir/objects.a -Wl,--no-whole-archive -o test_scheduler_ignores_not_ready.exe -Wl,--out-implib,libtest_scheduler_ignores_not_ready.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles\test_scheduler_ignores_not_ready.dir\linkLibs.rsp

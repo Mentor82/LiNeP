@@ -8,6 +8,8 @@ namespace linep::scheduler {
 bool is_eligible(const SlotState& slot,
                  std::chrono::steady_clock::time_point now) noexcept
 {
+    // Only ACTIVE slots have completed the invite/ack handshake.
+    if (slot.conn_state != ConnectionState::ACTIVE) return false;
     if (!slot.alive)        return false;
     if (!slot.ready)        return false;
     if (slot.error)         return false;
@@ -24,9 +26,13 @@ bool is_eligible(const SlotState& slot,
 
 double score_slot(const SlotState& slot) noexcept
 {
-    double s = 0.0;
-    s += slot.load           * 1.0;
-    s += slot.queue_depth    * 10.0;
+    const double scheduler_score =
+        slot.load * 1.0 +
+        slot.queue_depth * 10.0;
+    const double worker_score = static_cast<double>(slot.worker_score) * 0.1;
+
+    // V0.1.0 baseline: blend coworker telemetry with scheduler-side estimate.
+    double s = 0.35 * worker_score + 0.65 * scheduler_score;
     s += slot.avg_latency_ms * 0.02;
     if (slot.busy)          s += 20.0;
     if (slot.degraded)      s += 50.0;

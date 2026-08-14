@@ -68,7 +68,7 @@ LINEP_PACKED_END
 static_assert(sizeof(HeaderBuildTimeExt) == HEADER_BUILD_TIME_LEN,
               "HeaderBuildTimeExt must be exactly 6 bytes");
 
-// ── Heartbeat Compact Frame — 12 bytes (UDP only) ────────────────────────────
+// ── Heartbeat Compact Frame — 19 bytes (UDP only, V0.1.0 baseline) ───────────
 LINEP_PACKED_BEGIN
 struct HeartbeatCompact {
     uint16_t magic;        //  0  MAGIC
@@ -80,12 +80,64 @@ struct HeartbeatCompact {
     uint8_t  load;         //  8  0-100 percent, or Load special values
     uint8_t  queue_depth;  //  9  0-254, 255 = overflow
     uint8_t  sequence;     // 10  wraps at 255
-    uint8_t  crc8;         // 11  CRC-8 over bytes [0..10]
+    uint16_t worker_score; // 11  coworker-computed score
+    uint8_t  ts_month;     // 13  UTC month   (1..12)
+    uint8_t  ts_day;       // 14  UTC day     (1..31)
+    uint8_t  ts_hour;      // 15  UTC hour    (0..23)
+    uint8_t  ts_minute;    // 16  UTC minute  (0..59)
+    uint8_t  ts_second;    // 17  UTC second  (0..59)
+    uint8_t  crc8;         // 18  CRC-8 over bytes [0..17]
 } LINEP_PACKED;
 LINEP_PACKED_END
 
-static_assert(sizeof(HeartbeatCompact) == 12,
-              "HeartbeatCompact must be exactly 12 bytes");
+static_assert(sizeof(HeartbeatCompact) == 19,
+              "HeartbeatCompact must be exactly 19 bytes");
+
+// ── UDP Control Frames (V0.1.0 Baseline) ─────────────────────────────────────
+
+LINEP_PACKED_BEGIN
+struct UdpInviteFrame {
+    uint8_t  msg_type;        //  0  MsgType::INVITE (0x05)
+    uint8_t  invite_seq;      //  1  Sequence counter for invites
+    uint16_t worker_id;       //  2  Target worker
+    uint8_t  slot_id;         //  4  Target slot
+    uint32_t lease_ttl_ms;    //  5  Lease duration in ms
+    uint32_t session_token;   //  9  Assigned session token
+    uint8_t  crc8;            // 13  CRC-8 over bytes [0..12]
+} LINEP_PACKED;
+LINEP_PACKED_END
+
+static_assert(sizeof(UdpInviteFrame) == 14,
+              "UdpInviteFrame must be exactly 14 bytes");
+
+LINEP_PACKED_BEGIN
+struct UdpInviteAckFrame {
+    uint8_t  msg_type;        //  0  MsgType::INVITE_ACK (0x06)
+    uint8_t  invite_seq;      //  1  Matching invite_seq
+    uint16_t worker_id;       //  2  Worker ID
+    uint8_t  slot_id;         //  4  Slot ID
+    uint8_t  accepted;        //  5  1 = accepted, 0 = rejected
+    uint32_t session_token;   //  6  Matching session token
+    uint8_t  crc8;            // 10  CRC-8 over bytes [0..9]
+} LINEP_PACKED;
+LINEP_PACKED_END
+
+static_assert(sizeof(UdpInviteAckFrame) == 11,
+              "UdpInviteAckFrame must be exactly 11 bytes");
+
+LINEP_PACKED_BEGIN
+struct UdpHeartbeatAckFrame {
+    uint8_t  msg_type;        //  0  MsgType::HEARTBEAT_ACK (0x07)
+    uint8_t  heartbeat_seq;   //  1  Matching sequence from HeartbeatCompact
+    uint16_t worker_id;       //  2  Worker ID
+    uint8_t  slot_id;         //  4  Slot ID
+    uint32_t scheduler_time_sec; // 5 UTC unix timestamp from Scheduler
+    uint8_t  crc8;            //  9  CRC-8 over bytes [0..8]
+} LINEP_PACKED;
+LINEP_PACKED_END
+
+static_assert(sizeof(UdpHeartbeatAckFrame) == 10,
+              "UdpHeartbeatAckFrame must be exactly 10 bytes");
 
 // ── Flags (16-bit) ───────────────────────────────────────────────────────────
 enum Flags : uint16_t {

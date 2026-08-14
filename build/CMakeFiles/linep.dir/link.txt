@@ -1,0 +1,3 @@
+C:\Strawberry\c\bin\cmake.exe -E rm -f CMakeFiles\linep.dir/objects.a
+C:\Strawberry\c\bin\ar.exe qc CMakeFiles\linep.dir/objects.a @CMakeFiles\linep.dir\objects1.rsp
+C:\Strawberry\c\bin\c++.exe -shared -o liblinep.dll -Wl,--out-implib,liblinep.dll.a -Wl,--major-image-version,1,--minor-image-version,0 -Wl,--whole-archive CMakeFiles\linep.dir/objects.a -Wl,--no-whole-archive @CMakeFiles\linep.dir\linkLibs.rsp

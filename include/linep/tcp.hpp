@@ -30,6 +30,7 @@ public:
     //                [out] actual bytes written on RESULT_OK.
     //
     // task_type    : one of linep::TaskType (TASK_INSTRUCT, TASK_CODE, …).
+    //                Serialized as payload byte 0 in TASK frames.
     // correlation_id: caller-chosen request ID; echoed in the RESULT header.
     virtual uint8_t send_task(const char*    host,
                                uint16_t       port,
@@ -58,8 +59,9 @@ class LINEP_API ITcpTaskReceiver {
 public:
     // Called once per TASK frame received.
     //
-    // task_type / correlation_id / worker_id / slot_id: from the TASK header.
-    // payload / payload_len: task body bytes.
+    // task_type: payload byte 0 of the TASK frame.
+    // correlation_id / worker_id / slot_id: from the TASK header.
+    // payload / payload_len: task body bytes after the leading task_type byte.
     //
     // result_buf / result_cap / result_len:
     //   Write the response body into result_buf (up to result_cap bytes).

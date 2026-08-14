@@ -9,7 +9,6 @@
 #include <cstdio>
 #include <condition_variable>
 #include <cstring>
-#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -73,6 +72,8 @@ static size_t consensus_pick(const std::vector<std::vector<uint8_t>>& payloads,
 
 class SchedulerImpl final : public IScheduler {
 public:
+    static constexpr uint32_t PENDING_QUEUE_CAPACITY = 256u;
+
     SchedulerImpl()  = default;
     ~SchedulerImpl() override { stop(); }
 
@@ -96,9 +97,12 @@ public:
     {
         const SlotKey key{hb.worker_id, hb.slot_id};
         std::lock_guard<std::mutex> lk(slots_mu_);
+        const bool is_new = (slots_.find(key) == slots_.end());
         auto& slot     = slots_[key];
         slot.worker_id = hb.worker_id;
         slot.slot_id   = hb.slot_id;
+        if (is_new)
+            slot.conn_state = ConnectionState::SEEN;  // must complete invite/ack before dispatch
         linep::scheduler::apply_heartbeat(slot, hb);
     }
 
@@ -116,11 +120,17 @@ public:
         t.max_attempts   = max_attempts;
         t.callback       = callback;
         t.user_data      = user_data;
-        {
-            std::lock_guard<std::mutex> lk(pending_mu_);
-            pending_.push_back(std::move(t));
+
+        if (!enqueue_pending(std::move(t))) {
+            if (callback) {
+                callback(corr_id,
+                         linep::RESULT_REJECTED,
+                         nullptr,
+                         0u,
+                         user_data);
+            }
         }
-        pending_cv_.notify_one();
+
         return corr_id;
     }
 
@@ -151,6 +161,18 @@ public:
 
 private:
 
+    bool enqueue_pending(PendingTask task)
+    {
+        if (!pending_.push(std::move(task))) {
+            std::fprintf(stderr,
+                         "[scheduler] pending_queue_full cap=%u backpressure=1\n",
+                         PENDING_QUEUE_CAPACITY);
+            return false;
+        }
+        pending_cv_.notify_one();
+        return true;
+    }
+
     struct PartialResult {
         SlotKey              slot{};
         linep::ResultStatus  status{linep::RESULT_TIMEOUT};
@@ -174,10 +196,8 @@ private:
             const auto now = std::chrono::steady_clock::now();
             expire_stale(now);
             dispatch_pending(now);
-            std::unique_lock<std::mutex> lk(pending_mu_);
-            pending_cv_.wait_for(lk, std::chrono::milliseconds(10), [this] {
-                return !pending_.empty() || !running_.load();
-            });
+            std::unique_lock<std::mutex> lk(wait_mu_);
+            pending_cv_.wait_for(lk, std::chrono::milliseconds(10));
         }
     }
 
@@ -197,15 +217,16 @@ private:
 
     void dispatch_pending(std::chrono::steady_clock::time_point now)
     {
-        // Snapshot — avoid holding pending_mu_ while acquiring slots_mu_.
+        // Drain queue first, then process without locks.
         std::vector<PendingTask> snapshot;
-        {
-            std::lock_guard<std::mutex> lk(pending_mu_);
-            if (pending_.empty()) return;
-            snapshot.assign(pending_.begin(), pending_.end());
+        snapshot.reserve(16);
+        while (true) {
+            std::optional<PendingTask> item = pending_.pop();
+            if (!item.has_value()) break;
+            snapshot.push_back(std::move(item.value()));
         }
+        if (snapshot.empty()) return;
 
-        std::vector<uint32_t> dispatched;
         for (auto& task : snapshot) {
             std::vector<SlotKey> selected;
             std::vector<double> selected_scores;
@@ -221,8 +242,6 @@ private:
                     it->second.last_used = now;
                 }
             }
-
-            dispatched.push_back(task.correlation_id);
 
             if (selected.empty()) {
                 std::fprintf(stderr,
@@ -268,18 +287,6 @@ private:
                             std::move(at),
                             shared).detach();
             }
-        }
-
-        if (!dispatched.empty()) {
-            std::lock_guard<std::mutex> lk(pending_mu_);
-            pending_.erase(
-                std::remove_if(pending_.begin(), pending_.end(),
-                    [&](const PendingTask& t) {
-                        for (auto id : dispatched)
-                            if (t.correlation_id == id) return true;
-                        return false;
-                    }),
-                pending_.end());
         }
     }
 
@@ -493,9 +500,9 @@ private:
                                  chosen->diag.latency_ms);
                     complete_task_if_first(shared, chosen->status, chosen->payload);
                 } else if (shared->task.attempt_count < shared->task.max_attempts) {
-                    std::lock_guard<std::mutex> lk(pending_mu_);
-                    pending_.push_back(shared->task);
-                    pending_cv_.notify_one();
+                    if (!enqueue_pending(shared->task)) {
+                        complete_task_if_first(shared, linep::RESULT_REJECTED, {});
+                    }
                 } else {
                     complete_task_if_first(shared, linep::RESULT_TIMEOUT, {});
                 }
@@ -510,9 +517,9 @@ private:
     std::map<SlotKey, SlotState> slots_;
     mutable std::mutex           slots_mu_;
 
-    std::deque<PendingTask> pending_;
-    std::mutex              pending_mu_;
-    std::condition_variable pending_cv_;
+    BoundedMpscQueue<PendingTask, PENDING_QUEUE_CAPACITY> pending_;
+    std::condition_variable                                pending_cv_;
+    std::mutex                                             wait_mu_;
 
     std::atomic<bool>     running_{false};
     std::atomic<int>      active_dispatch_count_{0};

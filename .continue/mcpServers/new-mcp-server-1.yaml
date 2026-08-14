@@ -1,0 +1,10 @@
+Name: Fetch
+Version: 0.0.1
+Schema: v1
+mcpServers:
+  - name: Fetch
+    command: npx
+    args:
+      - -y
+      - fetch-mcp-server
+    env: {}

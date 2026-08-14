@@ -1,0 +1,190 @@
+name: Build
+
+on:
+  push:
+    branches: ["main", "dev"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  # ── Windows: win-x64 (native MinGW/UCRT64) + win-arm64 (MSVC cross) ────────
+  windows:
+    name: Windows (${{ matrix.target }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: win-x64
+            cmake_flags: ""
+            artifact_name: linep-win-x64
+          - target: win-arm64
+            cmake_flags: >-
+              -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/windows-arm64.cmake
+            artifact_name: linep-win-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add MSVC ARM64 cross tools (win-arm64 only)
+        if: matrix.target == 'win-arm64'
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Configure (win-arm64 via VsDevCmd)
+        if: matrix.target == 'win-arm64'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=arm64 -host_arch=amd64
+          cmake -S . -B build -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/windows-arm64.cmake ^
+            -DLINEP_BUILD_TESTS=OFF ^
+            --log-level=WARNING
+
+      - name: Build (win-arm64)
+        if: matrix.target == 'win-arm64'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=arm64 -host_arch=amd64
+          cmake --build build --parallel
+
+      - name: Setup Ninja (win-x64)
+        if: matrix.target == 'win-x64'
+        uses: seanmiddleditch/gha-setup-ninja@master
+
+      - name: Configure (win-x64)
+        if: matrix.target == 'win-x64'
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DLINEP_BUILD_TESTS=OFF `
+            --log-level=WARNING
+
+      - name: Build (win-x64)
+        if: matrix.target == 'win-x64'
+        shell: pwsh
+        run: cmake --build build --parallel
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: build/linep.dll
+          if-no-files-found: error
+
+  # ── Linux: linux-x64 (native) + linux-arm64 (cross) ────────────────────────
+  linux:
+    name: Linux (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            packages: ""
+            cmake_flags: >-
+              -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/linux-x64.cmake
+            artifact_name: linep-linux-x64
+          - target: linux-arm64
+            packages: gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+            cmake_flags: >-
+              -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/linux-arm64.cmake
+            artifact_name: linep-linux-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build g++ ${{ matrix.packages }}
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            ${{ matrix.cmake_flags }} \
+            -DLINEP_BUILD_TESTS=OFF \
+            --log-level=WARNING
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: build/liblinep.so
+          if-no-files-found: error
+
+  # ── macOS: Intel + Apple Silicon + Universal ─────────────────────────────────
+  macos:
+    name: macOS (${{ matrix.target }})
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            cmake_flags: >-
+              -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/macos-arm64.cmake
+            artifact_name: linep-macos-arm64
+          - target: macos-x64
+            cmake_flags: >-
+              -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/macos-x64.cmake
+            artifact_name: linep-macos-x64
+          - target: macos-universal
+            cmake_flags: >-
+              -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/macos-universal.cmake
+            artifact_name: linep-macos-universal
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install cmake ninja
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            ${{ matrix.cmake_flags }} \
+            -DLINEP_BUILD_TESTS=OFF \
+            --log-level=WARNING
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Verify architectures
+        run: lipo -info build/liblinep.dylib
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: build/liblinep.dylib
+          if-no-files-found: error
+
+  # ── Bundle all artifacts into one release zip ────────────────────────────────
+  bundle:
+    name: Bundle release artifacts
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+
+      - name: Show contents
+        run: find dist/ -type f | sort
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: linep-all-platforms
+          path: dist/
