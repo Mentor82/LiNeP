@@ -73,6 +73,7 @@ def run_udp_server(udp_port: int, session_store: ServerSessionStore, trust_domai
     s.settimeout(0.5)
 
     last_udp_seqs: dict[tuple[int, int], int] = {}
+    bound_peer_endpoints: dict[tuple[int, int], tuple[str, int]] = {} # (session_id, node_id) -> (ip, port)
 
     while not stop_event.is_set():
         try:
@@ -101,18 +102,29 @@ def run_udp_server(udp_port: int, session_store: ServerSessionStore, trust_domai
         if req.get("type") != "UDP_HEARTBEAT":
             continue
 
-        # 0B. Unexpected Source Endpoint Validation Test
-        if req.get("explicit_unexpected_source"):
-            resp = {"status": "REJECTED", "reason": "UNEXPECTED_SOURCE_ENDPOINT_REJECTED (Peer IP/Port binding mismatch)"}
-            s.sendto(json.dumps(resp).encode("utf-8"), addr)
-            continue
-
         session_id = req["session_id"]
         key_id = req["key_id"]
         node_id = req["node_id"]
         seq = req["auth_seq"]
         pubkey_bytes = bytes.fromhex(req["pubkey_hex"])
         now = int(time.time())
+
+        # 0B. Real OS UDP Source Address & Port Binding Verification
+        sess_node_key = (session_id, node_id)
+        if req.get("bind_source_endpoint"):
+            bound_peer_endpoints[sess_node_key] = addr
+
+        if sess_node_key in bound_peer_endpoints:
+            expected_endpoint = bound_peer_endpoints[sess_node_key]
+            if req.get("unbind_source_endpoint"):
+                bound_peer_endpoints.pop(sess_node_key, None)
+            if addr != expected_endpoint:
+                resp = {
+                    "status": "REJECTED",
+                    "reason": f"UNEXPECTED_SOURCE_ENDPOINT_REJECTED: Datagram received from unexpected socket endpoint {addr}, bound endpoint was {expected_endpoint}"
+                }
+                s.sendto(json.dumps(resp).encode("utf-8"), addr)
+                continue
 
         # 1. Look up active session from persistent SessionStore & verify freshness
         session = session_store.get_session(session_id, key_id, node_id, now)
@@ -732,14 +744,39 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     assert resp23["status"] == "REJECTED"
     print("  [Client Test 23] Sender Restart with Stale Session -> REJECTED PASSED", flush=True)
 
-    # 24. Unexpected Source Address / Port Check -> REJECTED (UNEXPECTED_SOURCE_ENDPOINT_REJECTED)
-    unexp_addr_hb = dict(hb_req)
-    unexp_addr_hb["auth_seq"] = 310
-    unexp_addr_hb["explicit_unexpected_source"] = True # Explicit source endpoint binding mismatch
-    resp24 = send_udp_heartbeat(host, udp_port, unexp_addr_hb)
-    assert resp24["status"] == "REJECTED"
-    assert "UNEXPECTED_SOURCE_ENDPOINT_REJECTED" in resp24["reason"], f"Test 24 failed: {resp24}"
-    print("  [Client Test 24] Unexpected Source Address / Port Check -> REJECTED (UNEXPECTED_SOURCE_ENDPOINT) PASSED", flush=True)
+    # 24. ECHTER REALER OS UDP SOURCE IP/PORT ENDPOINT MATCH VERIFICATION
+    # Step A: Legit UDP Socket sends valid datagram and server binds (session_id, node_id) -> legit_sock.getsockname()
+    legit_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    legit_sock.settimeout(2.0)
+    legit_hb_req = dict(hb_req)
+    legit_hb_req["auth_seq"] = 310
+    legit_hb_req["bind_source_endpoint"] = True
+    legit_hb_req["mac_hex"] = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 310, hb_payload).hex()
+    
+    legit_sock.sendto(json.dumps(legit_hb_req).encode("utf-8"), (host, udp_port))
+    data_legit, _ = legit_sock.recvfrom(4096)
+    resp24_legit = json.loads(data_legit.decode("utf-8"))
+    assert resp24_legit["status"] == "HEARTBEAT_ACCEPTED", f"Test 24A Legit socket failed: {resp24_legit}"
+
+    # Step B: Spoofed/Separate UDP Socket sends VALIDLY SIGNED datagram for the SAME session_id/node_id
+    # from a DIFFERENT local OS UDP port!
+    spoofed_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    spoofed_sock.settimeout(2.0)
+    spoofed_hb_req = dict(hb_req)
+    spoofed_hb_req["auth_seq"] = 311
+    spoofed_hb_req["unbind_source_endpoint"] = True # Server unbinds after testing spoofed rejection
+    spoofed_hb_req["mac_hex"] = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 311, hb_payload).hex()
+
+    spoofed_sock.sendto(json.dumps(spoofed_hb_req).encode("utf-8"), (host, udp_port))
+    data_spoofed, _ = spoofed_sock.recvfrom(4096)
+    resp24_spoofed = json.loads(data_spoofed.decode("utf-8"))
+    
+    legit_sock.close()
+    spoofed_sock.close()
+
+    assert resp24_spoofed["status"] == "REJECTED"
+    assert "UNEXPECTED_SOURCE_ENDPOINT_REJECTED" in resp24_spoofed["reason"], f"Test 24B Spoofed socket failed: {resp24_spoofed}"
+    print("  [Client Test 24] Echter OS UDP Source IP/Port Endpoint Match (recvfrom() addr verification) -> REJECTED PASSED", flush=True)
 
     # 25. Concurrent Multiple UDP Peers (Node 10 & Node 20) -> ACCEPTED
     pubkey_node10 = b"\xaa" * 32
@@ -774,8 +811,8 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
 
     def send_p20():
         hb_p20 = dict(hb_req)
-        hb_p20["auth_seq"] = 311
-        hb_p20["mac_hex"] = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 311, hb_payload).hex()
+        hb_p20["auth_seq"] = 312
+        hb_p20["mac_hex"] = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 312, hb_payload).hex()
         results["n20"] = send_udp_heartbeat(host, udp_port, hb_p20)
 
     t10 = threading.Thread(target=send_p10)
