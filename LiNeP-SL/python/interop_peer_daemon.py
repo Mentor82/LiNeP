@@ -30,6 +30,11 @@ def run_udp_server(udp_port: int, master_secret: bytes, trust_domain: int, stop_
     pubkey_win = b"\xaa" * 32
     pubkey_deb = b"\xbb" * 32
 
+    # Pre-provision trusted identities at server startup
+    sl4_engine = linep_sl.SecurityDecisionEngine(trust_domain)
+    sl4_engine.register_peer(10, pubkey_win)
+    sl4_engine.register_peer(20, pubkey_deb)
+
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("0.0.0.0", udp_port))
@@ -57,8 +62,7 @@ def run_udp_server(udp_port: int, master_secret: bytes, trust_domain: int, stop_
         key_id = req["key_id"]
         node_id = req["node_id"]
         seq = req["auth_seq"]
-        pubkey_hex = req["pubkey_hex"]
-        pubkey_bytes = bytes.fromhex(pubkey_hex)
+        pubkey_bytes = bytes.fromhex(req["pubkey_hex"])
 
         # 1. Derive Session Key
         now = int(time.time())
@@ -68,7 +72,7 @@ def run_udp_server(udp_port: int, master_secret: bytes, trust_domain: int, stop_
             s.sendto(json.dumps(resp).encode("utf-8"), addr)
             continue
 
-        # 2. Verify MAC
+        # 2. Verify MAC (SL1)
         hdr_bytes = bytes.fromhex(req["hdr_hex"])
         payload_bytes = bytes.fromhex(req["payload_hex"])
         mac_bytes = bytes.fromhex(req["mac_hex"])
@@ -87,7 +91,6 @@ def run_udp_server(udp_port: int, master_secret: bytes, trust_domain: int, stop_
             resp = {"status": "REJECTED", "reason": f"UDP Heartbeat Replay Error (seq {seq} <= last {last_udp_seqs[key]})"}
             s.sendto(json.dumps(resp).encode("utf-8"), addr)
             continue
-        last_udp_seqs[key] = seq
 
         # 4. Verify SL3 Capability Token for HEARTBEAT_EMIT
         cap_token = linep_sl.CapabilityToken(
@@ -104,9 +107,6 @@ def run_udp_server(udp_port: int, master_secret: bytes, trust_domain: int, stop_
             continue
 
         # 5. Verify SL4 Engine
-        sl4_engine = linep_sl.SecurityDecisionEngine(trust_domain)
-        sl4_engine.register_peer(node_id, pubkey_bytes)
-
         if req.get("remote_trust_domain_id") and req["remote_trust_domain_id"] != trust_domain:
             sl4_engine.add_federation(trust_domain, req["remote_trust_domain_id"], linep_sl.CapFlags.HEARTBEAT_EMIT)
             pol = linep_sl.GovernancePolicy(
@@ -144,6 +144,7 @@ def run_udp_server(udp_port: int, master_secret: bytes, trust_domain: int, stop_
             s.sendto(json.dumps(resp).encode("utf-8"), addr)
             continue
 
+        last_udp_seqs[key] = seq
         resp = {"status": "HEARTBEAT_ACCEPTED", "reason": "Protected UDP Heartbeat Verified"}
         s.sendto(json.dumps(resp).encode("utf-8"), addr)
 
@@ -157,6 +158,11 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
     provider = linep_sl.MemoryIdentityProvider(trust_domain)
     provider.register_peer(10, pubkey_win) # Windows Node 10
     provider.register_peer(20, pubkey_deb) # Debian Node 20
+
+    # Persistent Engine pre-provisioned with trusted identities
+    sl4_engine = linep_sl.SecurityDecisionEngine(trust_domain)
+    sl4_engine.register_peer(10, pubkey_win)
+    sl4_engine.register_peer(20, pubkey_deb)
 
     stop_udp = threading.Event()
     udp_thread = threading.Thread(target=run_udp_server, args=(udp_port, master_secret, trust_domain, stop_udp), daemon=True)
@@ -180,7 +186,7 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
         req = json.loads(data.decode("utf-8"))
         msg_type = req.get("type", "TASK")
 
-        # 1. Peer Identity Validation
+        # 1. Peer Identity Validation (SL2 Identity Anchor)
         peer_id = linep_sl.PeerIdentity(
             trust_domain_id=req["trust_domain_id"],
             node_id=req["node_id"],
@@ -223,32 +229,7 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
             conn.close()
             continue
 
-        # Handle Stream Sequences per (session_id, correlation_id)
-        if msg_type == "STREAM_CHUNK":
-            chunk_seq = req.get("chunk_seq", 1)
-            corr_id = req.get("correlation_id", 0)
-            scope_key = (req["session_id"], corr_id)
-
-            last_seq = stream_sequences.get(scope_key, 0)
-            if chunk_seq <= last_seq:
-                resp = {"status": "REJECTED", "reason": f"Stream sequence error (chunk {chunk_seq} <= last {last_seq})"}
-                conn.sendall(json.dumps(resp).encode("utf-8"))
-                conn.close()
-                continue
-
-            stream_sequences[scope_key] = chunk_seq
-            resp = {"status": "STREAM_ACCEPTED", "chunk_seq": chunk_seq}
-            conn.sendall(json.dumps(resp).encode("utf-8"))
-            conn.close()
-            continue
-
-        if msg_type == "TASK_CANCEL":
-            resp = {"status": "CANCEL_ACCEPTED", "reason": "Task cancellation verified"}
-            conn.sendall(json.dumps(resp).encode("utf-8"))
-            conn.close()
-            continue
-
-        # 5. Verify SL3 Capability Token
+        # 5. Verify SL3 Capability Token (ALL MESSAGE TYPES MUST PASS SL3!)
         cap_token = linep_sl.CapabilityToken(
             session_id=req["session_id"],
             granted_caps=linep_sl.CapFlags(req["cap_flags"]),
@@ -267,10 +248,7 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
             conn.close()
             continue
 
-        # 6. Verify SL4 Governance, Zero-Trust & Federation Engine using persistent SecurityDecisionEngine
-        sl4_engine = linep_sl.SecurityDecisionEngine(trust_domain)
-        sl4_engine.register_peer(req["node_id"], bytes.fromhex(req["pubkey_hex"]))
-
+        # 6. Verify SL4 Governance, Zero-Trust & Federation Engine (ALL MESSAGE TYPES MUST PASS SL4!)
         if req.get("remote_trust_domain_id") and req["remote_trust_domain_id"] != trust_domain:
             sl4_engine.add_federation(trust_domain, req["remote_trust_domain_id"], linep_sl.CapFlags.INFERENCE_READ)
             pol = linep_sl.GovernancePolicy(
@@ -297,6 +275,31 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
 
         if sl4_dec != linep_sl.Decision.ALLOW:
             resp = {"status": "REJECTED", "reason": f"SL4 Governance Denied: {sl4_reason}"}
+            conn.sendall(json.dumps(resp).encode("utf-8"))
+            conn.close()
+            continue
+
+        # 7. AFTER SL1-SL4 GATING HAS PASSED: Process message-type specific handlers!
+        if msg_type == "STREAM_CHUNK":
+            chunk_seq = req.get("chunk_seq", 1)
+            corr_id = req.get("correlation_id", 0)
+            scope_key = (req["session_id"], corr_id)
+
+            last_seq = stream_sequences.get(scope_key, 0)
+            if chunk_seq <= last_seq:
+                resp = {"status": "REJECTED", "reason": f"Stream sequence error (chunk {chunk_seq} <= last {last_seq})"}
+                conn.sendall(json.dumps(resp).encode("utf-8"))
+                conn.close()
+                continue
+
+            stream_sequences[scope_key] = chunk_seq
+            resp = {"status": "STREAM_ACCEPTED", "chunk_seq": chunk_seq}
+            conn.sendall(json.dumps(resp).encode("utf-8"))
+            conn.close()
+            continue
+
+        if msg_type == "TASK_CANCEL":
+            resp = {"status": "CANCEL_ACCEPTED", "reason": "Task cancellation verified"}
             conn.sendall(json.dumps(resp).encode("utf-8"))
             conn.close()
             continue
@@ -401,15 +404,23 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     assert resp_stream2["status"] == "STREAM_ACCEPTED"
     print("  [Client Test 4] Stream Fragments (Chunk 1 & Chunk 2) -> ACCEPTED", flush=True)
 
-    # 5. Duplicate Stream Fragment -> REJECTED
+    # 5. STREAM_CHUNK with Unauthorized Capability -> MUST BE REJECTED!
+    unauth_stream_req = dict(stream2_req)
+    unauth_stream_req["chunk_seq"] = 3
+    unauth_stream_req["required_cap"] = int(linep_sl.CapFlags.ADMIN)
+    resp_unauth_stream = send_test_request(host, tcp_port, unauth_stream_req)
+    assert resp_unauth_stream["status"] == "REJECTED"
+    print("  [Client Test 5] STREAM_CHUNK with Unauthorized Capability -> REJECTED PASSED", flush=True)
+
+    # 6. Duplicate Stream Fragment -> REJECTED
     stream_dup_req = dict(base_req)
     stream_dup_req["type"] = "STREAM_CHUNK"
     stream_dup_req["chunk_seq"] = 2
     resp_dup = send_test_request(host, tcp_port, stream_dup_req)
     assert resp_dup["status"] == "REJECTED"
-    print("  [Client Test 5] Duplicate Stream Fragment -> REJECTED PASSED", flush=True)
+    print("  [Client Test 6] Duplicate Stream Fragment -> REJECTED PASSED", flush=True)
 
-    # 6. Authenticated TASK_CANCEL -> CANCEL_ACCEPTED
+    # 7. Authenticated TASK_CANCEL -> CANCEL_ACCEPTED
     cancel_payload = b"CANCEL_TASK_42"
     cancel_mac = linep_sl.compute_sl1_mac(session.secret_key, hdr_bytes, session_id, key_id, 101, cancel_payload)
     cancel_req = dict(base_req)
@@ -419,23 +430,32 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     cancel_req["mac_hex"] = cancel_mac.hex()
     resp_cancel = send_test_request(host, tcp_port, cancel_req)
     assert resp_cancel["status"] == "CANCEL_ACCEPTED"
-    print("  [Client Test 6] Authenticated TASK_CANCEL -> CANCEL_ACCEPTED PASSED", flush=True)
+    print("  [Client Test 7] Authenticated TASK_CANCEL -> CANCEL_ACCEPTED PASSED", flush=True)
 
-    # 7. Tampered TASK_CANCEL -> REJECTED
+    # 8. TASK_CANCEL with Unauthorized Capability -> MUST BE REJECTED!
+    unauth_cancel_req = dict(cancel_req)
+    unauth_cancel_req["auth_seq"] = 102
+    unauth_cancel_req["required_cap"] = int(linep_sl.CapFlags.ADMIN)
+    resp_unauth_cancel = send_test_request(host, tcp_port, unauth_cancel_req)
+    assert resp_unauth_cancel["status"] == "REJECTED"
+    print("  [Client Test 8] TASK_CANCEL with Unauthorized Capability -> REJECTED PASSED", flush=True)
+
+    # 9. Tampered TASK_CANCEL -> REJECTED
     tampered_cancel_req = dict(cancel_req)
+    tampered_cancel_req["auth_seq"] = 103
     tampered_cancel_req["mac_hex"] = (b"\xff" * 16).hex()
     resp_tampered_cancel = send_test_request(host, tcp_port, tampered_cancel_req)
     assert resp_tampered_cancel["status"] == "REJECTED"
-    print("  [Client Test 7] Tampered TASK_CANCEL -> REJECTED PASSED", flush=True)
+    print("  [Client Test 9] Tampered TASK_CANCEL -> REJECTED PASSED", flush=True)
 
-    # 8. SL4 Cross-Domain without Federation -> REJECTED
+    # 10. SL4 Cross-Domain without Federation -> REJECTED
     cross_domain_req = dict(base_req)
     cross_domain_req["remote_trust_domain_id"] = 0x4C4E5039
     resp_cross_domain = send_test_request(host, tcp_port, cross_domain_req)
     assert resp_cross_domain["status"] == "REJECTED"
-    print("  [Client Test 8] SL4 Cross-Domain without Federation -> REJECTED (Fail Closed Gate 3 PASSED)", flush=True)
+    print("  [Client Test 10] SL4 Cross-Domain without Federation -> REJECTED (Fail Closed Gate 3 PASSED)", flush=True)
 
-    # --- UDP HEARTBEAT TESTS (Tests 9-12) ---
+    # --- UDP HEARTBEAT TESTS (Tests 11-14) ---
     hb_cap_token = linep_sl.create_capability_token(
         session.secret_key, session_id, linep_sl.CapFlags.HEARTBEAT_EMIT, now + 3600
     )
@@ -459,42 +479,42 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
         "cap_mac_hex": hb_cap_token.mac.hex(),
     }
 
-    # 9. Valid Protected UDP Heartbeat -> HEARTBEAT_ACCEPTED
-    resp9 = send_udp_heartbeat(host, udp_port, hb_req)
-    assert resp9["status"] == "HEARTBEAT_ACCEPTED"
-    print("  [Client Test 9] Protected UDP Heartbeat -> ACCEPTED PASSED", flush=True)
+    # 11. Valid Protected UDP Heartbeat -> HEARTBEAT_ACCEPTED
+    resp11 = send_udp_heartbeat(host, udp_port, hb_req)
+    assert resp11["status"] == "HEARTBEAT_ACCEPTED"
+    print("  [Client Test 11] Protected UDP Heartbeat -> ACCEPTED PASSED", flush=True)
 
-    # 10. Tampered UDP Heartbeat MAC -> REJECTED
+    # 12. Tampered UDP Heartbeat MAC -> REJECTED
     tampered_hb = dict(hb_req)
     tampered_hb["auth_seq"] = 201
     tampered_hb["mac_hex"] = (b"\xff" * 16).hex()
-    resp10 = send_udp_heartbeat(host, udp_port, tampered_hb)
-    assert resp10["status"] == "REJECTED"
-    print("  [Client Test 10] Tampered UDP Heartbeat MAC -> REJECTED PASSED", flush=True)
+    resp12 = send_udp_heartbeat(host, udp_port, tampered_hb)
+    assert resp12["status"] == "REJECTED"
+    print("  [Client Test 12] Tampered UDP Heartbeat MAC -> REJECTED PASSED", flush=True)
 
-    # 11. Duplicate UDP Heartbeat Replay (retransmitted seq 200) -> REJECTED
+    # 13. Duplicate UDP Heartbeat Replay (retransmitted seq 200) -> REJECTED
     dup_hb = dict(hb_req)
     dup_hb["auth_seq"] = 200
-    resp11 = send_udp_heartbeat(host, udp_port, dup_hb)
-    assert resp11["status"] == "REJECTED"
-    assert "Replay Error" in resp11["reason"]
-    print("  [Client Test 11] Duplicate UDP Heartbeat Replay -> REJECTED PASSED", flush=True)
+    resp13 = send_udp_heartbeat(host, udp_port, dup_hb)
+    assert resp13["status"] == "REJECTED"
+    assert "Replay Error" in resp13["reason"]
+    print("  [Client Test 13] Duplicate UDP Heartbeat Replay -> REJECTED PASSED", flush=True)
 
-    # 12. Cross-Domain UDP Heartbeat without Federation -> REJECTED
+    # 14. Cross-Domain UDP Heartbeat without Federation -> REJECTED
     cross_hb = dict(hb_req)
     cross_hb["auth_seq"] = 202
     cross_hb["mac_hex"] = linep_sl.compute_sl1_mac(session.secret_key, hdr_bytes, session_id, key_id, 202, hb_payload).hex()
     cross_hb["remote_trust_domain_id"] = 0x4C4E5039
-    resp12 = send_udp_heartbeat(host, udp_port, cross_hb)
-    assert resp12["status"] == "REJECTED"
-    print("  [Client Test 12] Cross-Domain UDP Heartbeat without Federation -> REJECTED PASSED", flush=True)
+    resp14 = send_udp_heartbeat(host, udp_port, cross_hb)
+    assert resp14["status"] == "REJECTED"
+    print("  [Client Test 14] Cross-Domain UDP Heartbeat without Federation -> REJECTED PASSED", flush=True)
 
     # Final shutdown request
     stop_req = dict(base_req)
     stop_req["stop_after_test"] = True
     send_test_request(host, tcp_port, stop_req)
 
-    print("[CLIENT SUCCESS] ALL TCP STREAMING, CANCEL & UDP HEARTBEAT TESTS PASSED 100%!", flush=True)
+    print("[CLIENT SUCCESS] ALL STREAMING, CANCEL & UDP HEARTBEAT SL1-SL4 SECURITY GATES PASSED 100%!", flush=True)
 
 
 def main():

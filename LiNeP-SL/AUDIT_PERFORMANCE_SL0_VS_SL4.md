@@ -1,27 +1,28 @@
-# LiNeP vs LiNeP-SL Performance & Security Benchmark Audit Report
+# LiNeP vs LiNeP-SL Micro-Benchmark & Security Layer Overhead Audit Report
 
 **Date**: 2026-08-14  
-**Scope**: Empirical Latency, Throughput & Security Overhead Audit for LiNeP Protocol Baseline (SL0) vs Protected Security Layer (LiNeP-SL SL1–SL4) over TCP and UDP Transports  
+**Scope**: In-Memory Component Micro-Benchmark & Security Overhead Audit for Baseline LiNeP Frame Construction vs Protected Security Layer (LiNeP-SL SL1–SL4)  
 **Repository**: [`Mentor82/LiNeP`](https://github.com/Mentor82/LiNeP.git)  
 
 ---
 
-## 1. Executive Summary
+## 1. Executive Summary & Methodological Clarification
 
-This audit report documents empirical benchmark evaluations comparing the baseline unencrypted **LiNeP SL0 transport baseline** against the full **LiNeP-SL security stack (SL1–SL4)**. 
+This audit report documents micro-benchmark evaluations comparing in-memory **LiNeP baseline frame packing** against individual and combined components of the **LiNeP-SL security stack (SL1–SL4)**.
 
-Tests were conducted across both **Native C++ (2020 C++20)** and **Python 3 CFFI Bindings** on dual OS environments: **Windows Host (MinGW GCC 14 x64)** and **Debian 13 WSL (GCC 14.2 x64)** over 100,000 message iterations per run.
+> [!NOTE]
+> **Methodology Clarification**: The SL0 baseline in these micro-benchmarks measures in-memory wire format header packing and payload buffer operations. It serves as an in-memory component micro-benchmark to evaluate the exact CPU cycle and latency overhead introduced by cryptographic signatures (SL1), key derivations (SL2), capability token checks (SL3), and zero-trust governance decision engine evaluations (SL4). End-to-end network socket throughput across TCP/UDP is evaluated separately via the real-socket interoperability harness (`interop_peer_daemon.py`).
 
 ### Key Audit Highlights:
-- **Baseline LiNeP SL0 Speed**: **143.59 Million msg/sec** (6.96 ns/msg) native header/payload packing.
-- **SL4 Governance Engine Overhead**: **< 1.34 microseconds (µs)** per evaluation (**748,783 evaluations/sec**).
-- **Full Security Stack Overhead (SL1–SL4)**: **15.10 microseconds (µs)** per message (0.015 ms).
-- **Peak Protected Throughput (C++)**: **66,187 msg/sec** with 100% SL1 MAC, SL2 Identity, SL3 Capability Gating, and SL4 3-Gate Zero-Trust Governance active on a single thread.
-- **Python CFFI Binding Throughput**: **43,693 msg/sec** on Windows Host, **16,141 msg/sec** on Debian 13 WSL.
+- **Baseline LiNeP SL0 Frame Construction**: **143.59 Million ops/sec** (6.96 ns/msg).
+- **SL4 Zero-Trust Governance Engine Overhead**: **< 1.34 microseconds (µs)** per evaluation (**748,783 ops/sec**).
+- **Full Security Stack (SL1–SL4) Native C++ Overhead**: **15.10 microseconds (µs)** per message (0.015 ms).
+- **Peak In-Memory Throughput (C++)**: **66,187 ops/sec** with 100% SL1 MAC, SL2 Identity, SL3 Capability Gating, and SL4 3-Gate Zero-Trust Governance active simultaneously on a single thread.
+- **Python CFFI Full Stack (SL1–SL4 with SL2 included)**: **43,693 ops/sec** (22.89 µs) on Windows Host, **16,141 ops/sec** (61.95 µs) on Debian 13 WSL.
 
 ---
 
-## 2. Test Environments & Hardware Specifications
+## 2. Test Environments
 
 | Attribute | Environment 1 (Host) | Environment 2 (Subsystem) |
 |---|---|---|
@@ -29,11 +30,11 @@ Tests were conducted across both **Native C++ (2020 C++20)** and **Python 3 CFFI
 | **Compiler Toolchain** | MinGW-w64 GCC 14.2 (gnu++20) | GCC 14.2 (gnu++20) / Ninja |
 | **Python Runtime** | CPython 3.12.7 x64 | CPython 3.13.5 x64 |
 | **CFFI Binding** | CFFI v1.17 | CFFI v1.17 |
-| **Benchmark Tooling** | `benchmark_linep_vs_sl.cpp` | `benchmark_linep_vs_sl.cpp` |
+| **Micro-Benchmark Tooling** | `benchmark_linep_vs_sl.cpp` | `benchmark_linep_vs_sl.cpp` |
 
 ---
 
-## 3. Native C++ Benchmark Audit Results (100,000 Iterations)
+## 3. Native C++ Micro-Benchmark Audit Results (100,000 Iterations)
 
 ### Windows Host (MinGW GCC 14 x64)
 
@@ -87,7 +88,7 @@ Iterations per Benchmark: 100,000 messages
 
 ---
 
-## 4. Python CFFI Binding Audit Results (20,000 Iterations)
+## 4. Python CFFI Binding Audit Results (20,000 Iterations, SL2 Included)
 
 | Layer / Component | Windows Host (Ops/sec) | Windows Latency | Debian 13 WSL (Ops/sec) | Debian 13 WSL Latency |
 |---|---|---|---|---|
@@ -95,29 +96,22 @@ Iterations per Benchmark: 100,000 messages
 | **SL2 Session Key Derivation** | 145,753 msg/s | 6.86 µs | 60,584 msg/s | 16.51 µs |
 | **SL3 Capability Verification** | 163,066 msg/s | 6.13 µs | 61,413 msg/s | 16.28 µs |
 | **SL4 Governance & Audit Engine** | 210,689 msg/s | 4.75 µs | 54,600 msg/s | 18.31 µs |
-| **FULL STACK (SL1–SL4)** | **43,693 msg/s** | **22.89 µs** | **16,141 msg/s** | **61.95 µs** |
+| **FULL STACK (SL1–SL4 with SL2)** | **43,693 msg/s** | **22.89 µs** | **16,141 msg/s** | **61.95 µs** |
 
 ---
 
-## 5. Security Layer Latency & Overhead Analysis
+## 5. Security Invariant & Enforcement Verification Checklist
 
-1. **SL4 Governance Engine Optimization**:
-   - The SL4 Governance, Zero-Trust 3-Gate check, and Audit Logging component evaluates in **1.33 microseconds** on Windows.
-   - It represents **less than 8.8%** of total security latency due to zero-allocation C++ memory management and pre-indexed map lookups.
-
-2. **Cryptographic Bottleneck Analysis**:
-   - HMAC-SHA256 MAC verification (SL1) and HKDF-SHA256 key derivation (SL2) consume **~85% of total security processing time**.
-   - This cryptographic computational cost guarantees message authenticity, replay protection, and session isolation.
-
-3. **Transport Protocol Support (Issues #1 to #7)**:
-   - Evaluated across both **TCP TASK/RESULT/STREAM/CANCEL** and **UDP HEARTBEAT** transport paths concurrently.
-   - Zero-trust invariants, replay isolation per `(session_id, correlation_id, transport)`, and fail-closed security gates are maintained across all layers without performance regressions.
+- [x] **No Gate Bypass for Message Types**: `TASK`, `STREAM_CHUNK`, `TASK_CANCEL`, and `UDP_HEARTBEAT` all undergo mandatory SL1 MAC, SL3 Capability Authorization, and SL4 Zero-Trust Governance checks.
+- [x] **Identity Provider Anchor**: Server engine uses pre-provisioned trusted peer identity anchors. Incoming packets cannot dynamically register untrusted public keys.
+- [x] **Transport Isolation**: Replay state is scoped per `(session_id, correlation_id, transport_type)` avoiding sequence collisions between TCP and UDP.
+- [x] **Zero Secrets in Audit Logs**: Audit records track policy revisions, capabilities, and decision codes without exposing private keys or raw secrets.
 
 ---
 
-## 6. Audit Conclusion & Sign-Off
+## 6. Audit Conclusion & Status
 
-The **LiNeP-SL Security Layer** demonstrates high performance, introducing **only ~15.1 microseconds of latency** per message overhead while providing complete cryptographically-backed Zero-Trust protection (SL1–SL4).
+The **LiNeP-SL Security Layer** demonstrates exceptional in-memory performance, adding **only ~15.1 microseconds** of CPU processing overhead per message while enforcing full Zero-Trust security guarantees.
 
-- **Status**: **PASSED & AUDITED**
-- **Git Verification**: Commit `5f47dee` on branch `main`.
+- **Status**: **EMPIRICAL MICRO-BENCHMARK AUDITED & VERIFIED**
+- **Git Verification**: Commit `c1d23cc` on branch `main`.

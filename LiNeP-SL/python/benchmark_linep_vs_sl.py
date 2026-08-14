@@ -23,7 +23,7 @@ import linep_sl
 
 def run_python_benchmark(num_iterations: int = 20_000):
     print("================================================================================")
-    print("        LiNeP vs LiNeP-SL Python Binding Performance Benchmark                 ")
+    print("        LiNeP vs LiNeP-SL Python Binding Performance Micro-Benchmark            ")
     print("================================================================================")
 
     domain_a = 0x4C4E5031
@@ -99,10 +99,11 @@ def run_python_benchmark(num_iterations: int = 20_000):
     sl4_fps = num_iterations / (t1 - t0)
     sl4_lat_us = ((t1 - t0) / num_iterations) * 1_000_000
 
-    # 5. Full Stack Benchmark (SL1 + SL2 + SL3 + SL4)
+    # 5. Full Security Stack Benchmark (SL1 + SL2 + SL3 + SL4 All Active)
     t0 = time.perf_counter()
     for _ in range(num_iterations):
         m = linep_sl.verify_sl1_mac(session.secret_key, hdr_bytes, session_id, key_id, 1, mac, payload)
+        s = linep_sl.verify_session_key_freshness(session, now) # SL2 included!
         c = linep_sl.verify_capability_token(session.secret_key, cap_token, session_id, now, linep_sl.CapFlags.INFERENCE_READ)
         d, _ = engine.evaluate(
             trust_domain_id=domain_a,
