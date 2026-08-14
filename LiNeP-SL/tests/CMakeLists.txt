@@ -17,3 +17,6 @@ add_test(NAME test_sl4_governance COMMAND test_sl4_governance)
 add_executable(test_udp_heartbeat test_udp_heartbeat.cpp)
 target_link_libraries(test_udp_heartbeat PRIVATE linep_sl_core)
 add_test(NAME test_udp_heartbeat COMMAND test_udp_heartbeat)
+
+add_executable(benchmark_linep_vs_sl benchmark_linep_vs_sl.cpp)
+target_link_libraries(benchmark_linep_vs_sl PRIVATE linep_sl_core)
