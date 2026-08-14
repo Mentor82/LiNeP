@@ -66,6 +66,7 @@ External/Federated Trust Domain SL0 + SL1 + SL2 + SL3 + SL4
 
 ## Documentation & Issue Tracking
 
+* 📚 **[Library Reference & API Guide](./LIBRARY_REFERENCE.md)**
 * 📜 **[Reconstructed Security Specification V0.1](./SPEC_V0_1_RECONSTRUCTED.md)**
 * 📊 **[Micro-Benchmark & Security Overhead Audit Report](./AUDIT_PERFORMANCE_SL0_VS_SL4.md)**
 * 🌐 **[Windows ↔ Debian 13 Interoperability Report](./INTEROP_WINDOWS_DEBIAN13.md)**
