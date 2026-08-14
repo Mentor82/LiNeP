@@ -13,3 +13,7 @@ add_test(NAME test_sl3_capabilities COMMAND test_sl3_capabilities)
 add_executable(test_sl4_governance test_sl4_governance.cpp)
 target_link_libraries(test_sl4_governance PRIVATE linep_sl_core)
 add_test(NAME test_sl4_governance COMMAND test_sl4_governance)
+
+add_executable(test_udp_heartbeat test_udp_heartbeat.cpp)
+target_link_libraries(test_udp_heartbeat PRIVATE linep_sl_core)
+add_test(NAME test_udp_heartbeat COMMAND test_udp_heartbeat)

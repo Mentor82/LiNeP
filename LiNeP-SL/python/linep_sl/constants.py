@@ -14,3 +14,4 @@ class CapFlags(IntFlag):
     ADMIN           = 0x04
     SLOT_MANAGE     = 0x08
     METRICS_READ    = 0x10
+    HEARTBEAT_EMIT  = 0x20

@@ -12,7 +12,8 @@ enum class CapFlags : uint64_t {
     CAP_INFERENCE_WRITE = 1u << 1, // 0x0002: Execute state-modifying / code tasks
     CAP_ADMIN           = 1u << 2, // 0x0004: Administrative control actions
     CAP_SLOT_MANAGE     = 1u << 3, // 0x0008: Reserve/invite/configure worker slots
-    CAP_METRICS_READ    = 1u << 4  // 0x0010: Query worker telemetry & score details
+    CAP_METRICS_READ    = 1u << 4, // 0x0010: Query worker telemetry & score details
+    CAP_HEARTBEAT_EMIT  = 1u << 5  // 0x0020: Emit authenticated LiNeP UDP heartbeat datagrams
 };
 
 inline constexpr CapFlags operator|(CapFlags a, CapFlags b) noexcept {

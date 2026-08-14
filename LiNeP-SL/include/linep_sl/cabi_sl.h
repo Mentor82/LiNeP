@@ -19,12 +19,13 @@ extern "C" {
 #endif
 
 /* Capability bitmasks (SL3) */
-#define LINEP_CAP_NONE            0x00ULL
-#define LINEP_CAP_INFERENCE_READ  0x01ULL
-#define LINEP_CAP_INFERENCE_WRITE 0x02ULL
-#define LINEP_CAP_ADMIN           0x04ULL
-#define LINEP_CAP_SLOT_MANAGE     0x08ULL
-#define LINEP_CAP_METRICS_READ    0x10ULL
+#define LINEP_SL_CAP_NONE            0ULL
+#define LINEP_SL_CAP_INFERENCE_READ  (1ULL << 0)
+#define LINEP_SL_CAP_INFERENCE_WRITE (1ULL << 1)
+#define LINEP_SL_CAP_ADMIN           (1ULL << 2)
+#define LINEP_SL_CAP_SLOT_MANAGE     (1ULL << 3)
+#define LINEP_SL_CAP_METRICS_READ    (1ULL << 4)
+#define LINEP_SL_CAP_HEARTBEAT_EMIT  (1ULL << 5)
 
 #pragma pack(push, 1)
 
