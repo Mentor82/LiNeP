@@ -107,6 +107,21 @@ LINEP_SL_API int linep_sl3_verify_cap_token(
     uint64_t current_time_sec,
     uint64_t required_capability);
 
+/* SL4 Governance, Audit, Zero-Trust & Federation Functions */
+LINEP_SL_API int linep_sl4_evaluate_decision(
+    uint32_t trust_domain_id,
+    uint32_t session_id,
+    uint16_t key_id,
+    uint16_t remote_node_id,
+    uint32_t remote_trust_domain_id,
+    uint8_t  remote_revoked,
+    uint8_t  negotiated_sl,
+    uint64_t requested_cap,
+    const char* policy_id,
+    uint8_t* out_decision,
+    char* out_reason_buf,
+    uint32_t reason_buf_len);
+
 /* Backward compatibility aliases */
 #define linep_sl_compute_mac      linep_sl1_compute_mac
 #define linep_sl_verify_mac       linep_sl1_verify_mac

@@ -9,3 +9,7 @@ add_test(NAME test_sl2_identity COMMAND test_sl2_identity)
 add_executable(test_sl3_capabilities test_sl3_capabilities.cpp)
 target_link_libraries(test_sl3_capabilities PRIVATE linep_sl_core)
 add_test(NAME test_sl3_capabilities COMMAND test_sl3_capabilities)
+
+add_executable(test_sl4_governance test_sl4_governance.cpp)
+target_link_libraries(test_sl4_governance PRIVATE linep_sl_core)
+add_test(NAME test_sl4_governance COMMAND test_sl4_governance)

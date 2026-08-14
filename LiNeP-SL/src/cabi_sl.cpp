@@ -2,7 +2,9 @@
 #include <linep_sl/sl1.hpp>
 #include <linep_sl/sl2.hpp>
 #include <linep_sl/sl3.hpp>
+#include <linep_sl/sl4.hpp>
 #include <cstring>
+#include <memory>
 
 extern "C" {
 
@@ -118,6 +120,53 @@ LINEP_SL_API int linep_sl3_verify_cap_token(
     return linep::sl::verify_cap_token(
         secret_key, key_len, *tok, expected_session_id, current_time_sec,
         static_cast<linep::sl::CapFlags>(required_capability)) ? 1 : 0;
+}
+
+LINEP_SL_API int linep_sl4_evaluate_decision(
+    uint32_t trust_domain_id,
+    uint32_t session_id,
+    uint16_t key_id,
+    uint16_t remote_node_id,
+    uint32_t remote_trust_domain_id,
+    uint8_t  remote_revoked,
+    uint8_t  negotiated_sl,
+    uint64_t requested_cap,
+    const char* policy_id,
+    uint8_t* out_decision,
+    char* out_reason_buf,
+    uint32_t reason_buf_len)
+{
+    auto pol_provider = std::make_shared<linep::sl::MemoryGovernancePolicyProvider>();
+    auto id_provider = std::make_shared<linep::sl::MemoryIdentityProvider>(trust_domain_id);
+    id_provider->register_peer(remote_node_id, reinterpret_cast<const uint8_t*>("\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa"));
+
+    auto fed_provider = std::make_shared<linep::sl::MemoryFederationTrustProvider>();
+    auto audit_sink = std::make_shared<linep::sl::MemoryAuditSink>();
+
+    linep::sl::SecurityDecisionEngine engine(pol_provider, id_provider, fed_provider, audit_sink);
+
+    linep::sl::DecisionContext ctx{};
+    ctx.trust_domain_id = trust_domain_id;
+    ctx.session_id = session_id;
+    ctx.key_id = key_id;
+    ctx.remote_peer.trust_domain_id = remote_trust_domain_id;
+    ctx.remote_peer.node_id = remote_node_id;
+    std::memcpy(ctx.remote_peer.pubkey, "\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa", 32);
+    ctx.remote_peer.revoked = (remote_revoked != 0);
+    ctx.negotiated_sl = static_cast<linep::sl::SecurityLevel>(negotiated_sl);
+    ctx.requested_cap = static_cast<linep::sl::CapFlags>(requested_cap);
+    ctx.policy_id = policy_id ? policy_id : "default-policy";
+    ctx.timestamp_sec = 1700000000ULL;
+
+    auto res = engine.evaluate(ctx);
+    if (out_decision) {
+        *out_decision = static_cast<uint8_t>(res.decision);
+    }
+    if (out_reason_buf && reason_buf_len > 0) {
+        std::strncpy(out_reason_buf, res.reason_code.c_str(), reason_buf_len - 1);
+        out_reason_buf[reason_buf_len - 1] = '\0';
+    }
+    return (res.decision == linep::sl::Decision::ALLOW) ? 1 : 0;
 }
 
 } // extern "C"

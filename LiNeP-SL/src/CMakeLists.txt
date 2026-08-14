@@ -3,6 +3,7 @@ add_library(linep_sl_core STATIC
     sl1.cpp
     sl2.cpp
     sl3.cpp
+    sl4.cpp
 )
 set_target_properties(linep_sl_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 

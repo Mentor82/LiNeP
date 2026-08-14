@@ -116,6 +116,26 @@ def run_server(port: int, master_secret: bytes, trust_domain: int):
             conn.close()
             continue
 
+        # 6. Verify SL4 Governance, Zero-Trust & Federation Engine
+        sl4_dec, sl4_reason = linep_sl.evaluate_governance_decision(
+            trust_domain_id=trust_domain,
+            session_id=req["session_id"],
+            key_id=req["key_id"],
+            remote_node_id=req["node_id"],
+            remote_trust_domain_id=req.get("remote_trust_domain_id", trust_domain),
+            remote_revoked=False,
+            negotiated_sl=linep_sl.SecurityLevel(req["offered_sl"]),
+            requested_cap=req_cap,
+            policy_id=req.get("policy_id", "default-policy"),
+        )
+
+        # GATE 3: Fail closed if SL4 Governance / Zero-Trust denies execution!
+        if sl4_dec != linep_sl.Decision.ALLOW:
+            resp = {"status": "REJECTED", "reason": f"SL4 Governance Denied: {sl4_reason}"}
+            conn.sendall(json.dumps(resp).encode("utf-8"))
+            conn.close()
+            continue
+
         # Handling Specific Message Types:
         if msg_type == "STREAM_CHUNK":
             chunk_seq = req["chunk_seq"]
@@ -262,6 +282,14 @@ def run_client(host: str, port: int, master_secret: bytes, trust_domain: int):
     resp_tampered_cancel = send_test_request(host, port, tampered_cancel_req)
     assert resp_tampered_cancel["status"] == "REJECTED"
     print("  [Client Test 7] Tampered TASK_CANCEL -> REJECTED PASSED", flush=True)
+
+    # 8. SL4 Cross-Domain without Federation Trust -> REJECTED (Fail Closed Gate 3)
+    cross_domain_req = dict(base_req)
+    cross_domain_req["remote_trust_domain_id"] = 0x4C4E5039 # Foreign trust domain
+    resp_cross_domain = send_test_request(host, port, cross_domain_req)
+    assert resp_cross_domain["status"] == "REJECTED"
+    assert "SL4 Governance Denied" in resp_cross_domain["reason"]
+    print("  [Client Test 8] SL4 Cross-Domain without Federation -> REJECTED (Fail Closed Gate 3 PASSED)", flush=True)
 
     # Final shutdown request
     stop_req = dict(base_req)

@@ -79,6 +79,20 @@ int linep_sl3_verify_cap_token(
     uint32_t expected_session_id,
     uint64_t current_time_sec,
     uint64_t required_capability);
+
+int linep_sl4_evaluate_decision(
+    uint32_t trust_domain_id,
+    uint32_t session_id,
+    uint16_t key_id,
+    uint16_t remote_node_id,
+    uint32_t remote_trust_domain_id,
+    uint8_t  remote_revoked,
+    uint8_t  negotiated_sl,
+    uint64_t requested_cap,
+    const char* policy_id,
+    uint8_t* out_decision,
+    char* out_reason_buf,
+    uint32_t reason_buf_len);
 """
 
 ffi = FFI()

@@ -14,6 +14,7 @@ from linep_sl.sl2 import (
     verify_session_key_freshness,
 )
 from linep_sl.sl3 import CapabilityToken, create_capability_token, verify_capability_token
+from linep_sl.sl4 import AuditEventType, Decision, GovernancePolicy, evaluate_governance_decision
 
 __all__ = [
     "CapFlags",
@@ -31,4 +32,8 @@ __all__ = [
     "CapabilityToken",
     "create_capability_token",
     "verify_capability_token",
+    "Decision",
+    "AuditEventType",
+    "GovernancePolicy",
+    "evaluate_governance_decision",
 ]
