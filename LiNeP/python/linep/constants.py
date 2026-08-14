@@ -160,28 +160,22 @@ class SlotFlags(IntFlag):
 
 
 class HeaderFlags(IntFlag):
-    """Bitmask in the ``flags`` field of every LiNeP :class:`~linep.framing.Header`.
+    """Bitmask in the ``flags`` field of every LiNeP :class:`~linep.framing.Header`."""
 
-    Note:
-        Several flags are *reserved* in protocol version 1 and are not
-        evaluated by any receiver; they are listed here for completeness
-        so that round-trip code can preserve them faithfully.
-    """
+    BUILD_TIME     = 0x0001
+    """v1.1: HeaderBuildTimeExt follows Header."""
 
-    ACK_REQUIRED   = 0x0001
-    """Request an acknowledgement frame (reserved in v1)."""
+    ACK_REQUIRED   = 0x0002
+    """Request an acknowledgement frame."""
 
-    IS_ACK         = 0x0002
-    """This frame is an acknowledgement (reserved in v1)."""
+    ENCRYPTED      = 0x0004
+    """Payload is encrypted."""
 
-    ERROR          = 0x0004
-    """Frame carries an error payload."""
+    AUTHENTICATED  = 0x0008
+    """SL1: HeaderAuthExt follows Header."""
 
-    COMPRESSED     = 0x0008
-    """Payload is compressed (reserved in v1)."""
-
-    ENCRYPTED      = 0x0010
-    """Payload is encrypted (reserved in v1)."""
+    COMPRESSED     = 0x0010
+    """Payload is compressed."""
 
     FRAGMENTED     = 0x0020
     """Part of a multi-fragment message."""
@@ -198,8 +192,8 @@ class HeaderFlags(IntFlag):
     RETRY          = 0x0200
     """This frame is a retry of a previously timed-out request."""
 
-    BUILD_TIME     = 0x0400
-    """v1.1: a :class:`~linep.framing.BuildTimeExt` follows the base header."""
+    ERROR          = 0x0400
+    """Frame carries an error payload."""
 
 
 class ErrorCode(IntEnum):

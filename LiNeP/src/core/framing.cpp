@@ -2,6 +2,7 @@
 #include "crc.hpp"
 #include <linep/messages.hpp>
 #include <cstring>
+#include <iostream>
 
 #ifndef LINEP_BUILD_YEAR_2D
 #define LINEP_BUILD_YEAR_2D 0
@@ -188,7 +189,7 @@ bool validate_header(const linep::Header& h) noexcept {
     if (h.magic      != linep::MAGIC)   return false;
     if (h.version    != linep::VERSION) return false;
     if (h.header_len < linep::HEADER_BASE_LEN) return false;
-    if (h.header_len > static_cast<uint16_t>(linep::HEADER_BASE_LEN + linep::HEADER_BUILD_TIME_LEN)) return false;
+    if (h.header_len > static_cast<uint16_t>(linep::HEADER_BASE_LEN + linep::HEADER_BUILD_TIME_LEN + sizeof(linep::HeaderAuthExt))) return false;
     if (h.payload_len > linep::MAX_PAYLOAD_BYTES) return false;
     const uint8_t expected = crc8(reinterpret_cast<const uint8_t*>(&h), 23u);
     return h.header_crc == expected;

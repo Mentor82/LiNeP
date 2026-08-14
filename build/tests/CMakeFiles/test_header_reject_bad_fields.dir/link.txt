@@ -1,3 +1,0 @@
-C:\Strawberry\c\bin\cmake.exe -E rm -f CMakeFiles\test_header_reject_bad_fields.dir/objects.a
-C:\Strawberry\c\bin\ar.exe qc CMakeFiles\test_header_reject_bad_fields.dir/objects.a @CMakeFiles\test_header_reject_bad_fields.dir\objects1.rsp
-C:\Strawberry\c\bin\c++.exe -Wl,--whole-archive CMakeFiles\test_header_reject_bad_fields.dir/objects.a -Wl,--no-whole-archive -o test_header_reject_bad_fields.exe -Wl,--out-implib,libtest_header_reject_bad_fields.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles\test_header_reject_bad_fields.dir\linkLibs.rsp

@@ -54,3 +54,5 @@ linep_add_test(test_udp_control_frames                    test_udp_control_frame
 linep_add_test(test_task_streaming                        test_task_streaming.cpp)
 linep_add_test(test_normalized_scoring                    test_normalized_scoring.cpp)
 linep_add_test(test_consensus_engine                      test_consensus_engine.cpp)
+linep_add_test(test_sl1_auth                          test_sl1_auth.cpp)
+

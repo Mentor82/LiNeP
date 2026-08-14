@@ -139,19 +139,31 @@ LINEP_PACKED_END
 static_assert(sizeof(UdpHeartbeatAckFrame) == 10,
               "UdpHeartbeatAckFrame must be exactly 10 bytes");
 
+LINEP_PACKED_BEGIN
+struct HeaderAuthExt {
+    uint32_t session_id;      //  0  Session identifier
+    uint16_t key_id;          //  4  Key identifier
+    uint32_t auth_seq;        //  6  Monotone SL1 sequence
+    uint8_t  mac[16];         // 10  16-byte MAC tag
+} LINEP_PACKED;
+LINEP_PACKED_END
+
+static_assert(sizeof(HeaderAuthExt) == 26,
+              "HeaderAuthExt must be exactly 26 bytes");
+
 // ── Flags (16-bit) ───────────────────────────────────────────────────────────
 enum Flags : uint16_t {
-    FLAG_ACK_REQUIRED   = 1u << 0,   // reserved in v1 — not evaluated by any receiver
-    FLAG_IS_ACK         = 1u << 1,   // reserved in v1 — not evaluated by any receiver
-    FLAG_ERROR          = 1u << 2,
-    FLAG_COMPRESSED     = 1u << 3,   // reserved in v1
-    FLAG_ENCRYPTED      = 1u << 4,   // reserved in v1
-    FLAG_FRAGMENTED     = 1u << 5,
-    FLAG_FINAL_FRAGMENT = 1u << 6,
-    FLAG_PRIORITY       = 1u << 7,
-    FLAG_DEGRADED       = 1u << 8,
-    FLAG_RETRY          = 1u << 9,
-    FLAG_BUILD_TIME     = 1u << 10,  // v1.1: HeaderBuildTimeExt follows Header
+    FLAG_BUILD_TIME     = 1u << 0,  // 0x0001: HeaderBuildTimeExt follows Header
+    FLAG_ACK_REQUIRED   = 1u << 1,  // 0x0002
+    FLAG_ENCRYPTED      = 1u << 2,  // 0x0004
+    FLAG_AUTHENTICATED  = 1u << 3,  // 0x0008: HeaderAuthExt (SL1) follows Header
+    FLAG_COMPRESSED     = 1u << 4,  // 0x0010
+    FLAG_FRAGMENTED     = 1u << 5,  // 0x0020
+    FLAG_FINAL_FRAGMENT = 1u << 6,  // 0x0040
+    FLAG_PRIORITY       = 1u << 7,  // 0x0080
+    FLAG_DEGRADED       = 1u << 8,  // 0x0100
+    FLAG_RETRY          = 1u << 9,  // 0x0200
+    FLAG_ERROR          = 1u << 10, // 0x0400
 };
 
 // ── Slot Flags (8-bit, in HeartbeatCompact.slot_flags) ───────────────────────

@@ -62,6 +62,14 @@ public:
                                       StreamChunkCallback  chunk_cb,
                                       void*                user_data,
                                       uint32_t             timeout_ms = 5000) = 0;
+
+    // Configure SL1 lightweight authentication session for outbound frames.
+    virtual void set_sl1_session(uint32_t session_id,
+                                 uint16_t key_id,
+                                 const uint8_t* secret_key,
+                                 size_t key_len) = 0;
+
+    virtual void clear_sl1_session() = 0;
 };
 
 LINEP_API ITcpTaskSender* create_task_sender();
@@ -76,7 +84,6 @@ LINEP_API void             destroy_task_sender(ITcpTaskSender* p);
 
 class LINEP_API ITcpTaskReceiver {
 public:
-    // Called once per TASK frame received.
     using TaskCallback = uint8_t (*)(uint8_t         task_type,
                                       uint32_t        correlation_id,
                                       uint16_t        worker_id,
@@ -113,6 +120,16 @@ public:
     // Start listening for streaming tasks.
     virtual bool start_stream(uint16_t port, StreamTaskCallback stream_cb,
                               void* user_data = nullptr) = 0;
+
+    // Configure SL1 lightweight authentication enforcement for inbound frames.
+    // If require_auth is true, unauthenticated frames or bad MACs fail closed.
+    virtual void set_sl1_session(uint32_t session_id,
+                                 uint16_t key_id,
+                                 const uint8_t* secret_key,
+                                 size_t key_len,
+                                 bool require_auth = true) = 0;
+
+    virtual void clear_sl1_session() = 0;
 
     // Stop accepting new connections and wait for active handlers to finish.
     virtual void stop() = 0;

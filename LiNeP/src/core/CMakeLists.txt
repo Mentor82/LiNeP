@@ -1,6 +1,8 @@
 add_library(linep_core OBJECT
     crc.cpp
     framing.cpp
+    sha256.cpp
+    security.cpp
 )
 
 # Inherit PAL includes (socket.hpp, clock.hpp, byteorder.hpp)

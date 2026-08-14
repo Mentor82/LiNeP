@@ -335,4 +335,39 @@ void linep_receiver_stop(linep_receiver_t* r) {
     r->impl->stop();
 }
 
+int linep_sender_set_sl1_session(
+    linep_sender_t* s,
+    uint32_t        session_id,
+    uint16_t        key_id,
+    const uint8_t*  secret_key,
+    uint32_t        key_len)
+{
+    if (!s) return LINEP_C_ERR_ARG;
+    s->impl->set_sl1_session(session_id, key_id, secret_key, key_len);
+    return LINEP_C_OK;
+}
+
+void linep_sender_clear_sl1_session(linep_sender_t* s) {
+    if (!s) return;
+    s->impl->clear_sl1_session();
+}
+
+int linep_receiver_set_sl1_session(
+    linep_receiver_t* r,
+    uint32_t        session_id,
+    uint16_t        key_id,
+    const uint8_t*  secret_key,
+    uint32_t        key_len,
+    int             require_auth)
+{
+    if (!r) return LINEP_C_ERR_ARG;
+    r->impl->set_sl1_session(session_id, key_id, secret_key, key_len, require_auth != 0);
+    return LINEP_C_OK;
+}
+
+void linep_receiver_clear_sl1_session(linep_receiver_t* r) {
+    if (!r) return;
+    r->impl->clear_sl1_session();
+}
+
 } // extern "C"

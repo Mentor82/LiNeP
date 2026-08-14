@@ -228,6 +228,16 @@ class Sender:
         body = bytes(ffi.buffer(result_buf, total))[1:]
         return TaskResult(status, body)
 
+    def set_sl1_session(self, session_id: int, key_id: int, secret_key: bytes) -> None:
+        """Configure SL1 lightweight authentication session for outbound frames."""
+        c_secret = ffi.from_buffer(bytes(secret_key))
+        rc = lib.linep_sender_set_sl1_session(self._handle, session_id, key_id, c_secret, len(secret_key))
+        raise_for_code(rc, "Sender.set_sl1_session")
+
+    def clear_sl1_session(self) -> None:
+        """Clear SL1 authentication session."""
+        lib.linep_sender_clear_sl1_session(self._handle)
+
     def close(self) -> None:
         """Release the underlying C handle.
 
@@ -364,6 +374,16 @@ class Receiver:
             rc = lib.linep_receiver_start(self._handle, port, self._c_callback, ffi.NULL)
             raise_for_code(rc, f"Receiver.start(port={port})")
             self._running = True
+
+    def set_sl1_session(self, session_id: int, key_id: int, secret_key: bytes, require_auth: bool = True) -> None:
+        """Configure SL1 lightweight authentication enforcement for inbound frames."""
+        c_secret = ffi.from_buffer(bytes(secret_key))
+        rc = lib.linep_receiver_set_sl1_session(self._handle, session_id, key_id, c_secret, len(secret_key), 1 if require_auth else 0)
+        raise_for_code(rc, "Receiver.set_sl1_session")
+
+    def clear_sl1_session(self) -> None:
+        """Clear SL1 authentication session enforcement."""
+        lib.linep_receiver_clear_sl1_session(self._handle)
 
     def stop(self) -> None:
         """Stop accepting connections and wait for active handlers to finish.

@@ -276,6 +276,15 @@ int               linep_sender_send_task(
                       uint8_t* result_buf, uint32_t* result_len,
                       uint32_t timeout_ms);
 
+int               linep_sender_set_sl1_session(
+                      linep_sender_t* s,
+                      uint32_t session_id,
+                      uint16_t key_id,
+                      const uint8_t* secret_key,
+                      uint32_t key_len);
+
+void              linep_sender_clear_sl1_session(linep_sender_t* s);
+
 linep_receiver_t* linep_receiver_create(void);
 void              linep_receiver_destroy(linep_receiver_t* r);
 
@@ -284,6 +293,16 @@ int               linep_receiver_start(
                       uint16_t port,
                       linep_task_cb_t cb,
                       void* user_data);
+
+int               linep_receiver_set_sl1_session(
+                      linep_receiver_t* r,
+                      uint32_t session_id,
+                      uint16_t key_id,
+                      const uint8_t* secret_key,
+                      uint32_t key_len,
+                      int require_auth);
+
+void              linep_receiver_clear_sl1_session(linep_receiver_t* r);
 
 void              linep_receiver_stop(linep_receiver_t* r);
 """

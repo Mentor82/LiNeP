@@ -1,8 +1,11 @@
 #include "tcp.hpp"
+#include "../core/crc.hpp"
 #include "../core/framing.hpp"
+#include "../core/security.hpp"
 #include "../pal/socket.hpp"
 
 #include <atomic>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -74,6 +77,30 @@ void log_header(const char* scope,
 
 class TcpTaskSenderImpl final : public ITcpTaskSender {
 public:
+    void set_sl1_session(uint32_t session_id,
+                         uint16_t key_id,
+                         const uint8_t* secret_key,
+                         size_t key_len) override
+    {
+        sl1_enabled_ = true;
+        sl1_session_id_ = session_id;
+        sl1_key_id_ = key_id;
+        if (secret_key && key_len > 0) {
+            sl1_secret_key_.assign(secret_key, secret_key + key_len);
+        } else {
+            sl1_secret_key_.clear();
+        }
+        sl1_auth_seq_.store(1u);
+    }
+
+    void clear_sl1_session() override {
+        sl1_enabled_ = false;
+        sl1_session_id_ = 0;
+        sl1_key_id_ = 0;
+        sl1_secret_key_.clear();
+        sl1_auth_seq_.store(0u);
+    }
+
     uint8_t send_task(const char*    host,
                       uint16_t       port,
                       uint8_t        task_type,
@@ -86,14 +113,12 @@ public:
                       uint32_t*      result_len,
                       uint32_t       timeout_ms) override
     {
-        // Preserve caller-provided output capacity before clearing output length.
         const uint32_t result_cap = result_len ? *result_len : 0u;
         if (result_len) *result_len = 0u;
 
         pal::Socket s = pal::tcp_connect(host, port, timeout_ms);
         if (!s.valid()) return static_cast<uint8_t>(RESULT_TIMEOUT);
 
-        // TASK wire payload layout: [1 byte task_type] [task body bytes...]
         std::vector<uint8_t> task_payload;
         task_payload.reserve(static_cast<size_t>(payload_len) + 1u);
         task_payload.push_back(task_type);
@@ -101,50 +126,52 @@ public:
             task_payload.insert(task_payload.end(), payload, payload + payload_len);
         }
 
-        // ── Send TASK header ──────────────────────────────────────────────
-        const auto hdr = core::make_header(
+        uint16_t task_flags = static_cast<uint16_t>(FLAG_ACK_REQUIRED);
+        if (sl1_enabled_) {
+            task_flags |= static_cast<uint16_t>(FLAG_AUTHENTICATED);
+        }
+
+        linep::Header task_hdr = core::make_header(
             static_cast<uint8_t>(MsgType::TASK),
-            static_cast<uint16_t>(FLAG_ACK_REQUIRED),
+            task_flags,
             static_cast<uint32_t>(task_payload.size()),
             seq_++,
             correlation_id,
             worker_id,
             slot_id);
-        linep::Header task_hdr = hdr;
         core::apply_build_time_extension(task_hdr);
-        const linep::HeaderBuildTimeExt task_ext = core::make_build_time_ext_from_build();
 
-        int r = pal::tcp_send_all(s,
-            reinterpret_cast<const uint8_t*>(&task_hdr),
-            static_cast<int>(sizeof(task_hdr)));
+        size_t total_ext = sizeof(HeaderBuildTimeExt) + (sl1_enabled_ ? sizeof(HeaderAuthExt) : 0);
+        task_hdr.header_len = static_cast<uint16_t>(sizeof(task_hdr) + total_ext);
+        task_hdr.header_crc = core::crc8(reinterpret_cast<const uint8_t*>(&task_hdr), 23u);
+
+        std::vector<uint8_t> ext_buf;
+        const linep::HeaderBuildTimeExt task_ext = core::make_build_time_ext_from_build();
+        ext_buf.insert(ext_buf.end(), reinterpret_cast<const uint8_t*>(&task_ext), reinterpret_cast<const uint8_t*>(&task_ext) + sizeof(task_ext));
+
+        if (sl1_enabled_) {
+            HeaderAuthExt auth_ext{};
+            auth_ext.session_id = sl1_session_id_;
+            auth_ext.key_id = sl1_key_id_;
+            auth_ext.auth_seq = sl1_auth_seq_++;
+            core::compute_sl1_mac(sl1_secret_key_.data(), sl1_secret_key_.size(), task_hdr, auth_ext.session_id, auth_ext.key_id, auth_ext.auth_seq, task_payload.data(), static_cast<uint32_t>(task_payload.size()), auth_ext.mac);
+            ext_buf.insert(ext_buf.end(), reinterpret_cast<const uint8_t*>(&auth_ext), reinterpret_cast<const uint8_t*>(&auth_ext) + sizeof(auth_ext));
+        }
+
+        int r = pal::tcp_send_all(s, reinterpret_cast<const uint8_t*>(&task_hdr), static_cast<int>(sizeof(task_hdr)));
         if (r != static_cast<int>(sizeof(task_hdr))) {
             pal::socket_close(s);
             return static_cast<uint8_t>(RESULT_TIMEOUT);
         }
 
-        const uint16_t task_ext_len = static_cast<uint16_t>(
-            task_hdr.header_len > sizeof(linep::Header)
-            ? task_hdr.header_len - static_cast<uint16_t>(sizeof(linep::Header))
-            : 0u);
-        log_header("tx TASK", task_hdr,
-                   reinterpret_cast<const uint8_t*>(&task_ext),
-                   task_ext_len);
-        if (task_ext_len > 0u) {
-            r = pal::tcp_send_all(s,
-                reinterpret_cast<const uint8_t*>(&task_ext),
-                static_cast<int>(task_ext_len));
-            if (r != static_cast<int>(task_ext_len)) {
+        if (!ext_buf.empty()) {
+            r = pal::tcp_send_all(s, ext_buf.data(), static_cast<int>(ext_buf.size()));
+            if (r != static_cast<int>(ext_buf.size())) {
                 pal::socket_close(s);
                 return static_cast<uint8_t>(RESULT_TIMEOUT);
             }
         }
 
-        if (task_hdr.header_len < sizeof(linep::Header)) {
-            pal::socket_close(s);
-            return static_cast<uint8_t>(RESULT_TIMEOUT);
-        }
-
-        // ── Send payload ──────────────────────────────────────────────────
         if (!task_payload.empty()) {
             r = pal::tcp_send_all(s, task_payload.data(), static_cast<int>(task_payload.size()));
             if (r != static_cast<int>(task_payload.size())) {
@@ -153,11 +180,8 @@ public:
             }
         }
 
-        // ── Receive RESULT header ─────────────────────────────────────────
         Header res_hdr{};
-        r = pal::tcp_recv_all(s,
-            reinterpret_cast<uint8_t*>(&res_hdr),
-            static_cast<int>(sizeof(res_hdr)));
+        r = pal::tcp_recv_all(s, reinterpret_cast<uint8_t*>(&res_hdr), static_cast<int>(sizeof(res_hdr)));
         if (r != static_cast<int>(sizeof(res_hdr)) ||
             !core::validate_header(res_hdr) ||
             res_hdr.msg_type != static_cast<uint8_t>(MsgType::RESULT) ||
@@ -180,20 +204,14 @@ public:
                 return static_cast<uint8_t>(RESULT_TIMEOUT);
             }
         }
-        log_header("rx RESULT", res_hdr,
-                   res_ext.empty() ? nullptr : res_ext.data(),
-                   res_ext_len);
 
-        // ── Receive RESULT payload ────────────────────────────────────────
-        // Payload layout: [1 byte ResultStatus] [response body bytes...]
         if (res_hdr.payload_len == 0u) {
             pal::socket_close(s);
             return static_cast<uint8_t>(RESULT_MODEL_ERROR);
         }
 
         std::vector<uint8_t> res_payload(res_hdr.payload_len);
-        r = pal::tcp_recv_all(s, res_payload.data(),
-                              static_cast<int>(res_payload.size()));
+        r = pal::tcp_recv_all(s, res_payload.data(), static_cast<int>(res_payload.size()));
         pal::socket_close(s);
 
         if (r != static_cast<int>(res_payload.size()))
@@ -203,8 +221,7 @@ public:
 
         if (result_buf && result_len && res_payload.size() > 1u)
         {
-            const uint32_t body_len =
-                static_cast<uint32_t>(res_payload.size()) - 1u;
+            const uint32_t body_len = static_cast<uint32_t>(res_payload.size()) - 1u;
             const uint32_t copy_len = body_len < result_cap ? body_len : result_cap;
             std::memcpy(result_buf, res_payload.data() + 1, copy_len);
             *result_len = copy_len;
@@ -235,16 +252,37 @@ public:
             task_payload.insert(task_payload.end(), payload, payload + payload_len);
         }
 
+        uint16_t task_flags = static_cast<uint16_t>(FLAG_ACK_REQUIRED);
+        if (sl1_enabled_) {
+            task_flags |= static_cast<uint16_t>(FLAG_AUTHENTICATED);
+        }
+
         linep::Header task_hdr = core::make_header(
             static_cast<uint8_t>(MsgType::TASK),
-            static_cast<uint16_t>(FLAG_ACK_REQUIRED),
+            task_flags,
             static_cast<uint32_t>(task_payload.size()),
             seq_++,
             correlation_id,
             worker_id,
             slot_id);
         core::apply_build_time_extension(task_hdr);
+
+        size_t total_ext = sizeof(HeaderBuildTimeExt) + (sl1_enabled_ ? sizeof(HeaderAuthExt) : 0);
+        task_hdr.header_len = static_cast<uint16_t>(sizeof(task_hdr) + total_ext);
+        task_hdr.header_crc = core::crc8(reinterpret_cast<const uint8_t*>(&task_hdr), 23u);
+
+        std::vector<uint8_t> ext_buf;
         const linep::HeaderBuildTimeExt task_ext = core::make_build_time_ext_from_build();
+        ext_buf.insert(ext_buf.end(), reinterpret_cast<const uint8_t*>(&task_ext), reinterpret_cast<const uint8_t*>(&task_ext) + sizeof(task_ext));
+
+        if (sl1_enabled_) {
+            HeaderAuthExt auth_ext{};
+            auth_ext.session_id = sl1_session_id_;
+            auth_ext.key_id = sl1_key_id_;
+            auth_ext.auth_seq = sl1_auth_seq_++;
+            core::compute_sl1_mac(sl1_secret_key_.data(), sl1_secret_key_.size(), task_hdr, auth_ext.session_id, auth_ext.key_id, auth_ext.auth_seq, task_payload.data(), static_cast<uint32_t>(task_payload.size()), auth_ext.mac);
+            ext_buf.insert(ext_buf.end(), reinterpret_cast<const uint8_t*>(&auth_ext), reinterpret_cast<const uint8_t*>(&auth_ext) + sizeof(auth_ext));
+        }
 
         int r = pal::tcp_send_all(s, reinterpret_cast<const uint8_t*>(&task_hdr), static_cast<int>(sizeof(task_hdr)));
         if (r != static_cast<int>(sizeof(task_hdr))) {
@@ -252,14 +290,9 @@ public:
             return static_cast<uint8_t>(RESULT_TIMEOUT);
         }
 
-        const uint16_t task_ext_len = static_cast<uint16_t>(
-            task_hdr.header_len > sizeof(linep::Header)
-            ? task_hdr.header_len - static_cast<uint16_t>(sizeof(linep::Header))
-            : 0u);
-        log_header("tx TASK stream", task_hdr, reinterpret_cast<const uint8_t*>(&task_ext), task_ext_len);
-        if (task_ext_len > 0u) {
-            r = pal::tcp_send_all(s, reinterpret_cast<const uint8_t*>(&task_ext), static_cast<int>(task_ext_len));
-            if (r != static_cast<int>(task_ext_len)) {
+        if (!ext_buf.empty()) {
+            r = pal::tcp_send_all(s, ext_buf.data(), static_cast<int>(ext_buf.size()));
+            if (r != static_cast<int>(ext_buf.size())) {
                 pal::socket_close(s);
                 return static_cast<uint8_t>(RESULT_TIMEOUT);
             }
@@ -316,7 +349,6 @@ public:
             }
 
             if (res_hdr.sequence < expected_seq) {
-                // Duplicate chunk -> ignore duplicate chunk, wait for remaining
                 if (res_hdr.flags & FLAG_FINAL_FRAGMENT) {
                     pal::socket_close(s);
                     return last_status;
@@ -342,6 +374,11 @@ public:
 
 private:
     std::atomic<uint32_t> seq_{0};
+    bool                  sl1_enabled_{false};
+    uint32_t              sl1_session_id_{0};
+    uint16_t              sl1_key_id_{0};
+    std::vector<uint8_t>  sl1_secret_key_;
+    std::atomic<uint32_t> sl1_auth_seq_{1};
 };
 
 LINEP_API ITcpTaskSender* create_task_sender()          { return new TcpTaskSenderImpl(); }
@@ -377,6 +414,33 @@ public:
         running_.store(true);
         accept_thread_ = std::thread(&TcpTaskReceiverImpl::accept_loop, this);
         return true;
+    }
+
+    void set_sl1_session(uint32_t session_id,
+                         uint16_t key_id,
+                         const uint8_t* secret_key,
+                         size_t key_len,
+                         bool require_auth = true) override
+    {
+        sl1_enabled_ = true;
+        sl1_require_auth_ = require_auth;
+        sl1_session_id_ = session_id;
+        sl1_key_id_ = key_id;
+        if (secret_key && key_len > 0) {
+            sl1_secret_key_.assign(secret_key, secret_key + key_len);
+        } else {
+            sl1_secret_key_.clear();
+        }
+        sl1_last_auth_seq_.store(0u);
+    }
+
+    void clear_sl1_session() override {
+        sl1_enabled_ = false;
+        sl1_require_auth_ = false;
+        sl1_session_id_ = 0;
+        sl1_key_id_ = 0;
+        sl1_secret_key_.clear();
+        sl1_last_auth_seq_.store(0u);
     }
 
     void stop() override {
@@ -529,6 +593,38 @@ private:
             }
         }
 
+        // SL1 authentication verification (reject-before-execution)
+        if (sl1_require_auth_ && (in_hdr.flags & static_cast<uint16_t>(FLAG_AUTHENTICATED)) == 0) {
+            pal::socket_close(cs);
+            return; // Fail closed
+        }
+
+        if ((in_hdr.flags & static_cast<uint16_t>(FLAG_AUTHENTICATED)) != 0) {
+            size_t auth_off = (in_hdr.flags & static_cast<uint16_t>(FLAG_BUILD_TIME)) != 0 ? sizeof(HeaderBuildTimeExt) : 0;
+            if (in_ext.size() < auth_off + sizeof(HeaderAuthExt)) {
+                pal::socket_close(cs);
+                return; // Malformed extension -> fail closed
+            }
+            HeaderAuthExt auth_ext{};
+            std::memcpy(&auth_ext, in_ext.data() + auth_off, sizeof(HeaderAuthExt));
+
+            if (auth_ext.session_id != sl1_session_id_) {
+                pal::socket_close(cs);
+                return; // Wrong session -> fail closed
+            }
+            if (auth_ext.auth_seq <= sl1_last_auth_seq_.load()) {
+                pal::socket_close(cs);
+                return; // Replay attack -> fail closed
+            }
+
+            if (!core::verify_sl1_mac(sl1_secret_key_.data(), sl1_secret_key_.size(), in_hdr, auth_ext, payload.data(), static_cast<uint32_t>(payload.size()))) {
+                pal::socket_close(cs);
+                return; // Invalid MAC -> reject before execution
+            }
+
+            sl1_last_auth_seq_.store(auth_ext.auth_seq);
+        }
+
         uint8_t task_type = 0u;
         const uint8_t* task_body = nullptr;
         uint32_t task_body_len = 0u;
@@ -579,49 +675,51 @@ private:
         }
 
         std::vector<uint8_t> res_payload;
-        res_payload.reserve(1u + result_len);
+        res_payload.reserve(static_cast<size_t>(result_len) + 1u);
         res_payload.push_back(status);
-        if (result_len > 0u)
+        if (result_len > 0u) {
             res_payload.insert(res_payload.end(),
                                result_body.begin(),
                                result_body.begin() + result_len);
+        }
 
         auto res_hdr = core::make_header(
             static_cast<uint8_t>(MsgType::RESULT),
             0u,
             static_cast<uint32_t>(res_payload.size()),
-            in_hdr.sequence + 1u,
+            1u,
             in_hdr.correlation_id,
             in_hdr.worker_id,
             in_hdr.slot_id);
         core::apply_build_time_extension(res_hdr);
-        const linep::HeaderBuildTimeExt res_ext = core::make_build_time_ext_from_build();
+        const auto res_ext = core::make_build_time_ext_from_build();
 
-        pal::tcp_send_all(cs,
+        r = pal::tcp_send_all(cs,
             reinterpret_cast<const uint8_t*>(&res_hdr),
             static_cast<int>(sizeof(res_hdr)));
-        const uint16_t res_ext_len = static_cast<uint16_t>(
-            res_hdr.header_len > sizeof(linep::Header)
-            ? res_hdr.header_len - static_cast<uint16_t>(sizeof(linep::Header))
-            : 0u);
-        log_header("tx RESULT", res_hdr,
-                   reinterpret_cast<const uint8_t*>(&res_ext),
-                   res_ext_len);
-        if (res_ext_len > 0u) {
-            pal::tcp_send_all(cs,
-                reinterpret_cast<const uint8_t*>(&res_ext),
-                static_cast<int>(res_ext_len));
+        if (r == static_cast<int>(sizeof(res_hdr))) {
+            const uint16_t res_ext_len = static_cast<uint16_t>(
+                res_hdr.header_len > sizeof(linep::Header)
+                ? res_hdr.header_len - static_cast<uint16_t>(sizeof(linep::Header))
+                : 0u);
+            if (res_ext_len > 0u) {
+                pal::tcp_send_all(cs,
+                    reinterpret_cast<const uint8_t*>(&res_ext),
+                    static_cast<int>(res_ext_len));
+            }
+            if (!res_payload.empty()) {
+                pal::tcp_send_all(cs,
+                    res_payload.data(),
+                    static_cast<int>(res_payload.size()));
+            }
         }
-        pal::tcp_send_all(cs,
-            res_payload.data(),
-            static_cast<int>(res_payload.size()));
-
         pal::socket_close(cs);
     }
 
     void reap_finished_handlers() {
         std::lock_guard<std::mutex> lk(handlers_mtx_);
-        for (auto it = handlers_.begin(); it != handlers_.end(); ) {
+        auto it = handlers_.begin();
+        while (it != handlers_.end()) {
             if (it->joinable()) {
                 ++it;
             } else {
@@ -640,6 +738,13 @@ private:
     pal::Socket          listen_socket_{};
     std::mutex           handlers_mtx_;
     std::vector<std::thread> handlers_;
+
+    bool                         sl1_enabled_{false};
+    bool                         sl1_require_auth_{false};
+    uint32_t                     sl1_session_id_{0};
+    uint16_t                     sl1_key_id_{0};
+    std::vector<uint8_t>         sl1_secret_key_;
+    std::atomic<uint32_t>        sl1_last_auth_seq_{0};
 };
 
 LINEP_API ITcpTaskReceiver* create_task_receiver()                     { return new TcpTaskReceiverImpl(); }

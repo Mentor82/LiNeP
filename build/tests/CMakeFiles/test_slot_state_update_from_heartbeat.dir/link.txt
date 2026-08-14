@@ -1,3 +1,0 @@
-C:\Strawberry\c\bin\cmake.exe -E rm -f CMakeFiles\test_slot_state_update_from_heartbeat.dir/objects.a
-C:\Strawberry\c\bin\ar.exe qc CMakeFiles\test_slot_state_update_from_heartbeat.dir/objects.a @CMakeFiles\test_slot_state_update_from_heartbeat.dir\objects1.rsp
-C:\Strawberry\c\bin\c++.exe -Wl,--whole-archive CMakeFiles\test_slot_state_update_from_heartbeat.dir/objects.a -Wl,--no-whole-archive -o test_slot_state_update_from_heartbeat.exe -Wl,--out-implib,libtest_slot_state_update_from_heartbeat.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles\test_slot_state_update_from_heartbeat.dir\linkLibs.rsp

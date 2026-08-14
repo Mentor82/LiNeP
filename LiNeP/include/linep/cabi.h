@@ -401,6 +401,15 @@ LINEP_API int linep_sender_send_task(
     uint32_t*       result_len,
     uint32_t        timeout_ms);
 
+LINEP_API int linep_sender_set_sl1_session(
+    linep_sender_t* s,
+    uint32_t        session_id,
+    uint16_t        key_id,
+    const uint8_t*  secret_key,
+    uint32_t        key_len);
+
+LINEP_API void linep_sender_clear_sl1_session(linep_sender_t* s);
+
 /* ── TCP Task Receiver ───────────────────────────────────────────────────── */
 
 /* Allocate a receiver handle.  Returns NULL on allocation failure. */
@@ -419,6 +428,16 @@ LINEP_API int linep_receiver_start(
     uint16_t          port,
     linep_task_cb_t   cb,
     void*             user_data);
+
+LINEP_API int linep_receiver_set_sl1_session(
+    linep_receiver_t* r,
+    uint32_t        session_id,
+    uint16_t        key_id,
+    const uint8_t*  secret_key,
+    uint32_t        key_len,
+    int             require_auth);
+
+LINEP_API void linep_receiver_clear_sl1_session(linep_receiver_t* r);
 
 /*
  * Stop accepting new connections and wait for active handlers to finish.
