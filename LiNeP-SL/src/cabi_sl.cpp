@@ -286,12 +286,9 @@ LINEP_SL_API int linep_sl4_evaluate_decision(
     uint32_t reason_buf_len)
 {
     auto eng = linep_sl4_engine_create(trust_domain_id);
-    const uint8_t default_pubkey[32] = {0xAA};
-    linep_sl4_engine_register_peer(eng, remote_node_id, default_pubkey);
-
     int ret = linep_sl4_engine_evaluate(
         eng, trust_domain_id, session_id, key_id, 1, remote_node_id, remote_trust_domain_id,
-        default_pubkey, remote_revoked, negotiated_sl, requested_cap, 0, 0, policy_id, 0, 1700000000ULL,
+        nullptr, remote_revoked, negotiated_sl, requested_cap, 0, 0, policy_id, 0, 1700000000ULL,
         out_decision, out_reason_buf, reason_buf_len);
     linep_sl4_engine_free(eng);
     return ret;

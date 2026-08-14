@@ -116,16 +116,32 @@ def run_server(port: int, master_secret: bytes, trust_domain: int):
             conn.close()
             continue
 
-        # 6. Verify SL4 Governance, Zero-Trust & Federation Engine
-        sl4_dec, sl4_reason = linep_sl.evaluate_governance_decision(
+        # 6. Verify SL4 Governance, Zero-Trust & Federation Engine using persistent SecurityDecisionEngine
+        sl4_engine = linep_sl.SecurityDecisionEngine(trust_domain)
+        sl4_engine.register_peer(req["node_id"], bytes.fromhex(req["pubkey_hex"]))
+
+        # For cross-domain test case, register federation trust
+        if req.get("remote_trust_domain_id") and req["remote_trust_domain_id"] != trust_domain:
+            sl4_engine.add_federation(trust_domain, req["remote_trust_domain_id"], linep_sl.CapFlags.INFERENCE_READ)
+            pol = linep_sl.GovernancePolicy(
+                policy_id="default-policy",
+                policy_revision=1,
+                allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ,
+                allow_cross_domain=False, # Fail closed gate 3!
+            )
+            sl4_engine.set_policy(pol)
+
+        sl4_dec, sl4_reason = sl4_engine.evaluate(
             trust_domain_id=trust_domain,
             session_id=req["session_id"],
             key_id=req["key_id"],
+            local_node_id=1,
             remote_node_id=req["node_id"],
             remote_trust_domain_id=req.get("remote_trust_domain_id", trust_domain),
             remote_revoked=False,
             negotiated_sl=linep_sl.SecurityLevel(req["offered_sl"]),
             requested_cap=req_cap,
+            remote_pubkey_32bytes=bytes.fromhex(req["pubkey_hex"]),
             policy_id=req.get("policy_id", "default-policy"),
         )
 

@@ -162,9 +162,12 @@ DecisionResult SecurityDecisionEngine::evaluate(const DecisionContext& ctx) noex
         return emit_result(Decision::DENY, "INSUFFICIENT_SECURITY_LEVEL", AuditEventType::DOWNGRADE_REJECTED);
     }
 
-    // 3. Zero-Trust Identity Check
+    // 3. Zero-Trust Peer Identity & Cryptographic Pubkey Verification (MANDATORY for SAME-DOMAIN & CROSS-DOMAIN!)
     if (ctx.remote_peer.node_id == 0 || ctx.remote_peer.revoked) {
         return emit_result(Decision::DENY, "IDENTITY_REVOKED_OR_INVALID", AuditEventType::SESSION_REJECTED);
+    }
+    if (!validate_peer_identity(ctx.remote_peer, ctx.remote_peer.trust_domain_id)) {
+        return emit_result(Decision::DENY, "PEER_IDENTITY_VALIDATION_FAILED", AuditEventType::SESSION_REJECTED);
     }
     if (identity_provider_ && identity_provider_->is_node_revoked(ctx.remote_peer.node_id)) {
         return emit_result(Decision::DENY, "IDENTITY_REVOKED_IN_PROVIDER", AuditEventType::SESSION_REJECTED);
