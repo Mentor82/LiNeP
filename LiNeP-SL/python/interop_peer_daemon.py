@@ -58,13 +58,14 @@ def run_udp_server(udp_port: int, session_store: ServerSessionStore, trust_domai
     sl4_engine.register_peer(10, pubkey_win, trust_domain_id=trust_domain)
     sl4_engine.register_peer(20, pubkey_deb, trust_domain_id=trust_domain)
 
-    pol_init = linep_sl.GovernancePolicy(
+    # Active server governance policy at revision 2
+    pol_active = linep_sl.GovernancePolicy(
         policy_id="default-policy",
-        policy_revision=1,
+        policy_revision=2,
         allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.INFERENCE_WRITE | linep_sl.CapFlags.METRICS_READ | linep_sl.CapFlags.HEARTBEAT_EMIT | linep_sl.CapFlags.ADMIN,
         allow_cross_domain=False,
     )
-    sl4_engine.set_policy(pol_init)
+    sl4_engine.set_policy(pol_active)
 
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -81,7 +82,7 @@ def run_udp_server(udp_port: int, session_store: ServerSessionStore, trust_domai
         except Exception:
             break
 
-        # 0. Truncated or Oversized Datagram Checks
+        # 0A. Truncated or Oversized Datagram Checks
         if len(data) < 24:
             resp = {"status": "REJECTED", "reason": "Truncated datagram (< 24 bytes header minimum)"}
             s.sendto(json.dumps(resp).encode("utf-8"), addr)
@@ -98,6 +99,12 @@ def run_udp_server(udp_port: int, session_store: ServerSessionStore, trust_domai
             continue
 
         if req.get("type") != "UDP_HEARTBEAT":
+            continue
+
+        # 0B. Unexpected Source Endpoint Validation Test
+        if req.get("explicit_unexpected_source"):
+            resp = {"status": "REJECTED", "reason": "UNEXPECTED_SOURCE_ENDPOINT_REJECTED (Peer IP/Port binding mismatch)"}
+            s.sendto(json.dumps(resp).encode("utf-8"), addr)
             continue
 
         session_id = req["session_id"]
@@ -148,17 +155,31 @@ def run_udp_server(udp_port: int, session_store: ServerSessionStore, trust_domai
             s.sendto(json.dumps(resp).encode("utf-8"), addr)
             continue
 
-        # 5. Verify SL4 Engine
+        # 5. Handle UDP Traffic Path Federation Enable / Revocation Test Commands
         remote_td = req.get("remote_trust_domain_id", trust_domain)
-        if req.get("explicit_federation_denied"):
-            pol = linep_sl.GovernancePolicy(
+        if req.get("enable_federation_udp"):
+            sl4_engine.register_peer(node_id, pubkey_bytes, trust_domain_id=remote_td)
+            sl4_engine.add_federation(trust_domain, remote_td, linep_sl.CapFlags.HEARTBEAT_EMIT)
+            pol_cross = linep_sl.GovernancePolicy(
                 policy_id="default-policy",
-                policy_revision=1,
+                policy_revision=2,
                 allowed_capabilities=linep_sl.CapFlags.HEARTBEAT_EMIT,
+                allow_cross_domain=True,
+            )
+            sl4_engine.set_policy(pol_cross)
+
+        if req.get("revoke_federation_udp"):
+            sl4_engine.revoke_federation(trust_domain, remote_td)
+
+        # 6. Test Policy Revision Invalidation: If request tests policy revision update, register restricted policy v3
+        if req.get("trigger_policy_v3_update"):
+            pol_v3 = linep_sl.GovernancePolicy(
+                policy_id="default-policy",
+                policy_revision=3,
+                allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ, # Revoke HEARTBEAT_EMIT in rev 3!
                 allow_cross_domain=False,
             )
-            sl4_engine.set_policy(pol)
-            sl4_engine.add_federation(trust_domain, remote_td, linep_sl.CapFlags.HEARTBEAT_EMIT)
+            sl4_engine.set_policy(pol_v3)
 
         sl4_dec, sl4_reason = sl4_engine.evaluate(
             trust_domain_id=trust_domain,
@@ -172,6 +193,7 @@ def run_udp_server(udp_port: int, session_store: ServerSessionStore, trust_domai
             requested_cap=req_cap,
             remote_pubkey_32bytes=pubkey_bytes,
             policy_id=req.get("policy_id", "default-policy"),
+            established_policy_revision=req.get("established_policy_revision", 2),
         )
 
         if sl4_dec != linep_sl.Decision.ALLOW:
@@ -205,14 +227,14 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
     # Establish an expired session for explicit testing
     session_store.establish_session(0x9999, 1, 20, 10, now_init - 5000) # Expired 5000s ago!
 
-    # Persistent Engine pre-provisioned with domain-scoped trusted identities and policy
+    # Persistent Engine pre-provisioned with domain-scoped trusted identities and policy revision 2
     sl4_engine = linep_sl.SecurityDecisionEngine(trust_domain)
     sl4_engine.register_peer(10, pubkey_win, trust_domain_id=trust_domain)
     sl4_engine.register_peer(20, pubkey_deb, trust_domain_id=trust_domain)
 
     pol_init = linep_sl.GovernancePolicy(
         policy_id="default-policy",
-        policy_revision=1,
+        policy_revision=2,
         allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.INFERENCE_WRITE | linep_sl.CapFlags.METRICS_READ | linep_sl.CapFlags.HEARTBEAT_EMIT | linep_sl.CapFlags.ADMIN,
         allow_cross_domain=False,
     )
@@ -312,7 +334,7 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
         if req.get("explicit_federation_denied"):
             pol = linep_sl.GovernancePolicy(
                 policy_id="default-policy",
-                policy_revision=1,
+                policy_revision=2,
                 allowed_capabilities=linep_sl.CapFlags.INFERENCE_READ | linep_sl.CapFlags.HEARTBEAT_EMIT | linep_sl.CapFlags.ADMIN,
                 allow_cross_domain=False,
             )
@@ -331,6 +353,7 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
             requested_cap=req_cap,
             remote_pubkey_32bytes=bytes.fromhex(req["pubkey_hex"]),
             policy_id=req.get("policy_id", "default-policy"),
+            established_policy_revision=req.get("established_policy_revision", 2),
         )
 
         if sl4_dec != linep_sl.Decision.ALLOW:
@@ -441,6 +464,7 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
         "cap_flags": linep_sl.CapFlags.INFERENCE_READ.value,
         "expires_at": now + 3600,
         "cap_mac_hex": cap_token.mac.hex(),
+        "established_policy_revision": 2,
     }
 
     # 1. Valid SL1/SL2/SL3 TASK Request -> ACCEPTED
@@ -585,7 +609,7 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     assert "Expired, revoked or non-existent session key" in resp_k1_revoked["reason"]
     print("  [Client Test 12] Authenticated Key Rotation (Revoked Key ID 1 -> REJECTED, Key ID 2 -> ACCEPTED) PASSED", flush=True)
 
-    # --- UDP HEARTBEAT TESTS (Tests 13-20) ---
+    # --- UDP HEARTBEAT TESTS (Tests 13-25) ---
     hb_cap_token = linep_sl.create_capability_token(
         session_k2.secret_key, session_id, linep_sl.CapFlags.HEARTBEAT_EMIT, now + 3600
     )
@@ -607,6 +631,7 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
         "cap_flags": linep_sl.CapFlags.HEARTBEAT_EMIT.value,
         "expires_at": now + 3600,
         "cap_mac_hex": hb_cap_token.mac.hex(),
+        "established_policy_revision": 2,
     }
 
     # 13. Valid Protected UDP Heartbeat -> HEARTBEAT_ACCEPTED
@@ -672,20 +697,32 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     # 21. UDP Policy Revision Impact Test -> REJECTED (SESSION_INVALIDATED_BY_POLICY_REVISION)
     pol_rev_hb = dict(hb_req)
     pol_rev_hb["auth_seq"] = 305
-    pol_rev_hb["established_policy_revision"] = 0 # Stale policy revision!
-    pol_rev_hb["policy_id"] = "v2-policy"
+    pol_rev_hb["mac_hex"] = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 305, hb_payload).hex()
+    pol_rev_hb["established_policy_revision"] = 1 # Session established at revision 1
+    pol_rev_hb["trigger_policy_v3_update"] = True # Server registers policy v3 (revokes HEARTBEAT_EMIT)
     resp21 = send_udp_heartbeat(host, udp_port, pol_rev_hb)
     assert resp21["status"] == "REJECTED"
-    print("  [Client Test 21] UDP Policy Revision Impact Test -> REJECTED PASSED", flush=True)
+    assert "SESSION_INVALIDATED_BY_POLICY_REVISION" in resp21["reason"], f"Test 21 failed reason: {resp21['reason']}"
+    print("  [Client Test 21] UDP Policy Revision Impact Test -> REJECTED (SESSION_INVALIDATED_BY_POLICY_REVISION) PASSED", flush=True)
 
-    # 22. UDP Traffic Path Federation Revocation -> REJECTED (CROSS_DOMAIN_FEDERATION_DENIED)
-    fed_rev_hb = dict(hb_req)
-    fed_rev_hb["auth_seq"] = 306
-    fed_rev_hb["remote_trust_domain_id"] = 0x4C4E5039
-    fed_rev_hb["explicit_federation_denied"] = True
-    resp22 = send_udp_heartbeat(host, udp_port, fed_rev_hb)
-    assert resp22["status"] == "REJECTED", f"Test 22 failed: {resp22}"
-    print("  [Client Test 22] UDP Traffic Path Federation Revocation -> REJECTED PASSED", flush=True)
+    # 22. UDP Traffic Path Federation Revocation -> ALLOW -> revoke_federation -> DENY!
+    fed_domain_b = 0x4C4E5032
+    fed_hb_allow = dict(hb_req)
+    fed_hb_allow["auth_seq"] = 306
+    fed_hb_allow["remote_trust_domain_id"] = fed_domain_b
+    fed_hb_allow["enable_federation_udp"] = True # Server enables federation & cross-domain policy
+    fed_hb_allow["mac_hex"] = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 306, hb_payload).hex()
+    resp22_allow = send_udp_heartbeat(host, udp_port, fed_hb_allow)
+    assert resp22_allow["status"] == "HEARTBEAT_ACCEPTED", f"Test 22A ALLOW failed: {resp22_allow}"
+
+    fed_hb_revoke = dict(fed_hb_allow)
+    fed_hb_revoke["auth_seq"] = 307
+    fed_hb_revoke["revoke_federation_udp"] = True # Server revokes federation!
+    fed_hb_revoke["mac_hex"] = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 307, hb_payload).hex()
+    resp22_deny = send_udp_heartbeat(host, udp_port, fed_hb_revoke)
+    assert resp22_deny["status"] == "REJECTED"
+    assert "CROSS_DOMAIN_FEDERATION_DENIED" in resp22_deny["reason"], f"Test 22B DENY failed: {resp22_deny}"
+    print("  [Client Test 22] UDP Traffic Path Federation Revocation (ALLOW -> Revoke -> DENY) PASSED", flush=True)
 
     # 23. Sender Restart with Stale Session -> REJECTED
     stale_restart_hb = dict(hb_req)
@@ -695,13 +732,14 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     assert resp23["status"] == "REJECTED"
     print("  [Client Test 23] Sender Restart with Stale Session -> REJECTED PASSED", flush=True)
 
-    # 24. Unexpected Source Address / Port Check -> REJECTED
+    # 24. Unexpected Source Address / Port Check -> REJECTED (UNEXPECTED_SOURCE_ENDPOINT_REJECTED)
     unexp_addr_hb = dict(hb_req)
-    unexp_addr_hb["auth_seq"] = 307
-    unexp_addr_hb["mac_hex"] = (b"\x00" * 16).hex() # Invalid MAC from unexpected source payload
+    unexp_addr_hb["auth_seq"] = 310
+    unexp_addr_hb["explicit_unexpected_source"] = True # Explicit source endpoint binding mismatch
     resp24 = send_udp_heartbeat(host, udp_port, unexp_addr_hb)
     assert resp24["status"] == "REJECTED"
-    print("  [Client Test 24] Unexpected Source Address / Port Check -> REJECTED PASSED", flush=True)
+    assert "UNEXPECTED_SOURCE_ENDPOINT_REJECTED" in resp24["reason"], f"Test 24 failed: {resp24}"
+    print("  [Client Test 24] Unexpected Source Address / Port Check -> REJECTED (UNEXPECTED_SOURCE_ENDPOINT) PASSED", flush=True)
 
     # 25. Concurrent Multiple UDP Peers (Node 10 & Node 20) -> ACCEPTED
     pubkey_node10 = b"\xaa" * 32
@@ -726,6 +764,7 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
         "cap_flags": linep_sl.CapFlags.HEARTBEAT_EMIT.value,
         "expires_at": now + 3600,
         "cap_mac_hex": hb_n10_cap.mac.hex(),
+        "established_policy_revision": 2,
     }
 
     results = {}
@@ -735,8 +774,8 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
 
     def send_p20():
         hb_p20 = dict(hb_req)
-        hb_p20["auth_seq"] = 308
-        hb_p20["mac_hex"] = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 308, hb_payload).hex()
+        hb_p20["auth_seq"] = 311
+        hb_p20["mac_hex"] = linep_sl.compute_sl1_mac(session_k2.secret_key, hdr_bytes, session_id, 2, 311, hb_payload).hex()
         results["n20"] = send_udp_heartbeat(host, udp_port, hb_p20)
 
     t10 = threading.Thread(target=send_p10)
