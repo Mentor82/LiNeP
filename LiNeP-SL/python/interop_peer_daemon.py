@@ -75,11 +75,22 @@ def run_udp_server(udp_port: int, session_store: ServerSessionStore, trust_domai
 
     while not stop_event.is_set():
         try:
-            data, addr = s.recvfrom(4096)
+            data, addr = s.recvfrom(65535)
         except socket.timeout:
             continue
         except Exception:
             break
+
+        # 0. Truncated or Oversized Datagram Checks
+        if len(data) < 24:
+            resp = {"status": "REJECTED", "reason": "Truncated datagram (< 24 bytes header minimum)"}
+            s.sendto(json.dumps(resp).encode("utf-8"), addr)
+            continue
+
+        if len(data) > 4096:
+            resp = {"status": "REJECTED", "reason": "Oversized datagram (> 4096 bytes MTU limit)"}
+            s.sendto(json.dumps(resp).encode("utf-8"), addr)
+            continue
 
         try:
             req = json.loads(data.decode("utf-8"))
@@ -215,7 +226,7 @@ def run_server(tcp_port: int, udp_port: int, master_secret: bytes, trust_domain:
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("0.0.0.0", tcp_port))
     s.listen(5)
-    print(f"[SERVER READY] TCP listening on 0.0.0.0:{tcp_port}, UDP listening on 0.0.0.0:{udp_port}", flush=True)
+    print(f"[SERVER READY] PortPair(TCP:{tcp_port}, UDP:{udp_port}) listening on 0.0.0.0", flush=True)
 
     stream_sequences: dict[tuple[int, int], int] = {}
 
@@ -381,10 +392,10 @@ def send_test_request(host: str, port: int, req: dict) -> dict:
     return json.loads(data.decode("utf-8"))
 
 
-def send_udp_heartbeat(host: str, udp_port: int, req: dict, timeout: float = 2.0) -> dict:
+def send_raw_udp_bytes(host: str, udp_port: int, raw_data: bytes, timeout: float = 2.0) -> dict:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.settimeout(timeout)
-    s.sendto(json.dumps(req).encode("utf-8"), (host, udp_port))
+    s.sendto(raw_data, (host, udp_port))
     try:
         data, _ = s.recvfrom(4096)
         s.close()
@@ -394,13 +405,17 @@ def send_udp_heartbeat(host: str, udp_port: int, req: dict, timeout: float = 2.0
         return {"status": "TIMEOUT", "reason": "UDP Heartbeat socket timeout"}
 
 
+def send_udp_heartbeat(host: str, udp_port: int, req: dict, timeout: float = 2.0) -> dict:
+    return send_raw_udp_bytes(host, udp_port, json.dumps(req).encode("utf-8"), timeout)
+
+
 def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, trust_domain: int):
     pubkey_debian = b"\xbb" * 32  # Client node 20 (Debian)
     session_id = 0x2001
     key_id = 1
     node_id = 20
 
-    print(f"[CLIENT START] Connecting to server {host} TCP:{tcp_port} UDP:{udp_port}...", flush=True)
+    print(f"[CLIENT START] PortPair(TCP:{tcp_port}, UDP:{udp_port}) connecting to server {host}...", flush=True)
     now = int(time.time())
     session = linep_sl.derive_session_key(master_secret, session_id, key_id, node_id, 3600, now)
 
@@ -570,7 +585,7 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     assert "Expired, revoked or non-existent session key" in resp_k1_revoked["reason"]
     print("  [Client Test 12] Authenticated Key Rotation (Revoked Key ID 1 -> REJECTED, Key ID 2 -> ACCEPTED) PASSED", flush=True)
 
-    # --- UDP HEARTBEAT TESTS (Tests 13-16) ---
+    # --- UDP HEARTBEAT TESTS (Tests 13-20) ---
     hb_cap_token = linep_sl.create_capability_token(
         session_k2.secret_key, session_id, linep_sl.CapFlags.HEARTBEAT_EMIT, now + 3600
     )
@@ -624,6 +639,36 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     assert resp16["status"] == "REJECTED"
     print("  [Client Test 16] Cross-Domain UDP Heartbeat without Federation -> REJECTED PASSED", flush=True)
 
+    # 17. Truncated UDP Datagram Bounds -> REJECTED
+    resp17 = send_raw_udp_bytes(host, udp_port, b"\x4e\x4c\x01") # Only 3 bytes
+    assert resp17["status"] == "REJECTED"
+    assert "Truncated" in resp17["reason"]
+    print("  [Client Test 17] Truncated Datagram (< 24 bytes) -> REJECTED PASSED", flush=True)
+
+    # 18. Oversized UDP Datagram Bounds -> REJECTED
+    oversized_data = b"X" * 5000
+    resp18 = send_raw_udp_bytes(host, udp_port, oversized_data)
+    assert resp18["status"] == "REJECTED"
+    assert "Oversized" in resp18["reason"]
+    print("  [Client Test 18] Oversized Datagram (> 4096 bytes MTU limit) -> REJECTED PASSED", flush=True)
+
+    # 19. UDP Expired / Stale Session Key -> REJECTED
+    expired_udp_hb = dict(hb_req)
+    expired_udp_hb["session_id"] = 0x9999 # Pre-established expired session
+    expired_udp_hb["auth_seq"] = 303
+    resp19 = send_udp_heartbeat(host, udp_port, expired_udp_hb)
+    assert resp19["status"] == "REJECTED"
+    assert "Expired" in resp19["reason"]
+    print("  [Client Test 19] UDP Expired / Stale Session Key -> REJECTED PASSED", flush=True)
+
+    # 20. UDP Heartbeat Unauthorized Capability -> REJECTED
+    unauth_udp_hb = dict(hb_req)
+    unauth_udp_hb["auth_seq"] = 304
+    unauth_udp_hb["required_cap"] = int(linep_sl.CapFlags.ADMIN)
+    resp20 = send_udp_heartbeat(host, udp_port, unauth_udp_hb)
+    assert resp20["status"] == "REJECTED", f"Test 20 failed: {resp20}"
+    print("  [Client Test 20] UDP Heartbeat Unauthorized Capability -> REJECTED PASSED", flush=True)
+
     # Final shutdown request
     stop_req = dict(base_req)
     stop_req["key_id"] = 2
@@ -632,25 +677,24 @@ def run_client(host: str, tcp_port: int, udp_port: int, master_secret: bytes, tr
     stop_req["stop_after_test"] = True
     send_test_request(host, tcp_port, stop_req)
 
-    print("[CLIENT SUCCESS] ALL TCP STREAMING, CANCEL, KEY ROTATION & UDP HEARTBEAT SL1-SL4 SECURITY GATES PASSED 100%!", flush=True)
+    print("[CLIENT SUCCESS] ALL 20 TCP/UDP STREAMING, CANCEL, KEY ROTATION & UDP HEARTBEAT SECURITY GATES PASSED 100%!", flush=True)
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="LiNeP-SL PortPair Interop Daemon")
     parser.add_argument("--mode", choices=["server", "client"], required=True)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=19876)
-    parser.add_argument("--udp-port", type=int, default=0)
+    parser.add_argument("--tcp-port", type=int, required=True, help="Explicit mandatory TCP port")
+    parser.add_argument("--udp-port", type=int, required=True, help="Explicit mandatory UDP port (PortPair)")
     args = parser.parse_args()
 
-    udp_port = args.udp_port if args.udp_port > 0 else (args.port + 10)
     master_secret = b"WIN_DEBIAN_INTEROP_MASTER_SECRET"
     trust_domain = 0x4C4E5031
 
     if args.mode == "server":
-        run_server(args.port, udp_port, master_secret, trust_domain)
+        run_server(args.tcp_port, args.udp_port, master_secret, trust_domain)
     else:
-        run_client(args.host, args.port, udp_port, master_secret, trust_domain)
+        run_client(args.host, args.tcp_port, args.udp_port, master_secret, trust_domain)
 
 if __name__ == "__main__":
     main()

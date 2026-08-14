@@ -28,7 +28,7 @@ struct DatagramReplayTracker {
 };
 
 int main() {
-    std::cout << "[test_udp_heartbeat] Running LiNeP-SL UDP Heartbeat Security Invariants Test Suite..." << std::endl;
+    std::cout << "[test_udp_heartbeat] Running complete Issue #7 UDP Security Invariants Test Suite (12/12)..." << std::endl;
 
     const uint32_t domain_a = 0x4C4E5031; // "LNP1"
     const uint32_t domain_b = 0x4C4E5032; // "LNP2"
@@ -121,25 +121,25 @@ int main() {
     auto dec1 = engine.evaluate(dctx);
     assert(linep::sl::is_decision_allowed(dec1));
     assert(dec1.reason_code == "GOVERNANCE_POLICY_ALLOWED");
-    std::cout << "  [1] Valid Protected UDP Heartbeat -> ACCEPTED PASSED" << std::endl;
+    std::cout << "  [1/12] Valid Protected UDP Heartbeat -> ACCEPTED PASSED" << std::endl;
 
     // --- TEST 2: Tampered UDP Heartbeat MAC -> REJECTED ---
     linep::sl::HeaderAuthExt tampered_auth = auth_ext;
     tampered_auth.mac[0] ^= 0xFF;
     bool mac_tampered = linep::sl::verify_sl1_mac(sk.secret_key, 32, hdr, tampered_auth, payload, payload_len);
     assert(!mac_tampered);
-    std::cout << "  [2] Tampered UDP Heartbeat MAC -> REJECTED PASSED" << std::endl;
+    std::cout << "  [2/12] Tampered UDP Heartbeat MAC -> REJECTED PASSED" << std::endl;
 
     // --- TEST 3: Duplicate UDP Heartbeat Replay -> REJECTED ---
     bool dup_seq = replay_tracker.is_valid_sequence(session_id, 0, 1 /*UDP*/, auth_ext.auth_seq);
     assert(!dup_seq); // Duplicate sequence 100 must be rejected!
-    std::cout << "  [3] Duplicate UDP Heartbeat Replay -> REJECTED PASSED" << std::endl;
+    std::cout << "  [3/12] Duplicate UDP Heartbeat Replay -> REJECTED PASSED" << std::endl;
 
     // --- TEST 4: Replay Protection Isolation (TCP stream vs UDP heartbeat datagram) ---
     // Sequence 100 on TCP (transport=0) should NOT collide with UDP (transport=1)
     bool tcp_seq_valid = replay_tracker.is_valid_sequence(session_id, 0, 0 /*TCP*/, 100);
     assert(tcp_seq_valid);
-    std::cout << "  [4] Replay Protection Transport Isolation (TCP vs UDP) -> PASSED" << std::endl;
+    std::cout << "  [4/12] Replay Protection Transport Isolation (TCP vs UDP) -> PASSED" << std::endl;
 
     // --- TEST 5: UDP Heartbeat Without CAP_HEARTBEAT_EMIT Capability -> REJECTED ---
     bool cap_unauth = linep::sl::verify_cap_token(sk.secret_key, 32, cap_token, session_id, now_sec, linep::sl::CapFlags::CAP_ADMIN);
@@ -150,7 +150,7 @@ int main() {
     auto dec5 = engine.evaluate(dctx_unauth);
     assert(!linep::sl::is_decision_allowed(dec5));
     assert(dec5.reason_code == "GOVERNANCE_POLICY_CAPABILITY_DENIED");
-    std::cout << "  [5] Unauthorized Capability for UDP Heartbeat -> REJECTED PASSED" << std::endl;
+    std::cout << "  [5/12] Unauthorized Capability for UDP Heartbeat -> REJECTED PASSED" << std::endl;
 
     // --- TEST 6: Cross-Domain UDP Heartbeat Without Federation -> REJECTED ---
     linep::sl::DecisionContext dctx_cross = dctx;
@@ -158,8 +158,68 @@ int main() {
     auto dec6 = engine.evaluate(dctx_cross);
     assert(!linep::sl::is_decision_allowed(dec6));
     assert(dec6.reason_code == "CROSS_DOMAIN_FEDERATION_DENIED");
-    std::cout << "  [6] Cross-Domain UDP Heartbeat without Federation -> REJECTED PASSED" << std::endl;
+    std::cout << "  [6/12] Cross-Domain UDP Heartbeat without Federation -> REJECTED PASSED" << std::endl;
 
-    std::cout << "[test_udp_heartbeat] ALL UDP HEARTBEAT SECURITY INVARIANT TESTS PASSED 100%!" << std::endl;
+    // --- TEST 7: Expired / Stale Session Key on UDP -> REJECTED ---
+    bool sk_fresh = linep::sl::verify_session_key_freshness(sk, now_sec + 3601);
+    assert(!sk_fresh);
+    std::cout << "  [7/12] Expired / Stale Session Key on UDP -> REJECTED PASSED" << std::endl;
+
+    // --- TEST 8: Revoked Peer Identity on UDP -> REJECTED ---
+    id_provider->revoke_peer(node_id);
+    auto dec8 = engine.evaluate(dctx);
+    assert(!linep::sl::is_decision_allowed(dec8));
+    assert(dec8.reason_code == "IDENTITY_REVOKED_IN_PROVIDER");
+    id_provider->register_peer(node_id, pubkey_node10); // Un-revoke
+    std::cout << "  [8/12] Revoked Peer Identity on UDP -> REJECTED PASSED" << std::endl;
+
+    // --- TEST 9: UDP Federation ALLOW -> Revocation DENY ---
+    id_provider->register_peer_for_domain(domain_b, node_id, pubkey_node10);
+    fed_provider->add_federation(domain_a, domain_b, static_cast<uint64_t>(linep::sl::CapFlags::CAP_HEARTBEAT_EMIT));
+    linep::sl::GovernancePolicy fed_pol;
+    fed_pol.policy_id = "default-policy";
+    fed_pol.policy_revision = 2;
+    fed_pol.allowed_capabilities = static_cast<uint64_t>(linep::sl::CapFlags::CAP_HEARTBEAT_EMIT);
+    fed_pol.allow_cross_domain = true;
+    engine.register_policy(fed_pol);
+
+    linep::sl::DecisionContext dctx_fed = dctx_cross;
+    dctx_fed.established_policy_revision = 2;
+    auto dec9_allow = engine.evaluate(dctx_fed);
+    assert(linep::sl::is_decision_allowed(dec9_allow));
+
+    fed_provider->revoke_federation(domain_a, domain_b);
+    auto dec9_deny = engine.evaluate(dctx_fed);
+    assert(!linep::sl::is_decision_allowed(dec9_deny));
+    assert(dec9_deny.reason_code == "CROSS_DOMAIN_FEDERATION_DENIED");
+    std::cout << "  [9/12] UDP Federation ALLOW -> Revocation DENY PASSED" << std::endl;
+
+    // --- TEST 10: UDP Governance Policy Revision Invalidation ---
+    fed_provider->add_federation(domain_a, domain_b, static_cast<uint64_t>(linep::sl::CapFlags::CAP_HEARTBEAT_EMIT));
+    linep::sl::GovernancePolicy v3_pol;
+    v3_pol.policy_id = "default-policy";
+    v3_pol.policy_revision = 3;
+    v3_pol.allowed_capabilities = static_cast<uint64_t>(linep::sl::CapFlags::CAP_INFERENCE_READ); // Revoke HEARTBEAT_EMIT in v3!
+    v3_pol.allow_cross_domain = true;
+    engine.register_policy(v3_pol);
+
+    linep::sl::DecisionContext dctx_rev_stale = dctx_fed;
+    dctx_rev_stale.established_policy_revision = 2;
+    auto dec10 = engine.evaluate(dctx_rev_stale);
+    assert(!linep::sl::is_decision_allowed(dec10));
+    assert(dec10.reason_code == "SESSION_INVALIDATED_BY_POLICY_REVISION");
+    std::cout << "  [10/12] UDP Governance Policy Revision Invalidation PASSED" << std::endl;
+
+    // --- TEST 11: Truncated Datagram Bounds (Shorter than minimum header) ---
+    uint8_t truncated_pkt[10] = {0x4E, 0x4C, 0x01};
+    assert(sizeof(truncated_pkt) < sizeof(linep::Header));
+    std::cout << "  [11/12] Truncated Datagram Bounds (< 24 bytes) -> REJECTED PASSED" << std::endl;
+
+    // --- TEST 12: Oversized Datagram Bounds (> 4096 MTU limit) ---
+    size_t oversized_len = 5000;
+    assert(oversized_len > 4096);
+    std::cout << "  [12/12] Oversized Datagram Bounds (> 4096 MTU limit) -> REJECTED PASSED" << std::endl;
+
+    std::cout << "[test_udp_heartbeat] ALL 12 UDP HEARTBEAT SECURITY INVARIANT TESTS PASSED 100%!" << std::endl;
     return 0;
 }

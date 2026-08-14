@@ -128,6 +128,17 @@ int main() {
     assert(res7_allowed.reason_code == "GOVERNANCE_POLICY_ALLOWED");
     std::cout << "  [9] Federation Trust + policy.allow_cross_domain == true + Trusted Peer -> ALLOW PASSED" << std::endl;
 
+    // 9B. Revoke Federation -> Next Cross-Domain Request MUST BE DENIED!
+    fed_provider->revoke_federation(domain_a, domain_b);
+    auto res_revoked_fed = engine.evaluate(ctx_cross);
+    assert(!linep::sl::is_decision_allowed(res_revoked_fed));
+    assert(res_revoked_fed.decision == linep::sl::Decision::DENY);
+    assert(res_revoked_fed.reason_code == "CROSS_DOMAIN_FEDERATION_DENIED");
+    std::cout << "  [9B] Federation Revocation (ALLOW -> Revoke -> DENY) PASSED" << std::endl;
+
+    // Re-add federation for remaining policy revision tests
+    fed_provider->add_federation(domain_a, domain_b, static_cast<uint64_t>(linep::sl::CapFlags::CAP_INFERENCE_READ));
+
     // 10. Policy Revision Invalidation Check for Active Sessions
     linep::sl::GovernancePolicy v3_policy;
     v3_policy.policy_id = "default-policy";

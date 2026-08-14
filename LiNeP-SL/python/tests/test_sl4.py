@@ -125,4 +125,23 @@ def test_sl4_persistent_security_engine_with_real_identity():
     )
     assert dec5 == linep_sl.Decision.ALLOW
     assert reason5 == "GOVERNANCE_POLICY_ALLOWED"
-    assert engine.get_audit_count() >= 5
+
+    # 6. Revoke Federation -> ALLOW -> Revoke -> DENY!
+    engine.revoke_federation(domain_a, domain_b)
+    dec6, reason6 = engine.evaluate(
+        trust_domain_id=domain_a,
+        session_id=0x1001,
+        key_id=1,
+        local_node_id=1,
+        remote_node_id=10,
+        remote_trust_domain_id=domain_b,
+        remote_revoked=False,
+        negotiated_sl=linep_sl.SecurityLevel.SL2_IDENTITY,
+        requested_cap=linep_sl.CapFlags.INFERENCE_READ,
+        remote_pubkey_32bytes=pubkey_node10,
+        policy_id="default-policy",
+        established_policy_revision=2,
+    )
+    assert dec6 == linep_sl.Decision.DENY
+    assert reason6 == "CROSS_DOMAIN_FEDERATION_DENIED"
+    assert engine.get_audit_count() >= 6

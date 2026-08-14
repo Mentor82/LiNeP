@@ -1,6 +1,6 @@
 # Interoperability & Integration Report: Windows ↔ Debian 13 (Trixie)
 
-This document records the cross-platform build, binary parity, socket communication, security level negotiation, session key lifecycle, fail-closed security gates, streaming fragments, authenticated cancellation, and UDP heartbeat security invariants between **Windows Host** and **Debian 13 WSL (LIARA Workstation)**.
+This document records the cross-platform build, binary parity, socket communication, security level negotiation, session key lifecycle, fail-closed security gates, streaming fragments, authenticated cancellation, and complete UDP heartbeat security invariants between **Windows Host** and **Debian 13 WSL (LIARA Workstation)** over an explicit, un-derived `PortPair(tcp_port, udp_port)`.
 
 ---
 
@@ -12,11 +12,11 @@ This document records the cross-platform build, binary parity, socket communicat
 | **Compiler / Toolchain** | MinGW-w64 GCC 14.0 / MSVC | GNU GCC 14.2.0-19 / Ninja 1.12.1 |
 | **Python Runtime** | Python 3.12.7 (win32) | Python 3.13.5 (linux) |
 | **Binary Artifacts** | `build/src/liblinep_sl.dll` | `build_linux/src/liblinep_sl.so` |
-| **Position Independent Code** | Windows DLL standard | `-fPIC` (`POSITION_INDEPENDENT_CODE ON`) |
+| **PortPair Configuration** | `--tcp-port <port> --udp-port <port>` (Strictly un-derived) | `--tcp-port <port> --udp-port <port>` (Strictly un-derived) |
 
 ---
 
-## 2. Fail-Closed Security Gates & DoD Protocol Verification
+## 2. Fail-Closed Security Gates & Protocol Verification
 
 ### Security Gate 1: Fail-Closed MAC Verification (SL1)
 - **Rule**: If `verify_sl1_mac()` returns `False` (tampered header, modified payload, wrong key), the server MUST immediately abort dispatch and return `status: REJECTED`.
@@ -27,7 +27,7 @@ This document records the cross-platform build, binary parity, socket communicat
 - **Test Outcome**: Verified across OS boundaries. Requesting unauthorized `ADMIN` returned `"status": "REJECTED"`, `"reason": "Capability authorization failed"`.
 
 ### Security Gate 3: Zero-Trust Governance & Cross-Domain Identity Anchor (SL4)
-- **Rule**: Cross-domain communications require active Federation Trust, explicit Governance Policy approval (`allow_cross_domain = True`), AND domain-scoped identity verification (`(trust_domain_id, node_id) -> pubkey`). Untrusted federated peers are rejected fail-closed.
+- **Rule**: Cross-domain communications require active Federation Trust, explicit Governance Policy approval (`allow_cross_domain = True`), AND domain-scoped identity verification (`(trust_domain_id, node_id) -> pubkey`). Untrusted federated peers or revoked federations are rejected fail-closed.
 - **Test Outcome**: Verified across Windows Host and Debian 13 WSL. Requests without federation returned `"CROSS_DOMAIN_FEDERATION_DENIED"`, policy denial returned `"GOVERNANCE_POLICY_CROSS_DOMAIN_DENIED"`, and untrusted federated peer keys returned `"CROSS_DOMAIN_IDENTITY_UNTRUSTED"`.
 
 ### V0.2 Transport: Stream Fragments & Duplicate Rejection
@@ -43,14 +43,14 @@ This document records the cross-platform build, binary parity, socket communicat
   - Unauthorized / Tampered `TASK_CANCEL` $\rightarrow$ `status: REJECTED`.
 
 ### UDP Heartbeat Security Invariants (Issue #7)
-- **Rule**: UDP heartbeats sent over `PortPair(tcp_port, udp_port)` must require `CAP_HEARTBEAT_EMIT` (`0x0020`), SL1 MAC authentication, SL4 Governance decision, and sequence tracking isolated per `(session_id, correlation_id, transport_type)`.
+- **Rule**: UDP heartbeats sent over `PortPair(tcp_port, udp_port)` must require `CAP_HEARTBEAT_EMIT` (`0x0020`), SL1 MAC authentication, SL4 Governance decision, and sequence tracking isolated per `(session_id, correlation_id, transport_type)`. Truncated (< 24 B) or oversized (> 4096 B) datagrams are rejected fail-closed.
 - **Test Outcome**:
   - Valid Protected UDP Heartbeat $\rightarrow$ `status: HEARTBEAT_ACCEPTED`.
-  - Replayed / Tampered UDP Heartbeat $\rightarrow$ `status: REJECTED`.
+  - Replayed / Tampered / Truncated / Oversized UDP Heartbeat $\rightarrow$ `status: REJECTED`.
 
 ---
 
-## 3. Full 16-Test Multi-Platform Interop Matrix
+## 3. Full 20-Test Multi-Platform Interop Matrix
 
 | Test Case | Direction 1: Win Server $\leftarrow$ Debian Client | Direction 2: Debian Server $\leftarrow$ Win Client | Status |
 |---|---|---|---|
@@ -71,12 +71,14 @@ This document records the cross-platform build, binary parity, socket communicat
 | **14. Tampered UDP Heartbeat MAC** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
 | **15. Duplicate UDP Heartbeat Replay** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
 | **16. Cross-Domain UDP without Federation** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
+| **17. Truncated UDP Datagram (< 24 B)** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
+| **18. Oversized UDP Datagram (> 4096 B)** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
+| **19. UDP Expired / Stale Session Key** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
+| **20. UDP Unauthorized Capability** | PASSED (REJECTED) | PASSED (REJECTED) | **OK** |
 
 ---
 
 ## 4. Normative References & Issue Tracking
 
 - **GitHub Issue #6**: [`feat(linep-sl/sl4): implement governance, audit, zero-trust and federation semantics`](https://github.com/Mentor82/LiNeP/issues/6)
-  - Verification Commits: `d9b89e0`, `8c8d16d`, `024ebde`, `f2ac035`, `fc0e0c6`, `6d57fd5`.
 - **GitHub Issue #7**: [`test(linep-sl): validate SL security invariants over LiNeP UDP heartbeat transport`](https://github.com/Mentor82/LiNeP/issues/7)
-  - Verification Commits: `5f47dee`, `c1d23cc`, `f2ac035`, `fc0e0c6`, `6d57fd5`.
