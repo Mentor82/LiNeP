@@ -1,4 +1,4 @@
-# LiNeP (Lightweight Network Protocol for Inter-AI Engine)
+# LiNeP - Liara Neural Protocol (Lightweight Network Protocol for Inter-AI Engine)
 
 Welcome to the **LiNeP** repository.
 
