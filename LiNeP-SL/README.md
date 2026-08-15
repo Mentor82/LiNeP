@@ -2,6 +2,10 @@
 
 LiNeP-SL is the layered security framework for LiNeP. It augments the low-latency LiNeP transport with progressively stronger authentication, cryptographic identity, authorization, replay protection, policy enforcement, auditability, and zero-trust federation while preserving LiNeP's deterministic and lightweight core.
 
+> **Naming note:** `SL` normatively means **Security Layers**. Within LIARA's neural-system architecture, it also carries a deliberate secondary analogy to **Synaptic Layers**: LiNeP transports the signal; LiNeP-SL governs the synapse — which peers may connect, under which identity, capability, policy, trust, revocation, and audit conditions. This analogy is descriptive only and does not define a second protocol or an alternative SL specification.
+
+> **Architecture mnemonic:** **LiNeP transports the signal. LiNeP-SL governs the synapse.**
+
 > Status: Fully implemented & audited V0.1 architecture baseline. All layer boundaries, identity stores, governance policy engines, audit sinks, and transport security invariants across TCP & UDP are verified.
 
 ## Core boundary
