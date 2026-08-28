@@ -93,6 +93,15 @@ All V0.2 communication frames share a canonical 32-byte length-prefixed header:
 | **Test 7: Abrupt Disconnect Cleanup** | Connection severed while streams are active. | Client abruptly cuts connection -> server terminates all active streams cleanly as `failed`. | 🟢 **PASSED** |
 | **Test 8: Reconnect Isolation** | Reconnecting on fresh socket creates isolated session. | Dead streams do not resurrect; new session operates cleanly in complete isolation. | 🟢 **PASSED** |
 
+### Phase C: Lifecycle, End-to-End Cancel & Transport Backpressure (`test_v02_lifecycle_cancel_backpressure`)
+
+| Invariant / Test | Description | Verification Method | Status |
+|---|---|---|---|
+| **Test 1: End-to-End Cancel** | Full TCP cancellation path (`CONTROL -> cancel_requested -> CANCELLED`). | Client sends cancel over TCP; worker halts generation and emits terminal cancelled event. | 🟢 **PASSED** |
+| **Test 2: Selective Stream Cancel** | Multi-stream selective cancellation over shared TCP socket. | Stream A is cancelled while Stream B continues to `completed` over the same socket. | 🟢 **PASSED** |
+| **Test 3: Atomic Race Resolution** | Concurrent `completed` vs `cancel` race across 100 iterations. | Exactly ONE authoritative terminal outcome prevails in 100/100 runs; loser rejected with 410. | 🟢 **PASSED** |
+| **Test 4: Transport Backpressure** | Slow consumer / buffer ceiling overload protection. | Stream buffer exceeds ceiling -> server triggers fail-closed backpressure (`resource_exhausted`, 507). | 🟢 **PASSED** |
+
 ---
 
 ## 4. Multi-Platform Execution Logs
@@ -152,6 +161,17 @@ ALL V0.2 PHASE B SESSION MULTIPLEXING TESTS PASSED 100%!
 [Test 8] Real TCP Socket: Reconnect & Clean Session Isolation...
   -> Reconnect & Clean Session Isolation PASSED
 ALL 8 V0.2 TCP SOCKET MULTIPLEXING & FAIL-CLOSED TESTS PASSED 100%!
+
+=== LiNeP V0.2 Lifecycle, Cancel & Transport Backpressure Test Suite ===
+[Test 1] Real TCP Socket: End-to-End Stream Cancellation (CONTROL -> cancel_requested -> CANCELLED)...
+  -> Real TCP End-to-End Stream Cancellation PASSED
+[Test 2] Real TCP Socket: Multi-Stream Selective Cancellation (Stream A cancelled, Stream B completes)...
+  -> Multi-Stream Selective Cancellation PASSED
+[Test 3] Atomic Cancel vs. Completion Race (100 concurrent iterations)...
+  -> Atomic Cancel vs. Completion Race Resolution PASSED (100/100)
+[Test 4] Real Transport Backpressure & Slow Consumer Overload Protection...
+  -> Real Transport Backpressure & Slow Consumer Protection PASSED
+ALL V0.2 PHASE C LIFECYCLE & BACKPRESSURE TESTS PASSED 100%!
 ```
 
 
@@ -161,20 +181,22 @@ ALL 8 V0.2 TCP SOCKET MULTIPLEXING & FAIL-CLOSED TESTS PASSED 100%!
 Test project /mnt/windows/ai/LiNeP/LiNeP/build_linux
       Start  1: test_crc ...........................................   Passed    0.01 sec
       ...
-      Start 29: test_sl1_auth ......................................   Passed    0.57 sec
+      Start 29: test_sl1_auth ......................................   Passed    0.60 sec
       Start 30: test_v02_envelopes .................................   Passed    0.01 sec
       Start 31: test_v02_session ...................................   Passed    0.01 sec
-      Start 32: test_v02_socket_multiplexing .......................   Passed    0.09 sec
+      Start 32: test_v02_socket_multiplexing .......................   Passed    0.08 sec
+      Start 33: test_v02_lifecycle_cancel_backpressure .............   Passed    0.13 sec
 
-100% tests passed, 0 tests failed out of 32
-Total Test time (real) = 2.40 sec
+100% tests passed, 0 tests failed out of 33
+Total Test time (real) = 2.56 sec
 ```
 
 ---
 
 ## 5. Audit Conclusion
 
-The LiNeP V0.2 implementation under **Phase A & Phase B** conforms strictly to the requirements of **Issue #9** and **Issue #10**:
+The LiNeP V0.2 implementation under **Phases A, B & C** conforms strictly to the requirements of **Issue #9** and **Issue #10**:
 - Complete isolation from V0.1 baseline.
 - Real socket-level stream multiplexing over a single persistent TCP connection.
+- End-to-end network cancellation and atomic race condition resolution.
 - Deterministic, fail-closed invariant enforcement across all tested platforms.

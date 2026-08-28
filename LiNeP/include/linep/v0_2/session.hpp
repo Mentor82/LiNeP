@@ -61,13 +61,17 @@ public:
     // Target cancellation by execution identity (cancel_requested -> non-terminal)
     bool cancel_execution(execution_id_t execution_id, const std::string& reason, std::size_t& out_cancelled_count);
 
+    // Process a control envelope (e.g. cancel) from network wire
+    bool process_control(const control_envelope& ctrl, runtime_error& out_err);
+
     // Query active streams
     std::size_t get_active_stream_count() const;
     bool has_stream(const stream_identity& id) const;
     bool get_stream_state(const stream_identity& id, active_stream_state& out_state) const;
 
-    // Check if stream is in terminal state
+    // Check if stream is in terminal state or has cancel requested
     bool is_stream_terminal(const stream_identity& id) const;
+    bool is_cancel_requested(const stream_identity& id) const;
 
     // Fail-closed termination of all in-flight streams on connection disconnect / error
     std::size_t terminate_all_active_streams(terminal_outcome outcome, const runtime_error& err);

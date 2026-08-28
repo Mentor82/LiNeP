@@ -134,6 +134,63 @@ bool session_manager::cancel_execution(execution_id_t execution_id, const std::s
     return out_cancelled_count > 0;
 }
 
+bool session_manager::process_control(const control_envelope& ctrl, runtime_error& out_err) {
+    if (!ctrl.is_valid()) {
+        out_err.category = error_category::bad_request;
+        out_err.code = 400;
+        out_err.message = "Invalid control envelope";
+        return false;
+    }
+
+    if (ctrl.control_type == runtime_control_type::cancel) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        bool found = false;
+        bool any_cancelled = false;
+        bool already_terminal = false;
+
+        for (auto& pair : active_streams_) {
+            bool matches = false;
+            if (ctrl.stream.request_id != 0 && ctrl.stream.output_id != 0) {
+                matches = (pair.first == ctrl.stream);
+            } else {
+                matches = (pair.first.execution_id == ctrl.stream.execution_id);
+            }
+
+            if (matches) {
+                found = true;
+                if (pair.second.lifecycle.state == lifecycle_state::terminal) {
+                    already_terminal = true;
+                } else if (pair.second.lifecycle.state != lifecycle_state::cancel_requested) {
+                    if (pair.second.lifecycle.transition_to(lifecycle_state::cancel_requested)) {
+                        any_cancelled = true;
+                    }
+                }
+            }
+        }
+
+        if (!found) {
+            out_err.category = error_category::bad_request;
+            out_err.code = 404;
+            out_err.message = "Stream identity not found in active session";
+            return false;
+        }
+
+        if (already_terminal && !any_cancelled) {
+            out_err.category = error_category::bad_request;
+            out_err.code = 410;
+            out_err.message = "Stream has already reached terminal state; cancel ignored";
+            return false;
+        }
+
+        return any_cancelled;
+    }
+
+    out_err.category = error_category::bad_request;
+    out_err.code = 400;
+    out_err.message = "Unsupported control type";
+    return false;
+}
+
 std::size_t session_manager::get_active_stream_count() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::size_t count = 0;
@@ -167,6 +224,15 @@ bool session_manager::is_stream_terminal(const stream_identity& id) const {
         return false;
     }
     return it->second.lifecycle.state == lifecycle_state::terminal;
+}
+
+bool session_manager::is_cancel_requested(const stream_identity& id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = active_streams_.find(id);
+    if (it == active_streams_.end()) {
+        return false;
+    }
+    return it->second.lifecycle.state == lifecycle_state::cancel_requested;
 }
 
 std::size_t session_manager::terminate_all_active_streams(terminal_outcome outcome, const runtime_error& err) {
