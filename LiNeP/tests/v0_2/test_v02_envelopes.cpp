@@ -220,7 +220,8 @@ void test_embedding_envelope_and_vector_spaces() {
 }
 
 void test_control_envelope() {
-    std::cout << "[Test 4] Control Envelope (Cancel targeted by Execution ID)..." << std::endl;
+    std::cout << "[Test 4] Control Envelope (Cancel targeted by Execution ID & Window Update Flow Control)..." << std::endl;
+    // 1. Cancel Control
     control_envelope ctrl{};
     ctrl.stream.request_id = 1001;
     ctrl.stream.execution_id = 2001; // Target cancellation to specific execution attempt
@@ -239,6 +240,23 @@ void test_control_envelope() {
     LINEP_TEST_CHECK(dec_ctrl.stream.execution_id == 2001);
     LINEP_TEST_CHECK(dec_ctrl.control_type == runtime_control_type::cancel);
     LINEP_TEST_CHECK(dec_ctrl.reason == "User requested cancellation via UI");
+
+    // 2. Window Update Control
+    control_envelope win_ctrl{};
+    win_ctrl.stream.request_id = 1001;
+    win_ctrl.stream.execution_id = 2001;
+    win_ctrl.stream.output_id = 0;
+    win_ctrl.control_type = runtime_control_type::window_update;
+    win_ctrl.window_credit_bytes = 4096;
+
+    LINEP_TEST_CHECK(win_ctrl.is_valid());
+    buffer.clear();
+    LINEP_TEST_CHECK(encode_control(win_ctrl, buffer));
+
+    control_envelope dec_win{};
+    LINEP_TEST_CHECK(decode_control(buffer.data(), buffer.size(), dec_win));
+    LINEP_TEST_CHECK(dec_win.control_type == runtime_control_type::window_update);
+    LINEP_TEST_CHECK(dec_win.window_credit_bytes == 4096);
 
     std::cout << "  -> Control Envelope Tests PASSED" << std::endl;
 }

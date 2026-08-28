@@ -307,45 +307,112 @@ void test_atomic_cancel_vs_completion_race() {
 }
 
 void test_real_transport_backpressure_slow_consumer() {
-    std::cout << "[Test 4] Real TCP Transport: Bounded In-Flight Queue & Slow Consumer Overload Protection..." << std::endl;
-    constexpr std::uint16_t port = 19994;
+    std::cout << "[Test 4] Real TCP Transport: Protocol WINDOW_UPDATE Flow Control & Slow Consumer Overload..." << std::endl;
+    constexpr std::uint16_t port_fast = 19994;
+    constexpr std::uint16_t port_slow = 19995;
 
-    // --- Scenario A: Fast Consumer with Drain Acknowledgment (Can stream unbounded data with bounded memory) ---
-    {
-        session_descriptor desc{};
-        desc.limits.max_buffered_bytes_per_stream = 500; // Small 500-byte in-flight buffer ceiling
-        session_manager mgr(desc);
-        runtime_error err{};
-
-        stream_identity id{401, 4001, 0};
-        request_envelope req{id, runtime_profile::chat, "llama-3.1-8b", "Prompt"};
-        LINEP_TEST_CHECK(mgr.submit_request(req, err));
-
-        // Fast consumer receives chunks and acknowledges drain -> streams 50 chunks of 100 bytes (5000 bytes total!)
-        for (event_seq_t seq = 1; seq <= 50; ++seq) {
-            event_envelope chunk{id, seq, runtime_event_type::content_delta, std::string(100, 'X')};
-            LINEP_TEST_CHECK(mgr.dispatch_event(chunk, err));
-            // Consumer consumes and drains buffer:
-            LINEP_TEST_CHECK(mgr.acknowledge_stream_drain(id, 100));
-        }
-
-        active_stream_state fast_st{};
-        LINEP_TEST_CHECK(mgr.get_stream_state(id, fast_st));
-        LINEP_TEST_CHECK(fast_st.total_produced_bytes == 5000);
-        LINEP_TEST_CHECK(fast_st.unacked_buffered_bytes == 0); // Memory is strictly bounded!
-    }
-
-    // --- Scenario B: Real TCP Slow / Stalled Consumer on Socket (Backpressure Overload Protection) ---
+    // --- Scenario A: Real TCP Protocol WINDOW_UPDATE Flow Control (Stream 2,000 bytes through 500-byte window) ---
     {
         envelope_server server;
-        LINEP_TEST_CHECK(server.listen(port));
+        LINEP_TEST_CHECK(server.listen(port_fast));
 
         std::unique_ptr<envelope_connection> srv_conn;
         std::thread accept_th([&]() {
             srv_conn = server.accept_connection();
         });
 
-        auto client_conn = envelope_connection::connect("127.0.0.1", port);
+        auto client_conn = envelope_connection::connect("127.0.0.1", port_fast);
+        LINEP_TEST_CHECK(client_conn != nullptr);
+        accept_th.join();
+
+        session_descriptor desc{};
+        desc.limits.max_buffered_bytes_per_stream = 500; // Small 500-byte in-flight window ceiling
+        session_manager srv_session(desc);
+        runtime_error err{};
+
+        stream_identity id_fast{401, 4001, 0};
+        request_envelope req_fast{id_fast, runtime_profile::chat, "llama-3.1-8b", "Fast Prompt"};
+        LINEP_TEST_CHECK(srv_session.submit_request(req_fast, err));
+
+        // Server reader thread processing WINDOW_UPDATE control frames from TCP socket
+        std::atomic<bool> server_running{true};
+        std::thread srv_control_reader([&]() {
+            std::vector<std::uint8_t> ctrl_buf;
+            while (server_running) {
+                if (srv_conn->receive_envelope_raw(ctrl_buf)) {
+                    control_envelope ctrl{};
+                    if (decode_control(ctrl_buf.data(), ctrl_buf.size(), ctrl)) {
+                        srv_session.process_control(ctrl, err);
+                    }
+                } else {
+                    break;
+                }
+            }
+        });
+
+        // Server worker streaming 20 chunks of 100 bytes (2,000 bytes total) through the 500-byte window
+        std::thread worker([&]() {
+            event_seq_t seq = 1;
+            for (int i = 0; i < 20; ++i) {
+                event_envelope chunk{id_fast, seq++, runtime_event_type::content_delta, std::string(100, 'X')};
+                while (!srv_session.dispatch_event(chunk, err)) {
+                    // Window full, wait for client WINDOW_UPDATE
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                srv_conn->send_event(chunk);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            event_envelope term{id_fast, seq++, runtime_event_type::completed, "", terminal_outcome::completed};
+            srv_session.dispatch_event(term, err);
+            srv_conn->send_event(term);
+        });
+
+        // Client receives chunks and sends protocol WINDOW_UPDATE control envelopes back over TCP
+        std::vector<std::uint8_t> raw_buf;
+        int chunks_received = 0;
+        bool completed = false;
+
+        while (!completed) {
+            LINEP_TEST_CHECK(client_conn->receive_envelope_raw(raw_buf));
+            event_envelope evt{};
+            LINEP_TEST_CHECK(decode_event(raw_buf.data(), raw_buf.size(), evt));
+
+            if (evt.event_type == runtime_event_type::content_delta) {
+                chunks_received++;
+                // Send protocol WINDOW_UPDATE grant over TCP socket to replenish server window!
+                control_envelope win_ctrl{id_fast, runtime_control_type::window_update, "Ack chunk", 100};
+                LINEP_TEST_CHECK(client_conn->send_control(win_ctrl));
+            } else if (evt.event_type == runtime_event_type::completed) {
+                completed = true;
+            }
+        }
+
+        worker.join();
+        server_running = false;
+        client_conn->close();
+        srv_conn->close();
+        srv_control_reader.join();
+        server.close();
+
+        LINEP_TEST_CHECK(chunks_received == 20);
+        LINEP_TEST_CHECK(srv_session.is_stream_terminal(id_fast));
+        active_stream_state fast_st{};
+        LINEP_TEST_CHECK(srv_session.get_stream_state(id_fast, fast_st));
+        LINEP_TEST_CHECK(fast_st.total_produced_bytes == 2000);
+        LINEP_TEST_CHECK(fast_st.unacked_buffered_bytes == 0); // Window fully drained in real-time
+    }
+
+    // --- Scenario B: Real TCP Slow / Stalled Consumer on Socket (Backpressure Overload Protection) ---
+    {
+        envelope_server server;
+        LINEP_TEST_CHECK(server.listen(port_slow));
+
+        std::unique_ptr<envelope_connection> srv_conn;
+        std::thread accept_th([&]() {
+            srv_conn = server.accept_connection();
+        });
+
+        auto client_conn = envelope_connection::connect("127.0.0.1", port_slow);
         LINEP_TEST_CHECK(client_conn != nullptr);
         accept_th.join();
 
@@ -363,7 +430,7 @@ void test_real_transport_backpressure_slow_consumer() {
         LINEP_TEST_CHECK(srv_session.dispatch_event(d1, err));
         LINEP_TEST_CHECK(srv_conn->send_event(d1));
 
-        // Chunk 2: 300 bytes without drain from slow consumer -> (300+300 = 600 > 500) -> EXPLICIT BACKPRESSURE 507!
+        // Chunk 2: 300 bytes without WINDOW_UPDATE from stalled consumer -> (300+300 = 600 > 500) -> EXPLICIT BACKPRESSURE 507!
         event_envelope d2{id_slow, 2, runtime_event_type::content_delta, std::string(300, 'B')};
         bool d2_ok = srv_session.dispatch_event(d2, err);
         LINEP_TEST_CHECK(!d2_ok);
@@ -387,7 +454,7 @@ void test_real_transport_backpressure_slow_consumer() {
         server.close();
     }
 
-    std::cout << "  -> Real Transport Backpressure & Slow Consumer Protection PASSED" << std::endl;
+    std::cout << "  -> Real TCP Transport: Protocol WINDOW_UPDATE Flow Control PASSED" << std::endl;
 }
 
 int main() {

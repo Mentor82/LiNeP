@@ -100,7 +100,7 @@ All V0.2 communication frames share a canonical 32-byte length-prefixed header:
 | **Test 1: End-to-End Cancel** | Full TCP cancellation path with exact `output_id=0` stream scope. | Client sends cancel over TCP; worker halts generation and emits terminal cancelled event. | 🟢 **PASSED** |
 | **Test 2: Selective Stream Cancel** | Multi-stream selective cancellation over shared TCP socket. | Stream A is cancelled while Stream B continues to `completed` over the same socket. | 🟢 **PASSED** |
 | **Test 3: Atomic Race Resolution** | Concurrent `completed` vs `cancel` race across 100 iterations. | Exactly ONE authoritative terminal outcome prevails in 100/100 runs; loser rejected with 410. | 🟢 **PASSED** |
-| **Test 4: Real Transport Backpressure** | Bounded in-flight buffer with drain acknowledgment & slow consumer overload. | Exceeding unacked buffer triggers fail-closed `resource_exhausted` (507) on stalled socket. | 🟢 **PASSED** |
+| **Test 4: Real Transport Backpressure** | Protocol `WINDOW_UPDATE` credit grant & slow consumer overload. | Verified real TCP flow control with `control_envelope(window_update)` & fail-closed 507 on stalled socket. | 🟢 **PASSED** |
 
 ---
 

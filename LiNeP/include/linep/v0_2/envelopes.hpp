@@ -43,6 +43,7 @@ enum class runtime_event_type : std::uint8_t {
 enum class runtime_control_type : std::uint8_t {
     unknown = 0,
     cancel = 1,
+    window_update = 2,
 };
 
 #pragma pack(push, 1)
@@ -108,6 +109,7 @@ struct control_envelope {
     stream_identity stream;
     runtime_control_type control_type{runtime_control_type::cancel};
     std::string reason;
+    std::uint32_t window_credit_bytes{0};
 
     bool is_valid() const noexcept {
         return stream.is_valid() &&

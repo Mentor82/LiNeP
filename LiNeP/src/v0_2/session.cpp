@@ -204,6 +204,34 @@ bool session_manager::process_control(const control_envelope& ctrl, runtime_erro
         return any_cancelled;
     }
 
+    if (ctrl.control_type == runtime_control_type::window_update) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        bool found = false;
+        for (auto& pair : active_streams_) {
+            bool matches = false;
+            if (ctrl.stream.request_id != 0) {
+                matches = (pair.first == ctrl.stream);
+            } else {
+                matches = (pair.first.execution_id == ctrl.stream.execution_id);
+            }
+            if (matches) {
+                found = true;
+                if (ctrl.window_credit_bytes >= pair.second.unacked_buffered_bytes) {
+                    pair.second.unacked_buffered_bytes = 0;
+                } else {
+                    pair.second.unacked_buffered_bytes -= ctrl.window_credit_bytes;
+                }
+            }
+        }
+        if (!found) {
+            out_err.category = error_category::bad_request;
+            out_err.code = 404;
+            out_err.message = "Stream identity not found in active session";
+            return false;
+        }
+        return true;
+    }
+
     out_err.category = error_category::bad_request;
     out_err.code = 400;
     out_err.message = "Unsupported control type";
