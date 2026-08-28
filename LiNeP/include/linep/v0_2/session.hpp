@@ -69,6 +69,9 @@ public:
     // Check if stream is in terminal state
     bool is_stream_terminal(const stream_identity& id) const;
 
+    // Fail-closed termination of all in-flight streams on connection disconnect / error
+    std::size_t terminate_all_active_streams(terminal_outcome outcome, const runtime_error& err);
+
 private:
     session_descriptor descriptor_;
     mutable std::mutex mutex_;

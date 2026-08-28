@@ -14,6 +14,7 @@ constexpr std::uint32_t LINEP_V02_MAGIC = 0x504E4C32; // "2LNP" (LiNeP V0.2)
 constexpr std::uint8_t LINEP_V02_VERSION_MAJOR = 0;
 constexpr std::uint8_t LINEP_V02_VERSION_MINOR = 2;
 constexpr std::size_t LINEP_V02_HEADER_SIZE = 32;
+constexpr std::size_t LINEP_V02_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024; // 16 MB max payload limit
 
 enum class runtime_envelope_type : std::uint8_t {
     unknown = 0,

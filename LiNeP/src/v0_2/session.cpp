@@ -169,4 +169,19 @@ bool session_manager::is_stream_terminal(const stream_identity& id) const {
     return it->second.lifecycle.state == lifecycle_state::terminal;
 }
 
+std::size_t session_manager::terminate_all_active_streams(terminal_outcome outcome, const runtime_error& err) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::size_t terminated = 0;
+    for (auto& pair : active_streams_) {
+        if (pair.second.lifecycle.state != lifecycle_state::terminal) {
+            pair.second.lifecycle.transition_to(lifecycle_state::terminal, outcome);
+            event_envelope term_evt{pair.first, pair.second.last_event_seq + 1, runtime_event_type::failed, "", outcome};
+            term_evt.error = err;
+            pair.second.emitted_events.push_back(term_evt);
+            terminated++;
+        }
+    }
+    return terminated;
+}
+
 } // namespace linep::v0_2

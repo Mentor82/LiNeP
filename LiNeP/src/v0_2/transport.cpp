@@ -112,11 +112,18 @@ bool envelope_connection::receive_envelope_raw(std::vector<std::uint8_t>& out_bu
     out_buffer.clear();
     wire_envelope_header hdr{};
     if (!recv_all_bytes(reinterpret_cast<std::uint8_t*>(&hdr), sizeof(hdr))) {
+        close();
         return false; // Connection closed or error
     }
 
     if (hdr.magic != LINEP_V02_MAGIC || hdr.version_major != LINEP_V02_VERSION_MAJOR) {
-        return false; // Invalid magic / protocol version
+        close(); // Fail closed on corrupted magic / protocol version
+        return false;
+    }
+
+    if (hdr.payload_len > LINEP_V02_MAX_PAYLOAD_BYTES) {
+        close(); // Fail closed on oversized payload claim (DoS protection)
+        return false;
     }
 
     out_buffer.resize(sizeof(hdr) + hdr.payload_len);
@@ -124,7 +131,8 @@ bool envelope_connection::receive_envelope_raw(std::vector<std::uint8_t>& out_bu
 
     if (hdr.payload_len > 0) {
         if (!recv_all_bytes(out_buffer.data() + sizeof(hdr), hdr.payload_len)) {
-            return false; // Truncated connection during payload read
+            close(); // Fail closed on truncated payload
+            return false;
         }
     }
     return true;

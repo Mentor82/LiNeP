@@ -80,13 +80,17 @@ All V0.2 communication frames share a canonical 32-byte length-prefixed header:
 | **Test 6: Bounded Buffering** | Stream buffer limit overload protection. | Exceeding `max_buffered_bytes_per_stream` rejected with code 507. | 🟢 **PASSED** |
 | **Test 7: Single Terminal Outcome** | Immutable terminal state rule. | Any event sent to already terminal stream rejected with code 410. | 🟢 **PASSED** |
 
-### Phase B: Real TCP Socket Transport (`test_v02_socket_multiplexing`)
+### Phase B: Real TCP Socket Transport & Fail-Closed Robustness (`test_v02_socket_multiplexing`)
 
 | Invariant / Test | Description | Verification Method | Status |
 |---|---|---|---|
 | **Test 1: Real TCP Multiplexing** | Multiple streams interleaved over single persistent TCP socket. | Client & server connect via TCP; two worker threads generate interleaved deltas. | 🟢 **PASSED** |
 | **Test 2: Socket Stream Isolation** | Stream failure over TCP socket does not contaminate peer streams. | Stream A fails while Stream B completes successfully over the same socket. | 🟢 **PASSED** |
 | **Test 3: Connection Teardown** | Clean TCP socket shutdown & EOF detection. | Client closes socket; server detects EOF cleanly without hanging. | 🟢 **PASSED** |
+| **Test 4: Truncated Payload** | Malformed / truncated payload length claimed in header. | Header claims 5000 bytes, sends 10 bytes then closes -> server fails closed immediately. | 🟢 **PASSED** |
+| **Test 5: Oversized Payload DoS** | Malicious payload length > 16 MB DoS protection. | Header claims 100 MB -> server rejects claim and drops connection. | 🟢 **PASSED** |
+| **Test 6: Corrupted Magic Header** | Corrupted magic bytes mid-stream. | Header with invalid magic -> server rejects and closes connection. | 🟢 **PASSED** |
+| **Test 7: Abrupt Disconnect Cleanup** | Connection severed while streams are active. | Client abruptly cuts connection -> server terminates all active streams cleanly as `failed`. | 🟢 **PASSED** |
 
 ---
 
@@ -129,15 +133,24 @@ ALL V0.2 PHASE A ENVELOPE AND CONTRACT TESTS PASSED 100%!
   -> Single Terminal Outcome Tests PASSED
 ALL V0.2 PHASE B SESSION MULTIPLEXING TESTS PASSED 100%!
 
-=== LiNeP V0.2 Real TCP Socket Multiplexing Test Suite ===
+=== LiNeP V0.2 Real TCP Socket Multiplexing & Fail-Closed Robustness Test Suite ===
 [Test 1] Real TCP Socket: Concurrent Logical Stream Multiplexing & Interleaving...
   -> Real TCP Multiplexing & Interleaved Event Delivery PASSED
 [Test 2] Real TCP Socket: Stream Isolation upon Remote Failure...
   -> Real TCP Stream Isolation PASSED
 [Test 3] Real TCP Socket: Clean Connection Teardown & EOF Detection...
   -> Real TCP Clean Connection Teardown PASSED
-ALL V0.2 TCP SOCKET MULTIPLEXING TESTS PASSED 100%!
+[Test 4] Real TCP Socket: Malformed & Truncated Payload Length Rejection...
+  -> Malformed/Truncated Payload Length Fail-Closed PASSED
+[Test 5] Real TCP Socket: Oversized Payload Length DoS Protection (> 16 MB)...
+  -> Oversized Payload DoS Protection PASSED
+[Test 6] Real TCP Socket: Corrupted Magic Header Mid-Stream Rejection...
+  -> Corrupted Magic Header Mid-Stream Rejection PASSED
+[Test 7] Real TCP Socket: Abrupt Disconnect & Active Stream Cleanup...
+  -> Abrupt Disconnect & Active Stream Cleanup PASSED
+ALL 7 V0.2 TCP SOCKET MULTIPLEXING & FAIL-CLOSED TESTS PASSED 100%!
 ```
+
 
 ### 4.2 Debian 13 (trixie) WSL (GCC 14)
 
