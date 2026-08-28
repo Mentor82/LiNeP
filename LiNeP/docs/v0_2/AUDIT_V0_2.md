@@ -1,15 +1,15 @@
-# LiNeP V0.2 Audit & Protocol Verification Report (Phase A & Phase B)
+# LiNeP V0.2 Audit & Protocol Verification Report (Phases A, B & C)
 
 **Date**: 2026-08-29  
 **Tracking Issues**: [Issue #9](https://github.com/Mentor82/LiNeP/issues/9), [Issue #10](https://github.com/Mentor82/LiNeP/issues/10)  
-**Target Git Head**: `e3eed93`  
+**Target Git Head**: `58082d1`  
 **License**: Apache-2.0  
 
 ---
 
 ## 1. Executive Summary
 
-This audit document records the implementation and verification evidence for **Phase A** (Contract Types, Canonical Envelopes & Invariant Tests) and **Phase B** (Persistent Session Multiplexing & Real TCP Socket Transport) of the **LiNeP V0.2 Runtime Baseline**.
+This audit document records the implementation and verification evidence for **Phase A** (Contract Types, Canonical Envelopes & Invariant Tests), **Phase B** (Persistent Session Multiplexing & Real TCP Socket Transport), and **Phase C** (Lifecycle, End-to-End Socket Cancellation, Atomic Race Resolution, and Hybrid Transport Backpressure) of the **LiNeP V0.2 Runtime Baseline**.
 
 ### Key Audit Invariants
 1. **100% V0.1 Freeze**: Zero modifications to existing V0.1 public headers (`include/linep/*.h`), core transports (`src/core`, `src/udp`, `src/tcp`), scheduler logic, C-ABI, or tests.

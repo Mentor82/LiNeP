@@ -8,7 +8,7 @@ V0.1 remains frozen. Documents here must not retroactively redefine V0.1 behavio
 
 ## Audits & Verification Evidence
 
-- [`AUDIT_V0_2_PHASE_A_B.md`](./AUDIT_V0_2_PHASE_A_B.md) — Comprehensive audit report, wire-level specifications, invariant matrices, and raw multi-platform test execution logs for Phase A (Contract Types & Envelopes) and Phase B (Persistent Session & TCP Socket Multiplexing).
+- [`AUDIT_V0_2.md`](./AUDIT_V0_2.md) — Comprehensive audit report, wire-level specifications, invariant matrices, and raw multi-platform test execution logs for Phase A (Contract Types & Envelopes), Phase B (Persistent Session & TCP Multiplexing), and Phase C (Lifecycle, End-to-End Cancel & Hybrid Flow Control).
 
 ## Planned Specifications
 
