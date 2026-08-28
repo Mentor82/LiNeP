@@ -91,3 +91,12 @@ if(LINEP_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# ── Experimental LiNeP V0.2 Runtime Baseline (Isolated, Issue #10) ───────────
+option(LINEP_BUILD_V02 "Build experimental LiNeP V0.2 runtime baseline" ON)
+if(LINEP_BUILD_V02)
+    add_subdirectory(src/v0_2)
+    if(LINEP_BUILD_TESTS)
+        add_subdirectory(tests/v0_2)
+    endif()
+endif()
