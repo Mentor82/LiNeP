@@ -2,12 +2,6 @@
 
 Use this checklist to track Phase 1, Phase 2, and Phase 3 rollout end-to-end.
 
-The checked implementation milestones below do not establish completion of the
-engine-neutral architecture in [issue #9](https://github.com/Mentor82/LiNeP/issues/9).
-See the [runtime interoperability review](RUNTIME_INTEROPERABILITY_REVIEW_V0_2.md)
-for the source-based contract comparison, implementation gaps, and proposed
-acceptance tests. That review is non-normative and does not change the V0.1 baseline.
-
 ## Phase 1: Streaming Transport Layer
 
 - [x] Create git backup & tag `v0.1.0-baseline`

@@ -4,6 +4,11 @@ Date: 2026-08-28
 
 Tracking: [Issue #9 — engine-neutral runtime interoperability layer](https://github.com/Mentor82/LiNeP/issues/9)
 
+This dated review is deliberately kept under `docs/reviews/`, separate from the
+current READMEs, implementation roadmaps, and protocol specifications. Further
+issue #9 investigations can be recorded alongside it without rewriting those
+documents or treating review proposals as the current product contract.
+
 ## Status and scope
 
 This document records a source-based architecture investigation, not an approved
@@ -208,7 +213,7 @@ executed regression tests. This documentation commit does not fix them.
    or multiplexing would need implementation and measurement, not just a claim
    that binary framing is faster.
 
-The existing [streaming test](tests/test_task_streaming.cpp) demonstrates a happy
+The existing [streaming test](../../../LiNeP/tests/test_task_streaming.cpp) demonstrates a happy
 path, not the complete identity/cancel/terminal contract proposed here. Separate
 security or interoperability harness results must not be transferred to a runtime
 path without demonstrating that the tested implementation is the same path.

@@ -22,7 +22,6 @@ LiNeP-SL is not a second transport. It adds progressively stronger security whil
 * 📜 **[Protocol Specification V0.1.0](./LiNeP/PROTOCOL_V0_1_0.md)**
 * 🚀 **[System Architecture & Quickstart](./LiNeP/README.md)**
 * 📋 **[V0.2.0 Roadmap & Rollout Status](./LiNeP/TODO_V0_2_0.md)**
-* 🔎 **[V0.2 Runtime Interoperability Review — Issue #9](./LiNeP/RUNTIME_INTEROPERABILITY_REVIEW_V0_2.md)**
 
 ## Quick Links — LiNeP-SL (Security Layers)
 
