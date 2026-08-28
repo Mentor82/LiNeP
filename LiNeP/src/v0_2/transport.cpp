@@ -185,4 +185,139 @@ void envelope_server::close() noexcept {
     }
 }
 
+// ── stream_send_scheduler Implementation ────────────────────────────────────
+
+bool stream_send_scheduler::enqueue_raw(const stream_identity& stream, std::vector<std::uint8_t> frame) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& q = stream_queues_[stream];
+    if (q.size() >= max_queued_per_stream_) {
+        return false; // Per-stream send queue backpressure
+    }
+    if (q.empty()) {
+        active_order_.push_back(stream);
+    }
+    q.push_back(std::move(frame));
+    return true;
+}
+
+bool stream_send_scheduler::enqueue_event(const event_envelope& evt) {
+    std::vector<std::uint8_t> buf;
+    if (!encode_event(evt, buf)) {
+        return false;
+    }
+    return enqueue_raw(evt.stream, std::move(buf));
+}
+
+bool stream_send_scheduler::enqueue_request(const request_envelope& req) {
+    std::vector<std::uint8_t> buf;
+    if (!encode_request(req, buf)) {
+        return false;
+    }
+    return enqueue_raw(req.stream, std::move(buf));
+}
+
+bool stream_send_scheduler::enqueue_control(const control_envelope& ctrl) {
+    std::vector<std::uint8_t> buf;
+    if (!encode_control(ctrl, buf)) {
+        return false;
+    }
+    return enqueue_raw(ctrl.stream, std::move(buf));
+}
+
+bool stream_send_scheduler::pull_next_scheduled(stream_identity& out_stream, std::vector<std::uint8_t>& out_frame) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (active_order_.empty()) {
+        return false;
+    }
+
+    if (rr_cursor_ >= active_order_.size()) {
+        rr_cursor_ = 0;
+    }
+
+    std::size_t attempts = 0;
+    while (attempts < active_order_.size()) {
+        const auto& stream = active_order_[rr_cursor_];
+        auto it = stream_queues_.find(stream);
+        if (it != stream_queues_.end() && !it->second.empty()) {
+            out_stream = stream;
+            out_frame = std::move(it->second.front());
+            it->second.pop_front();
+
+            if (it->second.empty()) {
+                stream_queues_.erase(it);
+                active_order_.erase(active_order_.begin() + rr_cursor_);
+                if (rr_cursor_ >= active_order_.size()) {
+                    rr_cursor_ = 0;
+                }
+            } else {
+                rr_cursor_ = (rr_cursor_ + 1) % active_order_.size();
+            }
+            return true;
+        } else {
+            // Clean empty entry
+            if (it != stream_queues_.end()) {
+                stream_queues_.erase(it);
+            }
+            active_order_.erase(active_order_.begin() + rr_cursor_);
+            if (active_order_.empty()) {
+                rr_cursor_ = 0;
+                return false;
+            }
+            if (rr_cursor_ >= active_order_.size()) {
+                rr_cursor_ = 0;
+            }
+        }
+        attempts++;
+    }
+
+    return false;
+}
+
+std::size_t stream_send_scheduler::flush_scheduled(envelope_connection& conn) {
+    std::size_t flushed = 0;
+    stream_identity stream{};
+    std::vector<std::uint8_t> frame;
+    std::lock_guard<std::mutex> lock(conn.send_mutex_);
+    while (pull_next_scheduled(stream, frame)) {
+        if (!conn.send_bytes_locked(frame.data(), frame.size())) {
+            break;
+        }
+        flushed++;
+    }
+    return flushed;
+}
+
+void stream_send_scheduler::drop_stream(const stream_identity& stream) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stream_queues_.erase(stream);
+    for (auto it = active_order_.begin(); it != active_order_.end();) {
+        if (*it == stream) {
+            it = active_order_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (rr_cursor_ >= active_order_.size()) {
+        rr_cursor_ = 0;
+    }
+}
+
+std::size_t stream_send_scheduler::get_stream_queued_count(const stream_identity& stream) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = stream_queues_.find(stream);
+    if (it == stream_queues_.end()) {
+        return 0;
+    }
+    return it->second.size();
+}
+
+std::size_t stream_send_scheduler::get_total_queued_count() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::size_t total = 0;
+    for (const auto& pair : stream_queues_) {
+        total += pair.second.size();
+    }
+    return total;
+}
+
 } // namespace linep::v0_2

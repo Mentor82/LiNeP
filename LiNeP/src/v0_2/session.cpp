@@ -80,11 +80,11 @@ bool session_manager::dispatch_event(const event_envelope& evt, runtime_error& o
         return false;
     }
 
-    // Bounded buffer calculation
+    // Bounded buffer calculation based on monotonic unacknowledged bytes
     std::size_t event_bytes = evt.payload.size() +
         (evt.event_type == runtime_event_type::embedding_result ? evt.embedding.vector.size() * sizeof(float) : 0);
 
-    if ((stream_state.unacked_buffered_bytes + event_bytes) > descriptor_.limits.max_buffered_bytes_per_stream) {
+    if ((stream_state.unacked_buffered_bytes() + event_bytes) > descriptor_.limits.max_buffered_bytes_per_stream) {
         out_err.category = error_category::resource_exhausted;
         out_err.code = 507;
         out_err.message = "Stream buffer limit exceeded (unacked backpressure protection)";
@@ -96,6 +96,8 @@ bool session_manager::dispatch_event(const event_envelope& evt, runtime_error& o
         stream_state.lifecycle.transition_to(lifecycle_state::started);
     }
 
+    stream_state.total_produced_bytes += event_bytes;
+
     if (evt.is_terminal()) {
         terminal_outcome out = evt.outcome;
         if (out == terminal_outcome::unknown) {
@@ -105,14 +107,30 @@ bool session_manager::dispatch_event(const event_envelope& evt, runtime_error& o
             else out = terminal_outcome::completed;
         }
         stream_state.lifecycle.transition_to(lifecycle_state::terminal, out);
-        stream_state.unacked_buffered_bytes = 0; // Terminal event frees unacked buffer
-    } else {
-        stream_state.unacked_buffered_bytes += event_bytes;
+        // Terminal outcome acknowledges and frees all in-flight bytes
+        stream_state.acknowledged_offset_bytes = stream_state.total_produced_bytes;
     }
 
     stream_state.last_event_seq = evt.event_seq;
-    stream_state.total_produced_bytes += event_bytes;
+    return true;
+}
 
+bool session_manager::acknowledge_stream_offset(const stream_identity& id, std::uint64_t cumulative_ack_offset) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = active_streams_.find(id);
+    if (it == active_streams_.end()) {
+        return false;
+    }
+    // Idempotent: Ignore duplicate or stale ACK offsets
+    if (cumulative_ack_offset <= it->second.acknowledged_offset_bytes) {
+        return true;
+    }
+    // Monotonic advance up to total produced bytes
+    if (cumulative_ack_offset > it->second.total_produced_bytes) {
+        it->second.acknowledged_offset_bytes = it->second.total_produced_bytes;
+    } else {
+        it->second.acknowledged_offset_bytes = cumulative_ack_offset;
+    }
     return true;
 }
 
@@ -122,10 +140,11 @@ bool session_manager::acknowledge_stream_drain(const stream_identity& id, std::s
     if (it == active_streams_.end()) {
         return false;
     }
-    if (bytes_drained >= it->second.unacked_buffered_bytes) {
-        it->second.unacked_buffered_bytes = 0;
+    std::uint64_t target = it->second.acknowledged_offset_bytes + bytes_drained;
+    if (target > it->second.total_produced_bytes) {
+        it->second.acknowledged_offset_bytes = it->second.total_produced_bytes;
     } else {
-        it->second.unacked_buffered_bytes -= bytes_drained;
+        it->second.acknowledged_offset_bytes = target;
     }
     return true;
 }
@@ -216,10 +235,13 @@ bool session_manager::process_control(const control_envelope& ctrl, runtime_erro
             }
             if (matches) {
                 found = true;
-                if (ctrl.window_credit_bytes >= pair.second.unacked_buffered_bytes) {
-                    pair.second.unacked_buffered_bytes = 0;
-                } else {
-                    pair.second.unacked_buffered_bytes -= ctrl.window_credit_bytes;
+                // Replay-safe monotonic credit advancement:
+                if (ctrl.ack_offset_bytes > pair.second.acknowledged_offset_bytes) {
+                    if (ctrl.ack_offset_bytes <= pair.second.total_produced_bytes) {
+                        pair.second.acknowledged_offset_bytes = ctrl.ack_offset_bytes;
+                    } else {
+                        pair.second.acknowledged_offset_bytes = pair.second.total_produced_bytes;
+                    }
                 }
             }
         }
@@ -288,7 +310,7 @@ std::size_t session_manager::terminate_all_active_streams(terminal_outcome outco
     for (auto& pair : active_streams_) {
         if (pair.second.lifecycle.state != lifecycle_state::terminal) {
             pair.second.lifecycle.transition_to(lifecycle_state::terminal, outcome);
-            pair.second.unacked_buffered_bytes = 0;
+            pair.second.acknowledged_offset_bytes = pair.second.total_produced_bytes;
             terminated++;
         }
     }

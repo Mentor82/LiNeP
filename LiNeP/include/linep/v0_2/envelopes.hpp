@@ -109,7 +109,7 @@ struct control_envelope {
     stream_identity stream;
     runtime_control_type control_type{runtime_control_type::cancel};
     std::string reason;
-    std::uint32_t window_credit_bytes{0};
+    std::uint64_t ack_offset_bytes{0}; // Cumulative consumed/drained byte offset (monotonic & idempotent)
 
     bool is_valid() const noexcept {
         return stream.is_valid() &&

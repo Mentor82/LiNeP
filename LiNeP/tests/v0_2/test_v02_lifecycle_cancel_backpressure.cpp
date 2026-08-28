@@ -370,6 +370,7 @@ void test_real_transport_backpressure_slow_consumer() {
         // Client receives chunks and sends protocol WINDOW_UPDATE control envelopes back over TCP
         std::vector<std::uint8_t> raw_buf;
         int chunks_received = 0;
+        std::uint64_t client_consumed_bytes = 0;
         bool completed = false;
 
         while (!completed) {
@@ -379,8 +380,13 @@ void test_real_transport_backpressure_slow_consumer() {
 
             if (evt.event_type == runtime_event_type::content_delta) {
                 chunks_received++;
-                // Send protocol WINDOW_UPDATE grant over TCP socket to replenish server window!
-                control_envelope win_ctrl{id_fast, runtime_control_type::window_update, "Ack chunk", 100};
+                client_consumed_bytes += evt.payload.size();
+                // Send cumulative monotonic ack_offset over TCP socket to replenish server window!
+                control_envelope win_ctrl{id_fast, runtime_control_type::window_update, "Ack offset", client_consumed_bytes};
+                LINEP_TEST_CHECK(client_conn->send_control(win_ctrl));
+
+                // Test Idempotence / Replay Safety: Send duplicate ACK offset!
+                // A duplicate ACK must be a safe no-op on the server without double-draining.
                 LINEP_TEST_CHECK(client_conn->send_control(win_ctrl));
             } else if (evt.event_type == runtime_event_type::completed) {
                 completed = true;
@@ -399,7 +405,8 @@ void test_real_transport_backpressure_slow_consumer() {
         active_stream_state fast_st{};
         LINEP_TEST_CHECK(srv_session.get_stream_state(id_fast, fast_st));
         LINEP_TEST_CHECK(fast_st.total_produced_bytes == 2000);
-        LINEP_TEST_CHECK(fast_st.unacked_buffered_bytes == 0); // Window fully drained in real-time
+        LINEP_TEST_CHECK(fast_st.acknowledged_offset_bytes == 2000);
+        LINEP_TEST_CHECK(fast_st.unacked_buffered_bytes() == 0); // Window fully drained in real-time
     }
 
     // --- Scenario B: Real TCP Slow / Stalled Consumer on Socket (Backpressure Overload Protection) ---
@@ -447,7 +454,7 @@ void test_real_transport_backpressure_slow_consumer() {
         active_stream_state slow_st{};
         LINEP_TEST_CHECK(srv_session.get_stream_state(id_slow, slow_st));
         LINEP_TEST_CHECK(slow_st.lifecycle.outcome == terminal_outcome::failed);
-        LINEP_TEST_CHECK(slow_st.unacked_buffered_bytes == 0); // Freed capacity
+        LINEP_TEST_CHECK(slow_st.unacked_buffered_bytes() == 0); // Freed capacity
 
         client_conn->close();
         srv_conn->close();
@@ -548,9 +555,10 @@ void test_tcp_multi_stream_backpressure_isolation() {
 
     // Client receives interleaved events from shared TCP socket:
     // - For Stream A: never sends WINDOW_UPDATE (stalls).
-    // - For Stream B: continuously sends WINDOW_UPDATE credits over TCP!
+    // - For Stream B: continuously sends cumulative WINDOW_UPDATE ack_offset over TCP!
     bool a_failed = false, b_completed = false;
     int b_chunks = 0;
+    std::uint64_t b_consumed_bytes = 0;
 
     while (!a_failed || !b_completed) {
         LINEP_TEST_CHECK(client_conn->receive_envelope_raw(raw_buf));
@@ -566,8 +574,9 @@ void test_tcp_multi_stream_backpressure_isolation() {
         } else if (evt.stream == id_b) {
             if (evt.event_type == runtime_event_type::content_delta) {
                 b_chunks++;
-                // Replenish Stream B window over the shared TCP trunk!
-                control_envelope win_b{id_b, runtime_control_type::window_update, "Ack B", static_cast<std::uint32_t>(evt.payload.size())};
+                b_consumed_bytes += evt.payload.size();
+                // Replenish Stream B window via cumulative monotonic ack_offset over shared TCP trunk!
+                control_envelope win_b{id_b, runtime_control_type::window_update, "Ack B", b_consumed_bytes};
                 LINEP_TEST_CHECK(client_conn->send_control(win_b));
             } else if (evt.is_terminal()) {
                 LINEP_TEST_CHECK(evt.outcome == terminal_outcome::completed);
@@ -597,6 +606,59 @@ void test_tcp_multi_stream_backpressure_isolation() {
     std::cout << "  -> Multi-Stream Backpressure Isolation PASSED (Stream B unaffected by Stream A backpressure)" << std::endl;
 }
 
+void test_fair_transport_send_scheduler() {
+    std::cout << "[Test 6] Fair Round-Robin Transport Send Scheduler & Head-of-Line Blocking Protection..." << std::endl;
+    // Capacity of 3 envelopes per stream in local send queue
+    stream_send_scheduler sched(3);
+
+    stream_identity id_a{601, 6001, 0};
+    stream_identity id_b{602, 6002, 0};
+
+    event_envelope a1{id_a, 1, runtime_event_type::content_delta, "A1"};
+    event_envelope a2{id_a, 2, runtime_event_type::content_delta, "A2"};
+    event_envelope a3{id_a, 3, runtime_event_type::content_delta, "A3"};
+    event_envelope a4{id_a, 4, runtime_event_type::content_delta, "A4"};
+
+    // 1. Enqueue Stream A: 1, 2, 3 succeed; 4 fails because max_queued_per_stream is 3
+    LINEP_TEST_CHECK(sched.enqueue_event(a1));
+    LINEP_TEST_CHECK(sched.enqueue_event(a2));
+    LINEP_TEST_CHECK(sched.enqueue_event(a3));
+    LINEP_TEST_CHECK(!sched.enqueue_event(a4)); // Per-stream send queue backpressure!
+    LINEP_TEST_CHECK(sched.get_stream_queued_count(id_a) == 3);
+
+    // 2. Stream B queue is empty -> Stream A fullness must NOT block Stream B!
+    event_envelope b1{id_b, 1, runtime_event_type::content_delta, "B1"};
+    event_envelope b2{id_b, 2, runtime_event_type::content_delta, "B2"};
+    event_envelope b3{id_b, 3, runtime_event_type::content_delta, "B3"};
+    LINEP_TEST_CHECK(sched.enqueue_event(b1));
+    LINEP_TEST_CHECK(sched.enqueue_event(b2));
+    LINEP_TEST_CHECK(sched.enqueue_event(b3));
+    LINEP_TEST_CHECK(sched.get_stream_queued_count(id_b) == 3);
+    LINEP_TEST_CHECK(sched.get_total_queued_count() == 6);
+
+    // 3. Pull in Round-Robin order: A1 -> B1 -> A2 -> B2 -> A3 -> B3
+    std::vector<std::string> pulled_tags;
+    stream_identity pulled_id{};
+    std::vector<std::uint8_t> frame;
+
+    while (sched.pull_next_scheduled(pulled_id, frame)) {
+        event_envelope dec{};
+        LINEP_TEST_CHECK(decode_event(frame.data(), frame.size(), dec));
+        pulled_tags.push_back(dec.payload);
+    }
+
+    LINEP_TEST_CHECK(pulled_tags.size() == 6);
+    LINEP_TEST_CHECK(pulled_tags[0] == "A1");
+    LINEP_TEST_CHECK(pulled_tags[1] == "B1");
+    LINEP_TEST_CHECK(pulled_tags[2] == "A2");
+    LINEP_TEST_CHECK(pulled_tags[3] == "B2");
+    LINEP_TEST_CHECK(pulled_tags[4] == "A3");
+    LINEP_TEST_CHECK(pulled_tags[5] == "B3");
+    LINEP_TEST_CHECK(sched.get_total_queued_count() == 0);
+
+    std::cout << "  -> Fair Round-Robin Transport Scheduler PASSED (Zero Head-of-Line Blocking)" << std::endl;
+}
+
 int main() {
     std::cout << "=== LiNeP V0.2 Lifecycle, Cancel & Transport Backpressure Test Suite ===" << std::endl;
     test_tcp_end_to_end_socket_cancellation();
@@ -604,6 +666,7 @@ int main() {
     test_atomic_cancel_vs_completion_race();
     test_real_transport_backpressure_slow_consumer();
     test_tcp_multi_stream_backpressure_isolation();
-    std::cout << "ALL 5 V0.2 PHASE C LIFECYCLE & BACKPRESSURE TESTS PASSED 100%!" << std::endl;
+    test_fair_transport_send_scheduler();
+    std::cout << "ALL 6 V0.2 PHASE C LIFECYCLE & BACKPRESSURE TESTS PASSED 100%!" << std::endl;
     return 0;
 }

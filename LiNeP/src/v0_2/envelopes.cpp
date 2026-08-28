@@ -368,7 +368,7 @@ bool encode_control(const control_envelope& ctrl, std::vector<std::uint8_t>& out
     std::vector<std::uint8_t> payload_buf;
     write_u8(payload_buf, static_cast<std::uint8_t>(ctrl.control_type));
     write_string_u16(payload_buf, ctrl.reason);
-    write_u32(payload_buf, ctrl.window_credit_bytes);
+    write_u64(payload_buf, ctrl.ack_offset_bytes);
 
     wire_envelope_header hdr{};
     hdr.magic = LINEP_V02_MAGIC;
@@ -415,7 +415,7 @@ bool decode_control(const std::uint8_t* data, std::size_t size, control_envelope
     if (!r.read_u8(ctrl_type)) return false;
     out_ctrl.control_type = static_cast<runtime_control_type>(ctrl_type);
     if (!r.read_string_u16(out_ctrl.reason)) return false;
-    if (!r.read_u32(out_ctrl.window_credit_bytes)) return false;
+    if (!r.read_u64(out_ctrl.ack_offset_bytes)) return false;
 
     if (r.remaining() != 0) {
         return false; // Strict canonical framing: reject trailing garbage

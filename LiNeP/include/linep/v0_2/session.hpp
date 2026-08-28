@@ -39,8 +39,15 @@ struct active_stream_state {
     std::string model_id;
     lifecycle_status lifecycle{};
     event_seq_t last_event_seq{0};
-    std::size_t unacked_buffered_bytes{0}; // Current in-flight unacknowledged buffer
-    std::uint64_t total_produced_bytes{0}; // Cumulative produced bytes
+    std::uint64_t total_produced_bytes{0};      // Cumulative produced bytes
+    std::uint64_t acknowledged_offset_bytes{0}; // Cumulative confirmed consumed/drained bytes (monotonic)
+
+    std::size_t unacked_buffered_bytes() const noexcept {
+        if (total_produced_bytes <= acknowledged_offset_bytes) {
+            return 0;
+        }
+        return static_cast<std::size_t>(total_produced_bytes - acknowledged_offset_bytes);
+    }
 };
 
 class session_manager {
@@ -58,7 +65,10 @@ public:
     // Dispatch an incoming event to an existing active stream
     bool dispatch_event(const event_envelope& evt, runtime_error& out_err);
 
-    // Acknowledge drain/consumption of buffered stream bytes (frees in-flight capacity)
+    // Idempotent / replay-safe cumulative acknowledgment of consumed stream bytes
+    bool acknowledge_stream_offset(const stream_identity& id, std::uint64_t cumulative_ack_offset);
+
+    // Delta-based drain acknowledgment (convenience wrapper updating cumulative offset)
     bool acknowledge_stream_drain(const stream_identity& id, std::size_t bytes_drained);
 
     // Target cancellation by execution identity (cancel_requested -> non-terminal)

@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "linep/v0_2/runtime_types.hpp"
@@ -41,6 +43,8 @@ public:
     void close() noexcept;
 
 private:
+    friend class stream_send_scheduler;
+
     bool send_bytes_locked(const std::uint8_t* data, std::size_t len);
     bool recv_all_bytes(std::uint8_t* buf, std::size_t len);
 
@@ -70,6 +74,40 @@ public:
 private:
     std::uintptr_t listen_sock_{~static_cast<std::uintptr_t>(0u)};
     std::uint16_t port_{0};
+};
+
+// ── stream_send_scheduler ───────────────────────────────────────────────────
+// Fair Round-Robin Trunk Send Multiplexer with Per-Stream Bounded Queues
+class stream_send_scheduler {
+public:
+    explicit stream_send_scheduler(std::size_t max_queued_per_stream = 16)
+        : max_queued_per_stream_(max_queued_per_stream) {}
+
+    // Enqueue envelopes with per-stream queue bounds. Returns false if stream's queue is full.
+    bool enqueue_event(const event_envelope& evt);
+    bool enqueue_request(const request_envelope& req);
+    bool enqueue_control(const control_envelope& ctrl);
+
+    // Pull next envelope in fair round-robin order across active stream queues
+    bool pull_next_scheduled(stream_identity& out_stream, std::vector<std::uint8_t>& out_frame);
+
+    // Flush and transmit all queued frames over the given connection in fair round-robin order
+    std::size_t flush_scheduled(envelope_connection& conn);
+
+    // Drop/clear queues for a specific stream (e.g. upon terminal state or cancel)
+    void drop_stream(const stream_identity& stream);
+
+    std::size_t get_stream_queued_count(const stream_identity& stream) const;
+    std::size_t get_total_queued_count() const;
+
+private:
+    bool enqueue_raw(const stream_identity& stream, std::vector<std::uint8_t> frame);
+
+    std::size_t max_queued_per_stream_{16};
+    mutable std::mutex mutex_;
+    std::vector<stream_identity> active_order_;
+    std::unordered_map<stream_identity, std::deque<std::vector<std::uint8_t>>, stream_identity_hash> stream_queues_;
+    std::size_t rr_cursor_{0};
 };
 
 } // namespace linep::v0_2
