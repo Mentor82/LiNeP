@@ -2,20 +2,77 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "linep/v0_2/runtime_types.hpp"
+#include "linep/v0_2/envelopes.hpp"
+#include "linep/v0_2/lifecycle.hpp"
 
 namespace linep::v0_2 {
 
+struct stream_identity_hash {
+    std::size_t operator()(const stream_identity& id) const noexcept {
+        std::size_t h1 = std::hash<std::uint64_t>{}(id.request_id);
+        std::size_t h2 = std::hash<std::uint64_t>{}(id.execution_id);
+        std::size_t h3 = std::hash<std::uint32_t>{}(id.output_id);
+        return h1 ^ (h2 << 1) ^ (h3 << 2);
+    }
+};
+
 struct session_limits {
     std::size_t max_inflight_streams{64};
-    std::size_t max_buffered_bytes_per_stream{1U << 20};
+    std::size_t max_buffered_bytes_per_stream{1U << 20}; // 1 MB
 };
 
 struct session_descriptor {
-    std::uint64_t session_id{};
+    std::uint64_t session_id{0};
     session_limits limits{};
 };
 
-// The first implementation should provide a persistent connection/session that can
-// carry multiple independent logical executions without cross-talk.
+struct active_stream_state {
+    stream_identity stream{};
+    runtime_profile profile{runtime_profile::unspecified};
+    std::string model_id;
+    lifecycle_status lifecycle{};
+    event_seq_t last_event_seq{0};
+    std::size_t buffered_bytes{0};
+    std::vector<event_envelope> emitted_events{};
+};
+
+class session_manager {
+public:
+    explicit session_manager(session_descriptor descriptor = {})
+        : descriptor_(descriptor) {}
+
+    const session_descriptor& descriptor() const noexcept {
+        return descriptor_;
+    }
+
+    // Submit a new request to start an active stream
+    bool submit_request(const request_envelope& req, runtime_error& out_err);
+
+    // Dispatch an incoming event to an existing active stream
+    bool dispatch_event(const event_envelope& evt, runtime_error& out_err);
+
+    // Target cancellation by execution identity (cancel_requested -> non-terminal)
+    bool cancel_execution(execution_id_t execution_id, const std::string& reason, std::size_t& out_cancelled_count);
+
+    // Query active streams
+    std::size_t get_active_stream_count() const;
+    bool has_stream(const stream_identity& id) const;
+    bool get_stream_state(const stream_identity& id, active_stream_state& out_state) const;
+
+    // Check if stream is in terminal state
+    bool is_stream_terminal(const stream_identity& id) const;
+
+private:
+    session_descriptor descriptor_;
+    mutable std::mutex mutex_;
+    std::unordered_map<stream_identity, active_stream_state, stream_identity_hash> active_streams_;
+};
 
 } // namespace linep::v0_2
