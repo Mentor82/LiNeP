@@ -101,6 +101,7 @@ All V0.2 communication frames share a canonical 32-byte length-prefixed header:
 | **Test 2: Selective Stream Cancel** | Multi-stream selective cancellation over shared TCP socket. | Stream A is cancelled while Stream B continues to `completed` over the same socket. | 🟢 **PASSED** |
 | **Test 3: Atomic Race Resolution** | Concurrent `completed` vs `cancel` race across 100 iterations. | Exactly ONE authoritative terminal outcome prevails in 100/100 runs; loser rejected with 410. | 🟢 **PASSED** |
 | **Test 4: Real Transport Backpressure** | Protocol `WINDOW_UPDATE` credit grant & slow consumer overload. | Verified real TCP flow control with `control_envelope(window_update)` & fail-closed 507 on stalled socket. | 🟢 **PASSED** |
+| **Test 5: Multi-Stream BP Isolation** | Slow Stream A credit stall does NOT block Fast Stream B on shared TCP trunk. | Stream A fails closed (507); Stream B completes 100% (1,500 B delivered) over the same socket. | 🟢 **PASSED** |
 
 ---
 
@@ -163,15 +164,17 @@ ALL V0.2 PHASE B SESSION MULTIPLEXING TESTS PASSED 100%!
 ALL 8 V0.2 TCP SOCKET MULTIPLEXING & FAIL-CLOSED TESTS PASSED 100%!
 
 === LiNeP V0.2 Lifecycle, Cancel & Transport Backpressure Test Suite ===
-[Test 1] Real TCP Socket: End-to-End Stream Cancellation (CONTROL -> cancel_requested -> CANCELLED)...
+[Test 1] Real TCP Socket: End-to-End Stream Cancellation (Exact output_id=0 Scope)...
   -> Real TCP End-to-End Stream Cancellation PASSED
 [Test 2] Real TCP Socket: Multi-Stream Selective Cancellation (Stream A cancelled, Stream B completes)...
   -> Multi-Stream Selective Cancellation PASSED
-[Test 3] Atomic Cancel vs. Completion Race (100 concurrent iterations)...
+[Test 3] Atomic Cancel vs. Completion Race & Strict Mutual Exclusion (100 parallel iterations)...
   -> Atomic Cancel vs. Completion Race Resolution PASSED (100/100)
-[Test 4] Real Transport Backpressure & Slow Consumer Overload Protection...
-  -> Real Transport Backpressure & Slow Consumer Protection PASSED
-ALL V0.2 PHASE C LIFECYCLE & BACKPRESSURE TESTS PASSED 100%!
+[Test 4] Real TCP Transport: Protocol WINDOW_UPDATE Flow Control & Slow Consumer Overload...
+  -> Real TCP Transport: Protocol WINDOW_UPDATE Flow Control PASSED
+[Test 5] Real TCP Transport: Multi-Stream Backpressure Isolation (Slow Stream A does NOT block Stream B)...
+  -> Multi-Stream Backpressure Isolation PASSED (Stream B unaffected by Stream A backpressure)
+ALL 5 V0.2 PHASE C LIFECYCLE & BACKPRESSURE TESTS PASSED 100%!
 ```
 
 

@@ -457,12 +457,153 @@ void test_real_transport_backpressure_slow_consumer() {
     std::cout << "  -> Real TCP Transport: Protocol WINDOW_UPDATE Flow Control PASSED" << std::endl;
 }
 
+void test_tcp_multi_stream_backpressure_isolation() {
+    std::cout << "[Test 5] Real TCP Transport: Multi-Stream Backpressure Isolation (Slow Stream A does NOT block Stream B)..." << std::endl;
+    constexpr std::uint16_t port = 19996;
+
+    envelope_server server;
+    LINEP_TEST_CHECK(server.listen(port));
+
+    std::unique_ptr<envelope_connection> srv_conn;
+    std::thread accept_th([&]() {
+        srv_conn = server.accept_connection();
+    });
+
+    auto client_conn = envelope_connection::connect("127.0.0.1", port);
+    LINEP_TEST_CHECK(client_conn != nullptr);
+    accept_th.join();
+
+    session_descriptor desc{};
+    desc.limits.max_buffered_bytes_per_stream = 500; // 500-byte window limit per stream
+    session_manager srv_session(desc);
+    runtime_error err{};
+
+    stream_identity id_a{501, 5001, 0}; // Slow Stream A
+    stream_identity id_b{502, 5002, 0}; // Fast Stream B
+
+    request_envelope req_a{id_a, runtime_profile::chat, "llama-3.1-8b", "Slow Stream A Prompt"};
+    request_envelope req_b{id_b, runtime_profile::chat, "llama-3.1-8b", "Fast Stream B Prompt"};
+
+    LINEP_TEST_CHECK(client_conn->send_request(req_a));
+    LINEP_TEST_CHECK(client_conn->send_request(req_b));
+
+    std::vector<std::uint8_t> raw_buf;
+    request_envelope srv_a{}, srv_b{};
+    LINEP_TEST_CHECK(srv_conn->receive_envelope_raw(raw_buf));
+    LINEP_TEST_CHECK(decode_request(raw_buf.data(), raw_buf.size(), srv_a));
+    LINEP_TEST_CHECK(srv_conn->receive_envelope_raw(raw_buf));
+    LINEP_TEST_CHECK(decode_request(raw_buf.data(), raw_buf.size(), srv_b));
+
+    LINEP_TEST_CHECK(srv_session.submit_request(srv_a, err));
+    LINEP_TEST_CHECK(srv_session.submit_request(srv_b, err));
+
+    std::atomic<bool> server_running{true};
+    std::thread srv_control_reader([&]() {
+        std::vector<std::uint8_t> ctrl_buf;
+        while (server_running) {
+            if (srv_conn->receive_envelope_raw(ctrl_buf)) {
+                control_envelope ctrl{};
+                if (decode_control(ctrl_buf.data(), ctrl_buf.size(), ctrl)) {
+                    srv_session.process_control(ctrl, err);
+                }
+            } else {
+                break;
+            }
+        }
+    });
+
+    // Worker A: tries to push 2x 300-byte chunks without receiving WINDOW_UPDATE -> hits 507
+    std::thread worker_a([&]() {
+        event_envelope a1{id_a, 1, runtime_event_type::content_delta, std::string(300, 'A')};
+        srv_session.dispatch_event(a1, err);
+        srv_conn->send_event(a1);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+        event_envelope a2{id_a, 2, runtime_event_type::content_delta, std::string(300, 'A')};
+        if (!srv_session.dispatch_event(a2, err)) {
+            // Overload backpressure triggered on Stream A!
+            event_envelope term_a{id_a, 3, runtime_event_type::failed, "", terminal_outcome::failed};
+            term_a.error = err;
+            srv_session.dispatch_event(term_a, err);
+            srv_conn->send_event(term_a);
+        }
+    });
+
+    // Worker B: streams 15 chunks of 100 bytes (1,500 bytes) with active client WINDOW_UPDATE
+    std::thread worker_b([&]() {
+        event_seq_t seq = 1;
+        for (int i = 0; i < 15; ++i) {
+            event_envelope chunk_b{id_b, seq++, runtime_event_type::content_delta, "B-data-chunk-"};
+            while (!srv_session.dispatch_event(chunk_b, err)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            srv_conn->send_event(chunk_b);
+            std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        }
+        event_envelope term_b{id_b, seq++, runtime_event_type::completed, "", terminal_outcome::completed};
+        srv_session.dispatch_event(term_b, err);
+        srv_conn->send_event(term_b);
+    });
+
+    // Client receives interleaved events from shared TCP socket:
+    // - For Stream A: never sends WINDOW_UPDATE (stalls).
+    // - For Stream B: continuously sends WINDOW_UPDATE credits over TCP!
+    bool a_failed = false, b_completed = false;
+    int b_chunks = 0;
+
+    while (!a_failed || !b_completed) {
+        LINEP_TEST_CHECK(client_conn->receive_envelope_raw(raw_buf));
+        event_envelope evt{};
+        LINEP_TEST_CHECK(decode_event(raw_buf.data(), raw_buf.size(), evt));
+
+        if (evt.stream == id_a) {
+            if (evt.is_terminal()) {
+                LINEP_TEST_CHECK(evt.outcome == terminal_outcome::failed);
+                LINEP_TEST_CHECK(evt.error.code == 507);
+                a_failed = true;
+            }
+        } else if (evt.stream == id_b) {
+            if (evt.event_type == runtime_event_type::content_delta) {
+                b_chunks++;
+                // Replenish Stream B window over the shared TCP trunk!
+                control_envelope win_b{id_b, runtime_control_type::window_update, "Ack B", static_cast<std::uint32_t>(evt.payload.size())};
+                LINEP_TEST_CHECK(client_conn->send_control(win_b));
+            } else if (evt.is_terminal()) {
+                LINEP_TEST_CHECK(evt.outcome == terminal_outcome::completed);
+                b_completed = true;
+            }
+        }
+    }
+
+    worker_a.join();
+    worker_b.join();
+    server_running = false;
+    client_conn->close();
+    srv_conn->close();
+    srv_control_reader.join();
+    server.close();
+
+    LINEP_TEST_CHECK(a_failed);
+    LINEP_TEST_CHECK(b_completed);
+    LINEP_TEST_CHECK(b_chunks == 15);
+
+    active_stream_state st_a{}, st_b{};
+    LINEP_TEST_CHECK(srv_session.get_stream_state(id_a, st_a));
+    LINEP_TEST_CHECK(srv_session.get_stream_state(id_b, st_b));
+    LINEP_TEST_CHECK(st_a.lifecycle.outcome == terminal_outcome::failed);
+    LINEP_TEST_CHECK(st_b.lifecycle.outcome == terminal_outcome::completed);
+
+    std::cout << "  -> Multi-Stream Backpressure Isolation PASSED (Stream B unaffected by Stream A backpressure)" << std::endl;
+}
+
 int main() {
     std::cout << "=== LiNeP V0.2 Lifecycle, Cancel & Transport Backpressure Test Suite ===" << std::endl;
     test_tcp_end_to_end_socket_cancellation();
     test_tcp_multi_stream_selective_cancellation();
     test_atomic_cancel_vs_completion_race();
     test_real_transport_backpressure_slow_consumer();
-    std::cout << "ALL V0.2 PHASE C LIFECYCLE & BACKPRESSURE TESTS PASSED 100%!" << std::endl;
+    test_tcp_multi_stream_backpressure_isolation();
+    std::cout << "ALL 5 V0.2 PHASE C LIFECYCLE & BACKPRESSURE TESTS PASSED 100%!" << std::endl;
     return 0;
 }
