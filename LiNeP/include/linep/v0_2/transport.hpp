@@ -127,6 +127,7 @@ private:
 
     stream_queue_limits limits_;
     mutable std::mutex mutex_;
+    mutable std::mutex flush_mutex_; // Guarantees single-writer execution for flush_scheduled
     std::vector<stream_identity> active_order_;
     std::unordered_map<stream_identity, per_stream_queue, stream_identity_hash> stream_queues_;
     std::size_t total_connection_bytes_{0};

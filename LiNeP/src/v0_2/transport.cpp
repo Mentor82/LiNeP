@@ -60,7 +60,13 @@ bool envelope_connection::send_bytes_locked(const std::uint8_t* data, std::size_
     }
     pal::Socket s{static_cast<pal::RawSocket>(sock_)};
     int sent = pal::tcp_send_all(s, data, static_cast<int>(len));
-    return sent == static_cast<int>(len);
+    if (sent != static_cast<int>(len)) {
+        // Partial send or socket error corrupts the TCP framing!
+        // Fail closed immediately to prevent writing corrupted bytes on this stream.
+        close();
+        return false;
+    }
+    return true;
 }
 
 bool envelope_connection::recv_all_bytes(std::uint8_t* buf, std::size_t len) {
@@ -310,6 +316,9 @@ bool stream_send_scheduler::pull_next_scheduled(stream_identity& out_stream, std
 }
 
 std::size_t stream_send_scheduler::flush_scheduled(envelope_connection& conn) {
+    // Guarantees single-writer execution across concurrent flush callers
+    std::lock_guard<std::mutex> flush_lock(flush_mutex_);
+
     std::size_t flushed = 0;
     stream_identity stream{};
     std::vector<std::uint8_t> frame;
