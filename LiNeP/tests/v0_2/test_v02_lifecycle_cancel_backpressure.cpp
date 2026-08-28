@@ -22,7 +22,7 @@
 using namespace linep::v0_2;
 
 void test_tcp_end_to_end_socket_cancellation() {
-    std::cout << "[Test 1] Real TCP Socket: End-to-End Stream Cancellation (CONTROL -> cancel_requested -> CANCELLED)..." << std::endl;
+    std::cout << "[Test 1] Real TCP Socket: End-to-End Stream Cancellation (Exact output_id=0 Scope)..." << std::endl;
     constexpr std::uint16_t port = 19991;
 
     envelope_server server;
@@ -38,6 +38,7 @@ void test_tcp_end_to_end_socket_cancellation() {
     accept_th.join();
     LINEP_TEST_CHECK(srv_conn != nullptr);
 
+    // Stream with output_id = 0 (primary output)
     stream_identity id{101, 1001, 0};
     request_envelope req{id, runtime_profile::chat, "llama-3.1-8b", "Cancel Me Prompt"};
     LINEP_TEST_CHECK(client_conn->send_request(req));
@@ -80,7 +81,7 @@ void test_tcp_end_to_end_socket_cancellation() {
         }
     });
 
-    // Client receives a couple tokens, then sends cancel control frame
+    // Client receives a couple tokens, then sends exact cancel control frame (output_id=0)
     int tokens_received = 0;
     bool received_cancelled = false;
 
@@ -92,7 +93,7 @@ void test_tcp_end_to_end_socket_cancellation() {
         if (evt.event_type == runtime_event_type::content_delta) {
             tokens_received++;
             if (tokens_received == 2) {
-                // Send CANCEL control targeting execution_id 1001 over TCP
+                // Send exact stream scope CANCEL targeting request_id 101, execution_id 1001, output_id 0
                 control_envelope cancel_ctrl{id, runtime_control_type::cancel, "Client abort"};
                 LINEP_TEST_CHECK(client_conn->send_control(cancel_ctrl));
             }
@@ -242,7 +243,7 @@ void test_tcp_multi_stream_selective_cancellation() {
 }
 
 void test_atomic_cancel_vs_completion_race() {
-    std::cout << "[Test 3] Atomic Cancel vs. Completion Race (100 concurrent iterations)..." << std::endl;
+    std::cout << "[Test 3] Atomic Cancel vs. Completion Race & Strict Mutual Exclusion (100 parallel iterations)..." << std::endl;
 
     for (int iter = 0; iter < 100; ++iter) {
         session_manager mgr;
@@ -254,74 +255,137 @@ void test_atomic_cancel_vs_completion_race() {
 
         std::atomic<bool> complete_won{false};
         std::atomic<bool> cancel_won{false};
+        std::atomic<int> complete_err_code{0};
+        std::atomic<int> cancel_err_code{0};
 
-        // Thread 1: emits terminal COMPLETED event
+        // Thread 1: attempts to dispatch terminal COMPLETED event
         std::thread th_complete([&]() {
             runtime_error local_err{};
             event_envelope term{id, 1, runtime_event_type::completed, "Finished", terminal_outcome::completed};
             if (mgr.dispatch_event(term, local_err)) {
                 complete_won = true;
+            } else {
+                complete_err_code = local_err.code;
             }
         });
 
-        // Thread 2: attempts to process CANCEL control
+        // Thread 2: attempts to dispatch terminal CANCELLED event
         std::thread th_cancel([&]() {
             runtime_error local_err{};
-            control_envelope ctrl{id, runtime_control_type::cancel, "Race Cancel"};
-            if (mgr.process_control(ctrl, local_err)) {
+            event_envelope cancel_term{id, 1, runtime_event_type::cancelled, "", terminal_outcome::cancelled};
+            if (mgr.dispatch_event(cancel_term, local_err)) {
                 cancel_won = true;
-                // If cancel won, emit terminal cancelled event
-                event_envelope cancel_term{id, 1, runtime_event_type::cancelled, "", terminal_outcome::cancelled};
-                mgr.dispatch_event(cancel_term, local_err);
+            } else {
+                cancel_err_code = local_err.code;
             }
         });
 
         th_complete.join();
         th_cancel.join();
 
-        // Invariant: Exactly one authoritative outcome must prevail!
+        // 1. Strict Mutual Exclusion: Exactly ONE operation MUST win!
+        bool exactly_one_won = (complete_won && !cancel_won) || (!complete_won && cancel_won);
+        LINEP_TEST_CHECK(exactly_one_won);
+
+        // 2. Strict Loser Rejection: The losing thread MUST receive error code 410 (stream already terminal)!
+        if (complete_won) {
+            LINEP_TEST_CHECK(cancel_err_code == 410);
+        } else {
+            LINEP_TEST_CHECK(complete_err_code == 410);
+        }
+
+        // 3. State Invariant: Stream is in immutable terminal state matching the winner
         LINEP_TEST_CHECK(mgr.is_stream_terminal(id));
         active_stream_state st{};
         LINEP_TEST_CHECK(mgr.get_stream_state(id, st));
         LINEP_TEST_CHECK(st.lifecycle.has_terminal_outcome);
-        LINEP_TEST_CHECK(st.lifecycle.outcome == terminal_outcome::completed ||
-                         st.lifecycle.outcome == terminal_outcome::cancelled);
+        terminal_outcome expected_outcome = complete_won ? terminal_outcome::completed : terminal_outcome::cancelled;
+        LINEP_TEST_CHECK(st.lifecycle.outcome == expected_outcome);
     }
 
     std::cout << "  -> Atomic Cancel vs. Completion Race Resolution PASSED (100/100)" << std::endl;
 }
 
 void test_real_transport_backpressure_slow_consumer() {
-    std::cout << "[Test 4] Real Transport Backpressure & Slow Consumer Overload Protection..." << std::endl;
-    session_descriptor desc{};
-    desc.limits.max_buffered_bytes_per_stream = 500; // 500 bytes buffer ceiling
-    session_manager mgr(desc);
-    runtime_error err{};
+    std::cout << "[Test 4] Real TCP Transport: Bounded In-Flight Queue & Slow Consumer Overload Protection..." << std::endl;
+    constexpr std::uint16_t port = 19994;
 
-    stream_identity id{401, 4001, 0};
-    request_envelope req{id, runtime_profile::chat, "llama-3.1-8b", "Backpressure Prompt"};
-    LINEP_TEST_CHECK(mgr.submit_request(req, err));
+    // --- Scenario A: Fast Consumer with Drain Acknowledgment (Can stream unbounded data with bounded memory) ---
+    {
+        session_descriptor desc{};
+        desc.limits.max_buffered_bytes_per_stream = 500; // Small 500-byte in-flight buffer ceiling
+        session_manager mgr(desc);
+        runtime_error err{};
 
-    // Send delta 1 (300 bytes) -> OK
-    event_envelope d1{id, 1, runtime_event_type::content_delta, std::string(300, 'X')};
-    LINEP_TEST_CHECK(mgr.dispatch_event(d1, err));
+        stream_identity id{401, 4001, 0};
+        request_envelope req{id, runtime_profile::chat, "llama-3.1-8b", "Prompt"};
+        LINEP_TEST_CHECK(mgr.submit_request(req, err));
 
-    // Send delta 2 (300 bytes) -> Exceeds 500 bytes ceiling (300+300 = 600 > 500)
-    event_envelope d2{id, 2, runtime_event_type::content_delta, std::string(300, 'Y')};
-    bool d2_ok = mgr.dispatch_event(d2, err);
-    LINEP_TEST_CHECK(!d2_ok);
-    LINEP_TEST_CHECK(err.category == error_category::resource_exhausted);
-    LINEP_TEST_CHECK(err.code == 507);
+        // Fast consumer receives chunks and acknowledges drain -> streams 50 chunks of 100 bytes (5000 bytes total!)
+        for (event_seq_t seq = 1; seq <= 50; ++seq) {
+            event_envelope chunk{id, seq, runtime_event_type::content_delta, std::string(100, 'X')};
+            LINEP_TEST_CHECK(mgr.dispatch_event(chunk, err));
+            // Consumer consumes and drains buffer:
+            LINEP_TEST_CHECK(mgr.acknowledge_stream_drain(id, 100));
+        }
 
-    // Fail-closed termination of overloaded stream
-    event_envelope overload_term{id, 3, runtime_event_type::failed, "", terminal_outcome::failed};
-    overload_term.error = err;
-    LINEP_TEST_CHECK(mgr.dispatch_event(overload_term, err));
-    LINEP_TEST_CHECK(mgr.is_stream_terminal(id));
+        active_stream_state fast_st{};
+        LINEP_TEST_CHECK(mgr.get_stream_state(id, fast_st));
+        LINEP_TEST_CHECK(fast_st.total_produced_bytes == 5000);
+        LINEP_TEST_CHECK(fast_st.unacked_buffered_bytes == 0); // Memory is strictly bounded!
+    }
 
-    active_stream_state st{};
-    LINEP_TEST_CHECK(mgr.get_stream_state(id, st));
-    LINEP_TEST_CHECK(st.lifecycle.outcome == terminal_outcome::failed);
+    // --- Scenario B: Real TCP Slow / Stalled Consumer on Socket (Backpressure Overload Protection) ---
+    {
+        envelope_server server;
+        LINEP_TEST_CHECK(server.listen(port));
+
+        std::unique_ptr<envelope_connection> srv_conn;
+        std::thread accept_th([&]() {
+            srv_conn = server.accept_connection();
+        });
+
+        auto client_conn = envelope_connection::connect("127.0.0.1", port);
+        LINEP_TEST_CHECK(client_conn != nullptr);
+        accept_th.join();
+
+        session_descriptor desc{};
+        desc.limits.max_buffered_bytes_per_stream = 500; // 500-byte ceiling
+        session_manager srv_session(desc);
+        runtime_error err{};
+
+        stream_identity id_slow{402, 4002, 0};
+        request_envelope req_slow{id_slow, runtime_profile::chat, "llama-3.1-8b", "Slow Consumer Prompt"};
+        LINEP_TEST_CHECK(srv_session.submit_request(req_slow, err));
+
+        // Chunk 1: 300 bytes -> Accepted (300 <= 500)
+        event_envelope d1{id_slow, 1, runtime_event_type::content_delta, std::string(300, 'A')};
+        LINEP_TEST_CHECK(srv_session.dispatch_event(d1, err));
+        LINEP_TEST_CHECK(srv_conn->send_event(d1));
+
+        // Chunk 2: 300 bytes without drain from slow consumer -> (300+300 = 600 > 500) -> EXPLICIT BACKPRESSURE 507!
+        event_envelope d2{id_slow, 2, runtime_event_type::content_delta, std::string(300, 'B')};
+        bool d2_ok = srv_session.dispatch_event(d2, err);
+        LINEP_TEST_CHECK(!d2_ok);
+        LINEP_TEST_CHECK(err.category == error_category::resource_exhausted);
+        LINEP_TEST_CHECK(err.code == 507);
+
+        // Fail-closed termination of the stalled stream
+        event_envelope overload_term{id_slow, 3, runtime_event_type::failed, "", terminal_outcome::failed};
+        overload_term.error = err;
+        LINEP_TEST_CHECK(srv_session.dispatch_event(overload_term, err));
+        LINEP_TEST_CHECK(srv_conn->send_event(overload_term));
+
+        LINEP_TEST_CHECK(srv_session.is_stream_terminal(id_slow));
+        active_stream_state slow_st{};
+        LINEP_TEST_CHECK(srv_session.get_stream_state(id_slow, slow_st));
+        LINEP_TEST_CHECK(slow_st.lifecycle.outcome == terminal_outcome::failed);
+        LINEP_TEST_CHECK(slow_st.unacked_buffered_bytes == 0); // Freed capacity
+
+        client_conn->close();
+        srv_conn->close();
+        server.close();
+    }
 
     std::cout << "  -> Real Transport Backpressure & Slow Consumer Protection PASSED" << std::endl;
 }

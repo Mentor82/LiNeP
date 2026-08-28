@@ -90,17 +90,17 @@ All V0.2 communication frames share a canonical 32-byte length-prefixed header:
 | **Test 4: Truncated Payload** | Malformed / truncated payload length claimed in header. | Header claims 5000 bytes, sends 10 bytes then closes -> server fails closed immediately. | 🟢 **PASSED** |
 | **Test 5: Oversized Payload DoS** | Malicious payload length > 16 MB DoS protection. | Header claims 100 MB -> server rejects claim and drops connection. | 🟢 **PASSED** |
 | **Test 6: Corrupted Magic Header** | Corrupted magic bytes mid-stream. | Header with invalid magic -> server rejects and closes connection. | 🟢 **PASSED** |
-| **Test 7: Abrupt Disconnect Cleanup** | Connection severed while streams are active. | Client abruptly cuts connection -> server terminates all active streams cleanly as `failed`. | 🟢 **PASSED** |
+| **Test 7: Abrupt Disconnect Cleanup** | Connection severed while streams are active. | Client abruptly cuts connection -> server terminates all active streams as `unknown` (observer loss). | 🟢 **PASSED** |
 | **Test 8: Reconnect Isolation** | Reconnecting on fresh socket creates isolated session. | Dead streams do not resurrect; new session operates cleanly in complete isolation. | 🟢 **PASSED** |
 
 ### Phase C: Lifecycle, End-to-End Cancel & Transport Backpressure (`test_v02_lifecycle_cancel_backpressure`)
 
 | Invariant / Test | Description | Verification Method | Status |
 |---|---|---|---|
-| **Test 1: End-to-End Cancel** | Full TCP cancellation path (`CONTROL -> cancel_requested -> CANCELLED`). | Client sends cancel over TCP; worker halts generation and emits terminal cancelled event. | 🟢 **PASSED** |
+| **Test 1: End-to-End Cancel** | Full TCP cancellation path with exact `output_id=0` stream scope. | Client sends cancel over TCP; worker halts generation and emits terminal cancelled event. | 🟢 **PASSED** |
 | **Test 2: Selective Stream Cancel** | Multi-stream selective cancellation over shared TCP socket. | Stream A is cancelled while Stream B continues to `completed` over the same socket. | 🟢 **PASSED** |
 | **Test 3: Atomic Race Resolution** | Concurrent `completed` vs `cancel` race across 100 iterations. | Exactly ONE authoritative terminal outcome prevails in 100/100 runs; loser rejected with 410. | 🟢 **PASSED** |
-| **Test 4: Transport Backpressure** | Slow consumer / buffer ceiling overload protection. | Stream buffer exceeds ceiling -> server triggers fail-closed backpressure (`resource_exhausted`, 507). | 🟢 **PASSED** |
+| **Test 4: Real Transport Backpressure** | Bounded in-flight buffer with drain acknowledgment & slow consumer overload. | Exceeding unacked buffer triggers fail-closed `resource_exhausted` (507) on stalled socket. | 🟢 **PASSED** |
 
 ---
 

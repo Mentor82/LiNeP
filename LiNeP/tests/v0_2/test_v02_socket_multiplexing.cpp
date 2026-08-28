@@ -451,15 +451,15 @@ void test_tcp_abrupt_disconnect_and_stream_cleanup() {
     LINEP_TEST_CHECK(!srv_recv);
 
     runtime_error disc_err{error_category::transient, 10054, "Client socket abruptly disconnected", "TCP Connection Reset"};
-    std::size_t terminated = server_session.terminate_all_active_streams(terminal_outcome::failed, disc_err);
+    std::size_t terminated = server_session.terminate_all_active_streams(terminal_outcome::unknown, disc_err);
     LINEP_TEST_CHECK(terminated == 2);
     LINEP_TEST_CHECK(server_session.get_active_stream_count() == 0);
 
     active_stream_state s1{}, s2{};
     LINEP_TEST_CHECK(server_session.get_stream_state(id_1, s1));
     LINEP_TEST_CHECK(server_session.get_stream_state(id_2, s2));
-    LINEP_TEST_CHECK(s1.lifecycle.outcome == terminal_outcome::failed);
-    LINEP_TEST_CHECK(s2.lifecycle.outcome == terminal_outcome::failed);
+    LINEP_TEST_CHECK(s1.lifecycle.outcome == terminal_outcome::unknown);
+    LINEP_TEST_CHECK(s2.lifecycle.outcome == terminal_outcome::unknown);
 
     server_conn->close();
     server.close();
@@ -497,17 +497,17 @@ void test_tcp_reconnect_clean_session_isolation() {
     LINEP_TEST_CHECK(decode_request(raw_buf.data(), raw_buf.size(), srv_r_old));
     LINEP_TEST_CHECK(srv_session1.submit_request(srv_r_old, err));
 
-    // Abrupt disconnect on connection 1
+    // Abrupt disconnect on connection 1 -> Observer loss -> outcome UNKNOWN
     client_conn1->close();
     LINEP_TEST_CHECK(!srv_conn1->receive_envelope_raw(raw_buf)); // EOF
-    srv_session1.terminate_all_active_streams(terminal_outcome::failed, {error_category::transient, 10054, "Abrupt disconnect"});
+    srv_session1.terminate_all_active_streams(terminal_outcome::unknown, {error_category::transient, 10054, "Abrupt disconnect"});
     srv_conn1->close();
 
     // Verify Session 1 has no active streams left
     LINEP_TEST_CHECK(srv_session1.get_active_stream_count() == 0);
     active_stream_state old_state{};
     LINEP_TEST_CHECK(srv_session1.get_stream_state(id_old1, old_state));
-    LINEP_TEST_CHECK(old_state.lifecycle.outcome == terminal_outcome::failed);
+    LINEP_TEST_CHECK(old_state.lifecycle.outcome == terminal_outcome::unknown);
 
     // Phase 2: Reconnection on Fresh Socket (Session 2)
     std::unique_ptr<envelope_connection> srv_conn2;

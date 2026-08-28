@@ -39,8 +39,8 @@ struct active_stream_state {
     std::string model_id;
     lifecycle_status lifecycle{};
     event_seq_t last_event_seq{0};
-    std::size_t buffered_bytes{0};
-    std::vector<event_envelope> emitted_events{};
+    std::size_t unacked_buffered_bytes{0}; // Current in-flight unacknowledged buffer
+    std::uint64_t total_produced_bytes{0}; // Cumulative produced bytes
 };
 
 class session_manager {
@@ -58,6 +58,9 @@ public:
     // Dispatch an incoming event to an existing active stream
     bool dispatch_event(const event_envelope& evt, runtime_error& out_err);
 
+    // Acknowledge drain/consumption of buffered stream bytes (frees in-flight capacity)
+    bool acknowledge_stream_drain(const stream_identity& id, std::size_t bytes_drained);
+
     // Target cancellation by execution identity (cancel_requested -> non-terminal)
     bool cancel_execution(execution_id_t execution_id, const std::string& reason, std::size_t& out_cancelled_count);
 
@@ -74,7 +77,7 @@ public:
     bool is_cancel_requested(const stream_identity& id) const;
 
     // Fail-closed termination of all in-flight streams on connection disconnect / error
-    std::size_t terminate_all_active_streams(terminal_outcome outcome, const runtime_error& err);
+    std::size_t terminate_all_active_streams(terminal_outcome outcome = terminal_outcome::unknown, const runtime_error& err = {});
 
 private:
     session_descriptor descriptor_;

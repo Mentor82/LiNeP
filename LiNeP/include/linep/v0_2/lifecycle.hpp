@@ -50,9 +50,6 @@ struct lifecycle_status {
             return false;
         }
         if (next_state == lifecycle_state::terminal) {
-            if (out == terminal_outcome::unknown) {
-                return false; // Must provide a concrete terminal outcome (completed, cancelled, or failed)
-            }
             state = lifecycle_state::terminal;
             outcome = out;
             has_terminal_outcome = true;

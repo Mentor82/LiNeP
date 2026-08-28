@@ -84,10 +84,10 @@ bool session_manager::dispatch_event(const event_envelope& evt, runtime_error& o
     std::size_t event_bytes = evt.payload.size() +
         (evt.event_type == runtime_event_type::embedding_result ? evt.embedding.vector.size() * sizeof(float) : 0);
 
-    if ((stream_state.buffered_bytes + event_bytes) > descriptor_.limits.max_buffered_bytes_per_stream) {
+    if ((stream_state.unacked_buffered_bytes + event_bytes) > descriptor_.limits.max_buffered_bytes_per_stream) {
         out_err.category = error_category::resource_exhausted;
         out_err.code = 507;
-        out_err.message = "Stream buffer limit exceeded (overload protection)";
+        out_err.message = "Stream buffer limit exceeded (unacked backpressure protection)";
         return false;
     }
 
@@ -105,12 +105,28 @@ bool session_manager::dispatch_event(const event_envelope& evt, runtime_error& o
             else out = terminal_outcome::completed;
         }
         stream_state.lifecycle.transition_to(lifecycle_state::terminal, out);
+        stream_state.unacked_buffered_bytes = 0; // Terminal event frees unacked buffer
+    } else {
+        stream_state.unacked_buffered_bytes += event_bytes;
     }
 
     stream_state.last_event_seq = evt.event_seq;
-    stream_state.buffered_bytes += event_bytes;
-    stream_state.emitted_events.push_back(evt);
+    stream_state.total_produced_bytes += event_bytes;
 
+    return true;
+}
+
+bool session_manager::acknowledge_stream_drain(const stream_identity& id, std::size_t bytes_drained) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = active_streams_.find(id);
+    if (it == active_streams_.end()) {
+        return false;
+    }
+    if (bytes_drained >= it->second.unacked_buffered_bytes) {
+        it->second.unacked_buffered_bytes = 0;
+    } else {
+        it->second.unacked_buffered_bytes -= bytes_drained;
+    }
     return true;
 }
 
@@ -150,7 +166,10 @@ bool session_manager::process_control(const control_envelope& ctrl, runtime_erro
 
         for (auto& pair : active_streams_) {
             bool matches = false;
-            if (ctrl.stream.request_id != 0 && ctrl.stream.output_id != 0) {
+            // Explicit Scope Targeting:
+            // If request_id != 0: Exact Stream Match (request_id, execution_id, output_id exact)
+            // If request_id == 0: Execution Scope Match (all streams under execution_id)
+            if (ctrl.stream.request_id != 0) {
                 matches = (pair.first == ctrl.stream);
             } else {
                 matches = (pair.first.execution_id == ctrl.stream.execution_id);
@@ -241,9 +260,7 @@ std::size_t session_manager::terminate_all_active_streams(terminal_outcome outco
     for (auto& pair : active_streams_) {
         if (pair.second.lifecycle.state != lifecycle_state::terminal) {
             pair.second.lifecycle.transition_to(lifecycle_state::terminal, outcome);
-            event_envelope term_evt{pair.first, pair.second.last_event_seq + 1, runtime_event_type::failed, "", outcome};
-            term_evt.error = err;
-            pair.second.emitted_events.push_back(term_evt);
+            pair.second.unacked_buffered_bytes = 0;
             terminated++;
         }
     }
