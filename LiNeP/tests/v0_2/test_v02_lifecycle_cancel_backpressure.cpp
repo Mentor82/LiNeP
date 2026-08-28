@@ -607,9 +607,13 @@ void test_tcp_multi_stream_backpressure_isolation() {
 }
 
 void test_fair_transport_send_scheduler() {
-    std::cout << "[Test 6] Fair Round-Robin Transport Send Scheduler & Head-of-Line Blocking Protection..." << std::endl;
-    // Capacity of 3 envelopes per stream in local send queue
-    stream_send_scheduler sched(3);
+    std::cout << "[Test 6] Fair Send Scheduler: Dual Frame/Byte Bounds, HOL Protection & Zero Send Loss..." << std::endl;
+    // 1. Dual limits: 3 frames per stream, 200 bytes per stream, 500 bytes total connection
+    stream_queue_limits limits{};
+    limits.max_frames_per_stream = 3;
+    limits.max_bytes_per_stream = 200;
+    limits.max_total_connection_bytes = 500;
+    stream_send_scheduler sched(limits);
 
     stream_identity id_a{601, 6001, 0};
     stream_identity id_b{602, 6002, 0};
@@ -619,14 +623,14 @@ void test_fair_transport_send_scheduler() {
     event_envelope a3{id_a, 3, runtime_event_type::content_delta, "A3"};
     event_envelope a4{id_a, 4, runtime_event_type::content_delta, "A4"};
 
-    // 1. Enqueue Stream A: 1, 2, 3 succeed; 4 fails because max_queued_per_stream is 3
+    // 1.1 Enqueue Stream A: 1, 2, 3 succeed; 4 fails because max_frames_per_stream is 3
     LINEP_TEST_CHECK(sched.enqueue_event(a1));
     LINEP_TEST_CHECK(sched.enqueue_event(a2));
     LINEP_TEST_CHECK(sched.enqueue_event(a3));
-    LINEP_TEST_CHECK(!sched.enqueue_event(a4)); // Per-stream send queue backpressure!
+    LINEP_TEST_CHECK(!sched.enqueue_event(a4)); // Per-stream frame backpressure!
     LINEP_TEST_CHECK(sched.get_stream_queued_count(id_a) == 3);
 
-    // 2. Stream B queue is empty -> Stream A fullness must NOT block Stream B!
+    // 1.2 Stream B queue is empty -> Stream A fullness must NOT block Stream B!
     event_envelope b1{id_b, 1, runtime_event_type::content_delta, "B1"};
     event_envelope b2{id_b, 2, runtime_event_type::content_delta, "B2"};
     event_envelope b3{id_b, 3, runtime_event_type::content_delta, "B3"};
@@ -636,7 +640,12 @@ void test_fair_transport_send_scheduler() {
     LINEP_TEST_CHECK(sched.get_stream_queued_count(id_b) == 3);
     LINEP_TEST_CHECK(sched.get_total_queued_count() == 6);
 
-    // 3. Pull in Round-Robin order: A1 -> B1 -> A2 -> B2 -> A3 -> B3
+    // 1.3 Byte-bound testing: an oversized 300-byte frame exceeds 200-byte limit -> REJECTED
+    stream_identity id_c{603, 6003, 0};
+    event_envelope c_huge{id_c, 1, runtime_event_type::content_delta, std::string(300, 'C')};
+    LINEP_TEST_CHECK(!sched.enqueue_event(c_huge)); // Byte limit backpressure!
+
+    // 2. Pull in Round-Robin order: A1 -> B1 -> A2 -> B2 -> A3 -> B3
     std::vector<std::string> pulled_tags;
     stream_identity pulled_id{};
     std::vector<std::uint8_t> frame;
@@ -655,8 +664,38 @@ void test_fair_transport_send_scheduler() {
     LINEP_TEST_CHECK(pulled_tags[4] == "A3");
     LINEP_TEST_CHECK(pulled_tags[5] == "B3");
     LINEP_TEST_CHECK(sched.get_total_queued_count() == 0);
+    LINEP_TEST_CHECK(sched.get_total_queued_bytes() == 0);
 
-    std::cout << "  -> Fair Round-Robin Transport Scheduler PASSED (Zero Head-of-Line Blocking)" << std::endl;
+    // 3. Zero Frame Loss on Send Failure:
+    // When sending over a closed/dead connection, flush_scheduled must NOT pop/destroy uncommitted frames!
+    envelope_connection closed_conn; // Unconnected / closed socket
+    stream_send_scheduler sched_fail;
+    event_envelope pending_evt{id_a, 10, runtime_event_type::content_delta, "PreservedFrame"};
+    LINEP_TEST_CHECK(sched_fail.enqueue_event(pending_evt));
+    LINEP_TEST_CHECK(sched_fail.get_total_queued_count() == 1);
+
+    // Attempt flush to dead connection -> fails transmission
+    std::size_t sent_count = sched_fail.flush_scheduled(closed_conn);
+    LINEP_TEST_CHECK(sent_count == 0);
+    // Crucial invariant: The uncommitted frame MUST STILL BE IN QUEUE (Zero silent data loss!)
+    LINEP_TEST_CHECK(sched_fail.get_total_queued_count() == 1);
+    LINEP_TEST_CHECK(sched_fail.get_stream_queued_count(id_a) == 1);
+
+    // 4. Strict Protocol Error on Impossible Future ACK:
+    session_manager mgr;
+    runtime_error err{};
+    request_envelope req{id_a, runtime_profile::chat, "llama-3.1-8b", "Prompt"};
+    LINEP_TEST_CHECK(mgr.submit_request(req, err));
+    event_envelope e1{id_a, 1, runtime_event_type::content_delta, std::string(100, 'X')};
+    LINEP_TEST_CHECK(mgr.dispatch_event(e1, err)); // Total produced = 100 bytes
+
+    // Peer claims to have ACKed 500 bytes (future ACK) -> MUST BE REJECTED with protocol violation 422!
+    control_envelope future_ack{id_a, runtime_control_type::window_update, "Future", 500};
+    bool ack_ok = mgr.process_control(future_ack, err);
+    LINEP_TEST_CHECK(!ack_ok);
+    LINEP_TEST_CHECK(err.code == 422);
+
+    std::cout << "  -> Fair Send Scheduler, Zero Send Loss & Strict Future ACK PASSED" << std::endl;
 }
 
 int main() {

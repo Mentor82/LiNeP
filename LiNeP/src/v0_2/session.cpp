@@ -125,12 +125,11 @@ bool session_manager::acknowledge_stream_offset(const stream_identity& id, std::
     if (cumulative_ack_offset <= it->second.acknowledged_offset_bytes) {
         return true;
     }
-    // Monotonic advance up to total produced bytes
+    // Fail closed on invalid future ACK
     if (cumulative_ack_offset > it->second.total_produced_bytes) {
-        it->second.acknowledged_offset_bytes = it->second.total_produced_bytes;
-    } else {
-        it->second.acknowledged_offset_bytes = cumulative_ack_offset;
+        return false;
     }
+    it->second.acknowledged_offset_bytes = cumulative_ack_offset;
     return true;
 }
 
@@ -142,10 +141,9 @@ bool session_manager::acknowledge_stream_drain(const stream_identity& id, std::s
     }
     std::uint64_t target = it->second.acknowledged_offset_bytes + bytes_drained;
     if (target > it->second.total_produced_bytes) {
-        it->second.acknowledged_offset_bytes = it->second.total_produced_bytes;
-    } else {
-        it->second.acknowledged_offset_bytes = target;
+        return false;
     }
+    it->second.acknowledged_offset_bytes = target;
     return true;
 }
 
@@ -235,13 +233,16 @@ bool session_manager::process_control(const control_envelope& ctrl, runtime_erro
             }
             if (matches) {
                 found = true;
+                // Strict validation: Reject impossible future ACK exceeding total produced bytes
+                if (ctrl.ack_offset_bytes > pair.second.total_produced_bytes) {
+                    out_err.category = error_category::bad_request;
+                    out_err.code = 422;
+                    out_err.message = "Future ACK offset exceeds total produced stream bytes (protocol violation)";
+                    return false;
+                }
                 // Replay-safe monotonic credit advancement:
                 if (ctrl.ack_offset_bytes > pair.second.acknowledged_offset_bytes) {
-                    if (ctrl.ack_offset_bytes <= pair.second.total_produced_bytes) {
-                        pair.second.acknowledged_offset_bytes = ctrl.ack_offset_bytes;
-                    } else {
-                        pair.second.acknowledged_offset_bytes = pair.second.total_produced_bytes;
-                    }
+                    pair.second.acknowledged_offset_bytes = ctrl.ack_offset_bytes;
                 }
             }
         }

@@ -102,7 +102,7 @@ All V0.2 communication frames share a canonical 32-byte length-prefixed header:
 | **Test 3: Atomic Race Resolution** | Concurrent `completed` vs `cancel` race across 100 iterations. | Exactly ONE authoritative terminal outcome prevails in 100/100 runs; loser rejected with 410. | 🟢 **PASSED** |
 | **Test 4: Real Transport Backpressure** | Protocol `WINDOW_UPDATE` with replay-safe monotonic `ack_offset_bytes`. | Real TCP flow control with cumulative ack offset & fail-closed 507 on stalled socket. | 🟢 **PASSED** |
 | **Test 5: Multi-Stream BP Isolation** | Slow Stream A credit stall does NOT block Fast Stream B on shared TCP trunk. | Stream A fails closed (507); Stream B completes 100% (1,500 B delivered) over the same socket. | 🟢 **PASSED** |
-| **Test 6: Fair Send Scheduler** | Per-stream bounded queue & fair Round-Robin trunk multiplexing. | Zero head-of-line blocking; Stream A send backpressure does not starve Stream B. | 🟢 **PASSED** |
+| **Test 6: Fair Send Scheduler & Zero Loss** | Dual frame/byte bounded queues, per-frame lock granularity, zero frame loss on send error & strict future ACK (422). | Proved zero frame loss on closed socket, strict 422 rejection on impossible future ACK, and dual limits. | 🟢 **PASSED** |
 
 ---
 
@@ -175,8 +175,8 @@ ALL 8 V0.2 TCP SOCKET MULTIPLEXING & FAIL-CLOSED TESTS PASSED 100%!
   -> Real TCP Transport: Protocol WINDOW_UPDATE Flow Control PASSED
 [Test 5] Real TCP Transport: Multi-Stream Backpressure Isolation (Slow Stream A does NOT block Stream B)...
   -> Multi-Stream Backpressure Isolation PASSED (Stream B unaffected by Stream A backpressure)
-[Test 6] Fair Round-Robin Transport Send Scheduler & Head-of-Line Blocking Protection...
-  -> Fair Round-Robin Transport Scheduler PASSED (Zero Head-of-Line Blocking)
+[Test 6] Fair Send Scheduler: Dual Frame/Byte Bounds, HOL Protection & Zero Send Loss...
+  -> Fair Send Scheduler, Zero Send Loss & Strict Future ACK PASSED
 ALL 6 V0.2 PHASE C LIFECYCLE & BACKPRESSURE TESTS PASSED 100%!
 ```
 

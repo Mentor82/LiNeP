@@ -190,13 +190,25 @@ void envelope_server::close() noexcept {
 bool stream_send_scheduler::enqueue_raw(const stream_identity& stream, std::vector<std::uint8_t> frame) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto& q = stream_queues_[stream];
-    if (q.size() >= max_queued_per_stream_) {
-        return false; // Per-stream send queue backpressure
+    std::size_t frame_bytes = frame.size();
+
+    // Check dual limits: frames per stream, bytes per stream, total connection bytes
+    if (q.frames.size() >= limits_.max_frames_per_stream) {
+        return false;
     }
-    if (q.empty()) {
+    if ((q.total_bytes + frame_bytes) > limits_.max_bytes_per_stream) {
+        return false;
+    }
+    if ((total_connection_bytes_ + frame_bytes) > limits_.max_total_connection_bytes) {
+        return false;
+    }
+
+    if (q.frames.empty()) {
         active_order_.push_back(stream);
     }
-    q.push_back(std::move(frame));
+    q.total_bytes += frame_bytes;
+    total_connection_bytes_ += frame_bytes;
+    q.frames.push_back(std::move(frame));
     return true;
 }
 
@@ -224,7 +236,7 @@ bool stream_send_scheduler::enqueue_control(const control_envelope& ctrl) {
     return enqueue_raw(ctrl.stream, std::move(buf));
 }
 
-bool stream_send_scheduler::pull_next_scheduled(stream_identity& out_stream, std::vector<std::uint8_t>& out_frame) {
+bool stream_send_scheduler::peek_next_scheduled(stream_identity& out_stream, std::vector<std::uint8_t>& out_frame) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (active_order_.empty()) {
         return false;
@@ -238,23 +250,11 @@ bool stream_send_scheduler::pull_next_scheduled(stream_identity& out_stream, std
     while (attempts < active_order_.size()) {
         const auto& stream = active_order_[rr_cursor_];
         auto it = stream_queues_.find(stream);
-        if (it != stream_queues_.end() && !it->second.empty()) {
+        if (it != stream_queues_.end() && !it->second.frames.empty()) {
             out_stream = stream;
-            out_frame = std::move(it->second.front());
-            it->second.pop_front();
-
-            if (it->second.empty()) {
-                stream_queues_.erase(it);
-                active_order_.erase(active_order_.begin() + rr_cursor_);
-                if (rr_cursor_ >= active_order_.size()) {
-                    rr_cursor_ = 0;
-                }
-            } else {
-                rr_cursor_ = (rr_cursor_ + 1) % active_order_.size();
-            }
+            out_frame = it->second.frames.front();
             return true;
         } else {
-            // Clean empty entry
             if (it != stream_queues_.end()) {
                 stream_queues_.erase(it);
             }
@@ -273,15 +273,60 @@ bool stream_send_scheduler::pull_next_scheduled(stream_identity& out_stream, std
     return false;
 }
 
+void stream_send_scheduler::commit_next_scheduled() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (active_order_.empty()) {
+        return;
+    }
+    if (rr_cursor_ >= active_order_.size()) {
+        rr_cursor_ = 0;
+    }
+    const auto& stream = active_order_[rr_cursor_];
+    auto it = stream_queues_.find(stream);
+    if (it != stream_queues_.end() && !it->second.frames.empty()) {
+        std::size_t bytes = it->second.frames.front().size();
+        it->second.frames.pop_front();
+        it->second.total_bytes = (it->second.total_bytes >= bytes) ? (it->second.total_bytes - bytes) : 0;
+        total_connection_bytes_ = (total_connection_bytes_ >= bytes) ? (total_connection_bytes_ - bytes) : 0;
+
+        if (it->second.frames.empty()) {
+            stream_queues_.erase(it);
+            active_order_.erase(active_order_.begin() + rr_cursor_);
+            if (rr_cursor_ >= active_order_.size()) {
+                rr_cursor_ = 0;
+            }
+        } else {
+            rr_cursor_ = (rr_cursor_ + 1) % active_order_.size();
+        }
+    }
+}
+
+bool stream_send_scheduler::pull_next_scheduled(stream_identity& out_stream, std::vector<std::uint8_t>& out_frame) {
+    if (!peek_next_scheduled(out_stream, out_frame)) {
+        return false;
+    }
+    commit_next_scheduled();
+    return true;
+}
+
 std::size_t stream_send_scheduler::flush_scheduled(envelope_connection& conn) {
     std::size_t flushed = 0;
     stream_identity stream{};
     std::vector<std::uint8_t> frame;
-    std::lock_guard<std::mutex> lock(conn.send_mutex_);
-    while (pull_next_scheduled(stream, frame)) {
-        if (!conn.send_bytes_locked(frame.data(), frame.size())) {
+
+    // Transmit one frame at a time with per-frame lock granularity:
+    // Frame is ONLY committed and removed upon verified successful transmission (zero frame loss on failure).
+    while (peek_next_scheduled(stream, frame)) {
+        bool ok = false;
+        {
+            std::lock_guard<std::mutex> lock(conn.send_mutex_);
+            ok = conn.send_bytes_locked(frame.data(), frame.size());
+        }
+        if (!ok) {
+            // Send failed: frame remains uncommitted in queue to prevent silent delta loss!
             break;
         }
+        commit_next_scheduled();
         flushed++;
     }
     return flushed;
@@ -289,12 +334,17 @@ std::size_t stream_send_scheduler::flush_scheduled(envelope_connection& conn) {
 
 void stream_send_scheduler::drop_stream(const stream_identity& stream) {
     std::lock_guard<std::mutex> lock(mutex_);
-    stream_queues_.erase(stream);
-    for (auto it = active_order_.begin(); it != active_order_.end();) {
-        if (*it == stream) {
-            it = active_order_.erase(it);
+    auto it = stream_queues_.find(stream);
+    if (it != stream_queues_.end()) {
+        total_connection_bytes_ = (total_connection_bytes_ >= it->second.total_bytes) ?
+            (total_connection_bytes_ - it->second.total_bytes) : 0;
+        stream_queues_.erase(it);
+    }
+    for (auto oit = active_order_.begin(); oit != active_order_.end();) {
+        if (*oit == stream) {
+            oit = active_order_.erase(oit);
         } else {
-            ++it;
+            ++oit;
         }
     }
     if (rr_cursor_ >= active_order_.size()) {
@@ -308,16 +358,30 @@ std::size_t stream_send_scheduler::get_stream_queued_count(const stream_identity
     if (it == stream_queues_.end()) {
         return 0;
     }
-    return it->second.size();
+    return it->second.frames.size();
+}
+
+std::size_t stream_send_scheduler::get_stream_queued_bytes(const stream_identity& stream) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = stream_queues_.find(stream);
+    if (it == stream_queues_.end()) {
+        return 0;
+    }
+    return it->second.total_bytes;
 }
 
 std::size_t stream_send_scheduler::get_total_queued_count() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::size_t total = 0;
     for (const auto& pair : stream_queues_) {
-        total += pair.second.size();
+        total += pair.second.frames.size();
     }
     return total;
+}
+
+std::size_t stream_send_scheduler::get_total_queued_bytes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return total_connection_bytes_;
 }
 
 } // namespace linep::v0_2
