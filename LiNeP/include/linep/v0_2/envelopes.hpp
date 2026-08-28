@@ -88,7 +88,7 @@ struct event_envelope {
     std::uint64_t timestamp_us{0};
 
     bool is_valid() const noexcept {
-        if (!stream.is_valid() || event_type == runtime_event_type::unknown) {
+        if (!stream.is_valid() || event_type == runtime_event_type::unknown || event_seq == 0) {
             return false;
         }
         if (event_type == runtime_event_type::embedding_result && !embedding.is_valid()) {
@@ -118,6 +118,10 @@ struct control_envelope {
 struct capabilities_envelope {
     runtime_capabilities_descriptor descriptor;
 };
+
+// Canonical little-endian header encoding and decoding functions
+void encode_header(const wire_envelope_header& hdr, std::vector<std::uint8_t>& out_buf);
+bool decode_header(const std::uint8_t* data, std::size_t size, wire_envelope_header& out_hdr);
 
 // Serialization and deserialization functions
 bool encode_request(const request_envelope& req, std::vector<std::uint8_t>& out_buffer);

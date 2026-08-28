@@ -91,6 +91,7 @@ All V0.2 communication frames share a canonical 32-byte length-prefixed header:
 | **Test 5: Oversized Payload DoS** | Malicious payload length > 16 MB DoS protection. | Header claims 100 MB -> server rejects claim and drops connection. | 🟢 **PASSED** |
 | **Test 6: Corrupted Magic Header** | Corrupted magic bytes mid-stream. | Header with invalid magic -> server rejects and closes connection. | 🟢 **PASSED** |
 | **Test 7: Abrupt Disconnect Cleanup** | Connection severed while streams are active. | Client abruptly cuts connection -> server terminates all active streams cleanly as `failed`. | 🟢 **PASSED** |
+| **Test 8: Reconnect Isolation** | Reconnecting on fresh socket creates isolated session. | Dead streams do not resurrect; new session operates cleanly in complete isolation. | 🟢 **PASSED** |
 
 ---
 
@@ -123,7 +124,7 @@ ALL V0.2 PHASE A ENVELOPE AND CONTRACT TESTS PASSED 100%!
   -> Stream Isolation Tests PASSED
 [Test 3] In-Flight Stream Limits & Backpressure...
   -> In-Flight Limits & Backpressure Tests PASSED
-[Test 4] Semantic event_seq Monotonicity & Out-of-Order / Replay Rejection...
+[Test 4] Semantic event_seq Monotonicity & event_seq == 0 / Replay Rejection...
   -> Semantic Sequencing Tests PASSED
 [Test 5] Targeted Cancellation by Execution ID...
   -> Targeted Cancellation Tests PASSED
@@ -148,7 +149,9 @@ ALL V0.2 PHASE B SESSION MULTIPLEXING TESTS PASSED 100%!
   -> Corrupted Magic Header Mid-Stream Rejection PASSED
 [Test 7] Real TCP Socket: Abrupt Disconnect & Active Stream Cleanup...
   -> Abrupt Disconnect & Active Stream Cleanup PASSED
-ALL 7 V0.2 TCP SOCKET MULTIPLEXING & FAIL-CLOSED TESTS PASSED 100%!
+[Test 8] Real TCP Socket: Reconnect & Clean Session Isolation...
+  -> Reconnect & Clean Session Isolation PASSED
+ALL 8 V0.2 TCP SOCKET MULTIPLEXING & FAIL-CLOSED TESTS PASSED 100%!
 ```
 
 
@@ -156,15 +159,15 @@ ALL 7 V0.2 TCP SOCKET MULTIPLEXING & FAIL-CLOSED TESTS PASSED 100%!
 
 ```text
 Test project /mnt/windows/ai/LiNeP/LiNeP/build_linux
-      Start  1: test_crc ...........................................   Passed    0.00 sec
+      Start  1: test_crc ...........................................   Passed    0.01 sec
       ...
       Start 29: test_sl1_auth ......................................   Passed    0.57 sec
       Start 30: test_v02_envelopes .................................   Passed    0.01 sec
       Start 31: test_v02_session ...................................   Passed    0.01 sec
-      Start 32: test_v02_socket_multiplexing .......................   Passed    0.08 sec
+      Start 32: test_v02_socket_multiplexing .......................   Passed    0.09 sec
 
 100% tests passed, 0 tests failed out of 32
-Total Test time (real) = 2.32 sec
+Total Test time (real) = 2.40 sec
 ```
 
 ---

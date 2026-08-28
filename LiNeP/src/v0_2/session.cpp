@@ -72,11 +72,11 @@ bool session_manager::dispatch_event(const event_envelope& evt, runtime_error& o
         return false;
     }
 
-    // Semantic event sequencing check (monotonically increasing event_seq)
-    if (stream_state.last_event_seq > 0 && evt.event_seq <= stream_state.last_event_seq) {
+    // Semantic event sequencing check (event_seq starts at 1, strictly monotonically increasing)
+    if (evt.event_seq == 0 || evt.event_seq <= stream_state.last_event_seq) {
         out_err.category = error_category::bad_request;
         out_err.code = 422;
-        out_err.message = "Semantic event_seq out of order, duplicate, or non-monotonic";
+        out_err.message = "Semantic event_seq must be >= 1 and strictly greater than last_event_seq";
         return false;
     }
 

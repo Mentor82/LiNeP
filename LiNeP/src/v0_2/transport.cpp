@@ -110,10 +110,16 @@ bool envelope_connection::send_capabilities(const capabilities_envelope& caps) {
 
 bool envelope_connection::receive_envelope_raw(std::vector<std::uint8_t>& out_buffer) {
     out_buffer.clear();
-    wire_envelope_header hdr{};
-    if (!recv_all_bytes(reinterpret_cast<std::uint8_t*>(&hdr), sizeof(hdr))) {
+    std::uint8_t hdr_bytes[LINEP_V02_HEADER_SIZE];
+    if (!recv_all_bytes(hdr_bytes, LINEP_V02_HEADER_SIZE)) {
         close();
         return false; // Connection closed or error
+    }
+
+    wire_envelope_header hdr{};
+    if (!decode_header(hdr_bytes, LINEP_V02_HEADER_SIZE, hdr)) {
+        close(); // Fail closed on malformed header
+        return false;
     }
 
     if (hdr.magic != LINEP_V02_MAGIC || hdr.version_major != LINEP_V02_VERSION_MAJOR) {
@@ -126,11 +132,11 @@ bool envelope_connection::receive_envelope_raw(std::vector<std::uint8_t>& out_bu
         return false;
     }
 
-    out_buffer.resize(sizeof(hdr) + hdr.payload_len);
-    std::memcpy(out_buffer.data(), &hdr, sizeof(hdr));
+    out_buffer.resize(LINEP_V02_HEADER_SIZE + hdr.payload_len);
+    std::memcpy(out_buffer.data(), hdr_bytes, LINEP_V02_HEADER_SIZE);
 
     if (hdr.payload_len > 0) {
-        if (!recv_all_bytes(out_buffer.data() + sizeof(hdr), hdr.payload_len)) {
+        if (!recv_all_bytes(out_buffer.data() + LINEP_V02_HEADER_SIZE, hdr.payload_len)) {
             close(); // Fail closed on truncated payload
             return false;
         }

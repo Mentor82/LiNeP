@@ -127,15 +127,44 @@ private:
 
 } // anonymous namespace
 
+void encode_header(const wire_envelope_header& hdr, std::vector<std::uint8_t>& out_buf) {
+    write_u32(out_buf, hdr.magic);
+    write_u8(out_buf, hdr.version_major);
+    write_u8(out_buf, hdr.version_minor);
+    write_u8(out_buf, hdr.envelope_type);
+    write_u8(out_buf, hdr.flags);
+    write_u64(out_buf, hdr.request_id);
+    write_u64(out_buf, hdr.execution_id);
+    write_u32(out_buf, hdr.output_id);
+    write_u32(out_buf, hdr.payload_len);
+}
+
+bool decode_header(const std::uint8_t* data, std::size_t size, wire_envelope_header& out_hdr) {
+    if (!data || size < LINEP_V02_HEADER_SIZE) {
+        return false;
+    }
+    buffer_reader r(data, LINEP_V02_HEADER_SIZE);
+    if (!r.read_u32(out_hdr.magic)) return false;
+    if (!r.read_u8(out_hdr.version_major)) return false;
+    if (!r.read_u8(out_hdr.version_minor)) return false;
+    if (!r.read_u8(out_hdr.envelope_type)) return false;
+    if (!r.read_u8(out_hdr.flags)) return false;
+    if (!r.read_u64(out_hdr.request_id)) return false;
+    if (!r.read_u64(out_hdr.execution_id)) return false;
+    if (!r.read_u32(out_hdr.output_id)) return false;
+    if (!r.read_u32(out_hdr.payload_len)) return false;
+    return true;
+}
+
 runtime_envelope_type peek_envelope_type(const std::uint8_t* data, std::size_t size) noexcept {
-    if (!data || size < sizeof(wire_envelope_header)) {
+    wire_envelope_header hdr{};
+    if (!decode_header(data, size, hdr)) {
         return runtime_envelope_type::unknown;
     }
-    const auto* hdr = reinterpret_cast<const wire_envelope_header*>(data);
-    if (hdr->magic != LINEP_V02_MAGIC || hdr->version_major != LINEP_V02_VERSION_MAJOR) {
+    if (hdr.magic != LINEP_V02_MAGIC || hdr.version_major != LINEP_V02_VERSION_MAJOR) {
         return runtime_envelope_type::unknown;
     }
-    return static_cast<runtime_envelope_type>(hdr->envelope_type);
+    return static_cast<runtime_envelope_type>(hdr.envelope_type);
 }
 
 bool encode_request(const request_envelope& req, std::vector<std::uint8_t>& out_buffer) {
@@ -162,35 +191,36 @@ bool encode_request(const request_envelope& req, std::vector<std::uint8_t>& out_
     hdr.output_id = req.stream.output_id;
     hdr.payload_len = static_cast<std::uint32_t>(payload_buf.size());
 
-    out_buffer.resize(sizeof(hdr) + payload_buf.size());
-    std::memcpy(out_buffer.data(), &hdr, sizeof(hdr));
+    out_buffer.clear();
+    out_buffer.reserve(LINEP_V02_HEADER_SIZE + payload_buf.size());
+    encode_header(hdr, out_buffer);
     if (!payload_buf.empty()) {
-        std::memcpy(out_buffer.data() + sizeof(hdr), payload_buf.data(), payload_buf.size());
+        out_buffer.insert(out_buffer.end(), payload_buf.begin(), payload_buf.end());
     }
     return true;
 }
 
 bool decode_request(const std::uint8_t* data, std::size_t size, request_envelope& out_req) {
-    if (!data || size < sizeof(wire_envelope_header)) {
+    wire_envelope_header hdr{};
+    if (!decode_header(data, size, hdr)) {
         return false;
     }
 
-    const auto* hdr = reinterpret_cast<const wire_envelope_header*>(data);
-    if (hdr->magic != LINEP_V02_MAGIC ||
-        hdr->version_major != LINEP_V02_VERSION_MAJOR ||
-        hdr->envelope_type != static_cast<std::uint8_t>(runtime_envelope_type::request)) {
+    if (hdr.magic != LINEP_V02_MAGIC ||
+        hdr.version_major != LINEP_V02_VERSION_MAJOR ||
+        hdr.envelope_type != static_cast<std::uint8_t>(runtime_envelope_type::request)) {
         return false;
     }
 
-    if (size < (sizeof(wire_envelope_header) + hdr->payload_len)) {
+    if (size < (LINEP_V02_HEADER_SIZE + hdr.payload_len)) {
         return false; // Truncated buffer
     }
 
-    out_req.stream.request_id = hdr->request_id;
-    out_req.stream.execution_id = hdr->execution_id;
-    out_req.stream.output_id = hdr->output_id;
+    out_req.stream.request_id = hdr.request_id;
+    out_req.stream.execution_id = hdr.execution_id;
+    out_req.stream.output_id = hdr.output_id;
 
-    buffer_reader r(data + sizeof(wire_envelope_header), hdr->payload_len);
+    buffer_reader r(data + LINEP_V02_HEADER_SIZE, hdr.payload_len);
     std::uint8_t prof{};
     if (!r.read_u8(prof)) return false;
     out_req.profile = static_cast<runtime_profile>(prof);
@@ -203,6 +233,10 @@ bool decode_request(const std::uint8_t* data, std::size_t size, request_envelope
     std::uint8_t stream_req{};
     if (!r.read_u8(stream_req)) return false;
     out_req.stream_requested = (stream_req != 0);
+
+    if (r.remaining() != 0) {
+        return false; // Strict canonical framing: reject trailing garbage
+    }
 
     return out_req.is_valid();
 }
@@ -247,35 +281,36 @@ bool encode_event(const event_envelope& evt, std::vector<std::uint8_t>& out_buff
     hdr.output_id = evt.stream.output_id;
     hdr.payload_len = static_cast<std::uint32_t>(payload_buf.size());
 
-    out_buffer.resize(sizeof(hdr) + payload_buf.size());
-    std::memcpy(out_buffer.data(), &hdr, sizeof(hdr));
+    out_buffer.clear();
+    out_buffer.reserve(LINEP_V02_HEADER_SIZE + payload_buf.size());
+    encode_header(hdr, out_buffer);
     if (!payload_buf.empty()) {
-        std::memcpy(out_buffer.data() + sizeof(hdr), payload_buf.data(), payload_buf.size());
+        out_buffer.insert(out_buffer.end(), payload_buf.begin(), payload_buf.end());
     }
     return true;
 }
 
 bool decode_event(const std::uint8_t* data, std::size_t size, event_envelope& out_evt) {
-    if (!data || size < sizeof(wire_envelope_header)) {
+    wire_envelope_header hdr{};
+    if (!decode_header(data, size, hdr)) {
         return false;
     }
 
-    const auto* hdr = reinterpret_cast<const wire_envelope_header*>(data);
-    if (hdr->magic != LINEP_V02_MAGIC ||
-        hdr->version_major != LINEP_V02_VERSION_MAJOR ||
-        hdr->envelope_type != static_cast<std::uint8_t>(runtime_envelope_type::event)) {
+    if (hdr.magic != LINEP_V02_MAGIC ||
+        hdr.version_major != LINEP_V02_VERSION_MAJOR ||
+        hdr.envelope_type != static_cast<std::uint8_t>(runtime_envelope_type::event)) {
         return false;
     }
 
-    if (size < (sizeof(wire_envelope_header) + hdr->payload_len)) {
+    if (size < (LINEP_V02_HEADER_SIZE + hdr.payload_len)) {
         return false;
     }
 
-    out_evt.stream.request_id = hdr->request_id;
-    out_evt.stream.execution_id = hdr->execution_id;
-    out_evt.stream.output_id = hdr->output_id;
+    out_evt.stream.request_id = hdr.request_id;
+    out_evt.stream.execution_id = hdr.execution_id;
+    out_evt.stream.output_id = hdr.output_id;
 
-    buffer_reader r(data + sizeof(wire_envelope_header), hdr->payload_len);
+    buffer_reader r(data + LINEP_V02_HEADER_SIZE, hdr.payload_len);
     if (!r.read_u64(out_evt.event_seq)) return false;
 
     std::uint8_t ev_type{}, outcome{}, err_cat{};
@@ -306,10 +341,20 @@ bool decode_event(const std::uint8_t* data, std::size_t size, event_envelope& ou
 
         std::uint32_t vec_count{};
         if (!r.read_u32(vec_count)) return false;
+
+        // Strict fail-closed checks before vector allocation (DoS protection)
+        if (vec_count > LINEP_V02_MAX_EMBEDDING_DIMENSIONS) return false;
+        if (vec_count > (r.remaining() / sizeof(float))) return false;
+        if (vec_count != out_evt.embedding.space.dimensions) return false;
+
         out_evt.embedding.vector.resize(vec_count);
         for (std::uint32_t i = 0; i < vec_count; ++i) {
             if (!r.read_float(out_evt.embedding.vector[i])) return false;
         }
+    }
+
+    if (r.remaining() != 0) {
+        return false; // Strict canonical framing: reject trailing garbage
     }
 
     return out_evt.is_valid();
@@ -335,39 +380,44 @@ bool encode_control(const control_envelope& ctrl, std::vector<std::uint8_t>& out
     hdr.output_id = ctrl.stream.output_id;
     hdr.payload_len = static_cast<std::uint32_t>(payload_buf.size());
 
-    out_buffer.resize(sizeof(hdr) + payload_buf.size());
-    std::memcpy(out_buffer.data(), &hdr, sizeof(hdr));
+    out_buffer.clear();
+    out_buffer.reserve(LINEP_V02_HEADER_SIZE + payload_buf.size());
+    encode_header(hdr, out_buffer);
     if (!payload_buf.empty()) {
-        std::memcpy(out_buffer.data() + sizeof(hdr), payload_buf.data(), payload_buf.size());
+        out_buffer.insert(out_buffer.end(), payload_buf.begin(), payload_buf.end());
     }
     return true;
 }
 
 bool decode_control(const std::uint8_t* data, std::size_t size, control_envelope& out_ctrl) {
-    if (!data || size < sizeof(wire_envelope_header)) {
+    wire_envelope_header hdr{};
+    if (!decode_header(data, size, hdr)) {
         return false;
     }
 
-    const auto* hdr = reinterpret_cast<const wire_envelope_header*>(data);
-    if (hdr->magic != LINEP_V02_MAGIC ||
-        hdr->version_major != LINEP_V02_VERSION_MAJOR ||
-        hdr->envelope_type != static_cast<std::uint8_t>(runtime_envelope_type::control)) {
+    if (hdr.magic != LINEP_V02_MAGIC ||
+        hdr.version_major != LINEP_V02_VERSION_MAJOR ||
+        hdr.envelope_type != static_cast<std::uint8_t>(runtime_envelope_type::control)) {
         return false;
     }
 
-    if (size < (sizeof(wire_envelope_header) + hdr->payload_len)) {
+    if (size < (LINEP_V02_HEADER_SIZE + hdr.payload_len)) {
         return false;
     }
 
-    out_ctrl.stream.request_id = hdr->request_id;
-    out_ctrl.stream.execution_id = hdr->execution_id;
-    out_ctrl.stream.output_id = hdr->output_id;
+    out_ctrl.stream.request_id = hdr.request_id;
+    out_ctrl.stream.execution_id = hdr.execution_id;
+    out_ctrl.stream.output_id = hdr.output_id;
 
-    buffer_reader r(data + sizeof(wire_envelope_header), hdr->payload_len);
+    buffer_reader r(data + LINEP_V02_HEADER_SIZE, hdr.payload_len);
     std::uint8_t ctrl_type{};
     if (!r.read_u8(ctrl_type)) return false;
     out_ctrl.control_type = static_cast<runtime_control_type>(ctrl_type);
     if (!r.read_string_u16(out_ctrl.reason)) return false;
+
+    if (r.remaining() != 0) {
+        return false; // Strict canonical framing: reject trailing garbage
+    }
 
     return out_ctrl.is_valid();
 }
@@ -414,31 +464,32 @@ bool encode_capabilities(const capabilities_envelope& caps, std::vector<std::uin
     hdr.output_id = 0;
     hdr.payload_len = static_cast<std::uint32_t>(payload_buf.size());
 
-    out_buffer.resize(sizeof(hdr) + payload_buf.size());
-    std::memcpy(out_buffer.data(), &hdr, sizeof(hdr));
+    out_buffer.clear();
+    out_buffer.reserve(LINEP_V02_HEADER_SIZE + payload_buf.size());
+    encode_header(hdr, out_buffer);
     if (!payload_buf.empty()) {
-        std::memcpy(out_buffer.data() + sizeof(hdr), payload_buf.data(), payload_buf.size());
+        out_buffer.insert(out_buffer.end(), payload_buf.begin(), payload_buf.end());
     }
     return true;
 }
 
 bool decode_capabilities(const std::uint8_t* data, std::size_t size, capabilities_envelope& out_caps) {
-    if (!data || size < sizeof(wire_envelope_header)) {
+    wire_envelope_header hdr{};
+    if (!decode_header(data, size, hdr)) {
         return false;
     }
 
-    const auto* hdr = reinterpret_cast<const wire_envelope_header*>(data);
-    if (hdr->magic != LINEP_V02_MAGIC ||
-        hdr->version_major != LINEP_V02_VERSION_MAJOR ||
-        hdr->envelope_type != static_cast<std::uint8_t>(runtime_envelope_type::capabilities)) {
+    if (hdr.magic != LINEP_V02_MAGIC ||
+        hdr.version_major != LINEP_V02_VERSION_MAJOR ||
+        hdr.envelope_type != static_cast<std::uint8_t>(runtime_envelope_type::capabilities)) {
         return false;
     }
 
-    if (size < (sizeof(wire_envelope_header) + hdr->payload_len)) {
+    if (size < (LINEP_V02_HEADER_SIZE + hdr.payload_len)) {
         return false;
     }
 
-    buffer_reader r(data + sizeof(wire_envelope_header), hdr->payload_len);
+    buffer_reader r(data + LINEP_V02_HEADER_SIZE, hdr.payload_len);
     auto& desc = out_caps.descriptor;
 
     std::uint16_t prof_count{};
@@ -486,6 +537,10 @@ bool decode_capabilities(const std::uint8_t* data, std::size_t size, capabilitie
         if (!r.read_u8(dist)) return false;
         sp.normalization = static_cast<embedding_normalization>(norm);
         sp.distance_metric = static_cast<embedding_distance_metric>(dist);
+    }
+
+    if (r.remaining() != 0) {
+        return false; // Strict canonical framing: reject trailing garbage
     }
 
     return true;

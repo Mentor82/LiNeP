@@ -18,6 +18,8 @@ enum class embedding_distance_metric : std::uint8_t {
     euclidean = 3,
 };
 
+constexpr std::uint32_t LINEP_V02_MAX_EMBEDDING_DIMENSIONS = 65536;
+
 struct embedding_space_descriptor {
     std::string embedding_space_id;
     std::string model_id;

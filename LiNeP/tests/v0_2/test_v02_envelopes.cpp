@@ -1,4 +1,4 @@
-#include <cassert>
+#include <cstdlib>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -8,6 +8,14 @@
 #include "linep/v0_2/embedding.hpp"
 #include "linep/v0_2/lifecycle.hpp"
 #include "linep/v0_2/envelopes.hpp"
+
+#define LINEP_TEST_CHECK(cond) \
+    do { \
+        if (!(cond)) { \
+            std::cerr << "TEST CHECK FAILED: " #cond " at " __FILE__ ":" << __LINE__ << std::endl; \
+            std::exit(1); \
+        } \
+    } while (0)
 
 using namespace linep::v0_2;
 
@@ -24,33 +32,47 @@ void test_request_envelope() {
     req.temperature = 0.8f;
     req.stream_requested = true;
 
-    assert(req.is_valid());
+    LINEP_TEST_CHECK(req.is_valid());
 
     std::vector<std::uint8_t> buffer;
     bool enc_ok = encode_request(req, buffer);
-    assert(enc_ok);
-    assert(buffer.size() >= sizeof(wire_envelope_header));
+    LINEP_TEST_CHECK(enc_ok);
+    LINEP_TEST_CHECK(buffer.size() >= LINEP_V02_HEADER_SIZE);
 
-    assert(peek_envelope_type(buffer.data(), buffer.size()) == runtime_envelope_type::request);
+    LINEP_TEST_CHECK(peek_envelope_type(buffer.data(), buffer.size()) == runtime_envelope_type::request);
 
     request_envelope decoded{};
     bool dec_ok = decode_request(buffer.data(), buffer.size(), decoded);
-    assert(dec_ok);
-    assert(decoded.stream.request_id == 1001);
-    assert(decoded.stream.execution_id == 2001);
-    assert(decoded.stream.output_id == 0);
-    assert(decoded.profile == runtime_profile::chat);
-    assert(decoded.model_id == "meta-llama/Llama-3.1-8B-Instruct");
-    assert(decoded.payload == req.payload);
-    assert(decoded.max_tokens == 512);
-    assert(decoded.stream_requested == true);
+    LINEP_TEST_CHECK(dec_ok);
+    LINEP_TEST_CHECK(decoded.stream.request_id == 1001);
+    LINEP_TEST_CHECK(decoded.stream.execution_id == 2001);
+    LINEP_TEST_CHECK(decoded.stream.output_id == 0);
+    LINEP_TEST_CHECK(decoded.profile == runtime_profile::chat);
+    LINEP_TEST_CHECK(decoded.model_id == "meta-llama/Llama-3.1-8B-Instruct");
+    LINEP_TEST_CHECK(decoded.payload == req.payload);
+    LINEP_TEST_CHECK(decoded.max_tokens == 512);
+    LINEP_TEST_CHECK(decoded.stream_requested == true);
 
     // Test invalid request: request_id == 0 -> Invalid!
     request_envelope invalid_req = req;
     invalid_req.stream.request_id = 0;
-    assert(!invalid_req.is_valid());
+    LINEP_TEST_CHECK(!invalid_req.is_valid());
     std::vector<std::uint8_t> bad_buf;
-    assert(!encode_request(invalid_req, bad_buf));
+    LINEP_TEST_CHECK(!encode_request(invalid_req, bad_buf));
+
+    // Test trailing garbage rejection (strict canonical framing)
+    std::vector<std::uint8_t> garbage_buf = buffer;
+    garbage_buf.push_back(0xFF);
+    // Note: header payload_len doesn't match total or reader has remaining bytes
+    wire_envelope_header hdr{};
+    decode_header(garbage_buf.data(), garbage_buf.size(), hdr);
+    hdr.payload_len += 1;
+    garbage_buf.clear();
+    encode_header(hdr, garbage_buf);
+    garbage_buf.insert(garbage_buf.end(), buffer.begin() + LINEP_V02_HEADER_SIZE, buffer.end());
+    garbage_buf.push_back(0xFF);
+    request_envelope garbage_req{};
+    LINEP_TEST_CHECK(!decode_request(garbage_buf.data(), garbage_buf.size(), garbage_req));
 
     std::cout << "  -> Request Envelope Tests PASSED" << std::endl;
 }
@@ -66,22 +88,29 @@ void test_event_envelope() {
     evt.payload = "Neural";
     evt.timestamp_us = 1700000000123456ULL;
 
-    assert(evt.is_valid());
-    assert(!evt.is_terminal());
+    LINEP_TEST_CHECK(evt.is_valid());
+    LINEP_TEST_CHECK(!evt.is_terminal());
+
+    // Invariant: event_seq == 0 is INVALID!
+    event_envelope zero_seq_evt = evt;
+    zero_seq_evt.event_seq = 0;
+    LINEP_TEST_CHECK(!zero_seq_evt.is_valid());
+    std::vector<std::uint8_t> bad_seq_buf;
+    LINEP_TEST_CHECK(!encode_event(zero_seq_evt, bad_seq_buf));
 
     std::vector<std::uint8_t> buffer;
-    assert(encode_event(evt, buffer));
-    assert(peek_envelope_type(buffer.data(), buffer.size()) == runtime_envelope_type::event);
+    LINEP_TEST_CHECK(encode_event(evt, buffer));
+    LINEP_TEST_CHECK(peek_envelope_type(buffer.data(), buffer.size()) == runtime_envelope_type::event);
 
     event_envelope dec_evt{};
-    assert(decode_event(buffer.data(), buffer.size(), dec_evt));
-    assert(dec_evt.stream.request_id == 1001);
-    assert(dec_evt.stream.execution_id == 2001);
-    assert(dec_evt.stream.output_id == 1);
-    assert(dec_evt.event_seq == 42);
-    assert(dec_evt.event_type == runtime_event_type::content_delta);
-    assert(dec_evt.payload == "Neural");
-    assert(dec_evt.timestamp_us == 1700000000123456ULL);
+    LINEP_TEST_CHECK(decode_event(buffer.data(), buffer.size(), dec_evt));
+    LINEP_TEST_CHECK(dec_evt.stream.request_id == 1001);
+    LINEP_TEST_CHECK(dec_evt.stream.execution_id == 2001);
+    LINEP_TEST_CHECK(dec_evt.stream.output_id == 1);
+    LINEP_TEST_CHECK(dec_evt.event_seq == 42);
+    LINEP_TEST_CHECK(dec_evt.event_type == runtime_event_type::content_delta);
+    LINEP_TEST_CHECK(dec_evt.payload == "Neural");
+    LINEP_TEST_CHECK(dec_evt.timestamp_us == 1700000000123456ULL);
 
     // Test terminal event (completed)
     event_envelope term_evt{};
@@ -89,15 +118,15 @@ void test_event_envelope() {
     term_evt.event_seq = 43;
     term_evt.event_type = runtime_event_type::completed;
     term_evt.outcome = terminal_outcome::completed;
-    assert(term_evt.is_valid());
-    assert(term_evt.is_terminal());
+    LINEP_TEST_CHECK(term_evt.is_valid());
+    LINEP_TEST_CHECK(term_evt.is_terminal());
 
     buffer.clear();
-    assert(encode_event(term_evt, buffer));
+    LINEP_TEST_CHECK(encode_event(term_evt, buffer));
     event_envelope dec_term{};
-    assert(decode_event(buffer.data(), buffer.size(), dec_term));
-    assert(dec_term.is_terminal());
-    assert(dec_term.outcome == terminal_outcome::completed);
+    LINEP_TEST_CHECK(decode_event(buffer.data(), buffer.size(), dec_term));
+    LINEP_TEST_CHECK(dec_term.is_terminal());
+    LINEP_TEST_CHECK(dec_term.outcome == terminal_outcome::completed);
 
     // Test error event with preserved backend diagnostic
     event_envelope err_evt{};
@@ -111,13 +140,13 @@ void test_event_envelope() {
     err_evt.error.backend_diagnostic = "vLLM KV cache full, 0 blocks free";
 
     buffer.clear();
-    assert(encode_event(err_evt, buffer));
+    LINEP_TEST_CHECK(encode_event(err_evt, buffer));
     event_envelope dec_err{};
-    assert(decode_event(buffer.data(), buffer.size(), dec_err));
-    assert(dec_err.error.category == error_category::resource_exhausted);
-    assert(dec_err.error.code == 503);
-    assert(dec_err.error.message == "CUDA out of memory");
-    assert(dec_err.error.backend_diagnostic == "vLLM KV cache full, 0 blocks free");
+    LINEP_TEST_CHECK(decode_event(buffer.data(), buffer.size(), dec_err));
+    LINEP_TEST_CHECK(dec_err.error.category == error_category::resource_exhausted);
+    LINEP_TEST_CHECK(dec_err.error.code = 503);
+    LINEP_TEST_CHECK(dec_err.error.message == "CUDA out of memory");
+    LINEP_TEST_CHECK(dec_err.error.backend_diagnostic == "vLLM KV cache full, 0 blocks free");
 
     std::cout << "  -> Event Envelope Tests PASSED" << std::endl;
 }
@@ -143,10 +172,10 @@ void test_embedding_envelope_and_vector_spaces() {
     };
 
     // Equal dimension is NEVER sufficient proof of compatible space!
-    assert(!compatible_embedding_space(space_a, space_b));
+    LINEP_TEST_CHECK(!compatible_embedding_space(space_a, space_b));
 
     embedding_space_descriptor space_a_clone = space_a;
-    assert(compatible_embedding_space(space_a, space_a_clone));
+    LINEP_TEST_CHECK(compatible_embedding_space(space_a, space_a_clone));
 
     event_envelope embed_evt{};
     embed_evt.stream.request_id = 3001;
@@ -157,18 +186,35 @@ void test_embedding_envelope_and_vector_spaces() {
     embed_evt.embedding.space = space_a;
     embed_evt.embedding.vector.assign(768, 0.042f);
 
-    assert(embed_evt.is_valid());
+    LINEP_TEST_CHECK(embed_evt.is_valid());
 
     std::vector<std::uint8_t> buffer;
-    assert(encode_event(embed_evt, buffer));
+    LINEP_TEST_CHECK(encode_event(embed_evt, buffer));
 
     event_envelope dec_embed{};
-    assert(decode_event(buffer.data(), buffer.size(), dec_embed));
-    assert(dec_embed.event_type == runtime_event_type::embedding_result);
-    assert(dec_embed.embedding.space.embedding_space_id == "nomic-embed-text-v1.5");
-    assert(dec_embed.embedding.space.dimensions == 768);
-    assert(dec_embed.embedding.vector.size() == 768);
-    assert(dec_embed.embedding.vector[0] == 0.042f);
+    LINEP_TEST_CHECK(decode_event(buffer.data(), buffer.size(), dec_embed));
+    LINEP_TEST_CHECK(dec_embed.event_type == runtime_event_type::embedding_result);
+    LINEP_TEST_CHECK(dec_embed.embedding.space.embedding_space_id == "nomic-embed-text-v1.5");
+    LINEP_TEST_CHECK(dec_embed.embedding.space.dimensions == 768);
+    LINEP_TEST_CHECK(dec_embed.embedding.vector.size() == 768);
+    LINEP_TEST_CHECK(dec_embed.embedding.vector[0] == 0.042f);
+
+    // Test Embedding Decoder Allocation DoS Protection:
+    // Manipulated frame claiming 0xFFFFFFFF dimensions / vec_count with small remaining payload
+    std::vector<std::uint8_t> dos_embed_buf = buffer;
+    // Overwrite dimensions and vec_count in serialized payload
+    // Search for 768 (0x0300 in little-endian 32-bit = 0x00, 0x03, 0x00, 0x00) and replace with 0xFFFFFFFF
+    for (std::size_t i = LINEP_V02_HEADER_SIZE; i + 4 <= dos_embed_buf.size(); ++i) {
+        if (dos_embed_buf[i] == 0x00 && dos_embed_buf[i+1] == 0x03 && dos_embed_buf[i+2] == 0x00 && dos_embed_buf[i+3] == 0x00) {
+            dos_embed_buf[i] = 0xFF;
+            dos_embed_buf[i+1] = 0xFF;
+            dos_embed_buf[i+2] = 0xFF;
+            dos_embed_buf[i+3] = 0xFF;
+            break;
+        }
+    }
+    event_envelope dos_dec{};
+    LINEP_TEST_CHECK(!decode_event(dos_embed_buf.data(), dos_embed_buf.size(), dos_dec));
 
     std::cout << "  -> Embedding Envelope Tests PASSED" << std::endl;
 }
@@ -181,18 +227,18 @@ void test_control_envelope() {
     ctrl.control_type = runtime_control_type::cancel;
     ctrl.reason = "User requested cancellation via UI";
 
-    assert(ctrl.is_valid());
+    LINEP_TEST_CHECK(ctrl.is_valid());
 
     std::vector<std::uint8_t> buffer;
-    assert(encode_control(ctrl, buffer));
-    assert(peek_envelope_type(buffer.data(), buffer.size()) == runtime_envelope_type::control);
+    LINEP_TEST_CHECK(encode_control(ctrl, buffer));
+    LINEP_TEST_CHECK(peek_envelope_type(buffer.data(), buffer.size()) == runtime_envelope_type::control);
 
     control_envelope dec_ctrl{};
-    assert(decode_control(buffer.data(), buffer.size(), dec_ctrl));
-    assert(dec_ctrl.stream.request_id == 1001);
-    assert(dec_ctrl.stream.execution_id == 2001);
-    assert(dec_ctrl.control_type == runtime_control_type::cancel);
-    assert(dec_ctrl.reason == "User requested cancellation via UI");
+    LINEP_TEST_CHECK(decode_control(buffer.data(), buffer.size(), dec_ctrl));
+    LINEP_TEST_CHECK(dec_ctrl.stream.request_id == 1001);
+    LINEP_TEST_CHECK(dec_ctrl.stream.execution_id == 2001);
+    LINEP_TEST_CHECK(dec_ctrl.control_type == runtime_control_type::cancel);
+    LINEP_TEST_CHECK(dec_ctrl.reason == "User requested cancellation via UI");
 
     std::cout << "  -> Control Envelope Tests PASSED" << std::endl;
 }
@@ -213,18 +259,18 @@ void test_capabilities_envelope() {
     caps.descriptor.supported_embedding_spaces.push_back(sp);
 
     std::vector<std::uint8_t> buffer;
-    assert(encode_capabilities(caps, buffer));
-    assert(peek_envelope_type(buffer.data(), buffer.size()) == runtime_envelope_type::capabilities);
+    LINEP_TEST_CHECK(encode_capabilities(caps, buffer));
+    LINEP_TEST_CHECK(peek_envelope_type(buffer.data(), buffer.size()) == runtime_envelope_type::capabilities);
 
     capabilities_envelope dec_caps{};
-    assert(decode_capabilities(buffer.data(), buffer.size(), dec_caps));
-    assert(dec_caps.descriptor.supports_profile(runtime_profile::chat));
-    assert(dec_caps.descriptor.supports_profile(runtime_profile::embed));
-    assert(dec_caps.descriptor.max_context_tokens == 131072);
-    assert(dec_caps.descriptor.supports_tool_calling == true);
-    assert(dec_caps.descriptor.supported_models.size() == 2);
-    assert(dec_caps.descriptor.supported_embedding_spaces.size() == 1);
-    assert(dec_caps.descriptor.supported_embedding_spaces[0].dimensions == 768);
+    LINEP_TEST_CHECK(decode_capabilities(buffer.data(), buffer.size(), dec_caps));
+    LINEP_TEST_CHECK(dec_caps.descriptor.supports_profile(runtime_profile::chat));
+    LINEP_TEST_CHECK(dec_caps.descriptor.supports_profile(runtime_profile::embed));
+    LINEP_TEST_CHECK(dec_caps.descriptor.max_context_tokens == 131072);
+    LINEP_TEST_CHECK(dec_caps.descriptor.supports_tool_calling == true);
+    LINEP_TEST_CHECK(dec_caps.descriptor.supported_models.size() == 2);
+    LINEP_TEST_CHECK(dec_caps.descriptor.supported_embedding_spaces.size() == 1);
+    LINEP_TEST_CHECK(dec_caps.descriptor.supported_embedding_spaces[0].dimensions == 768);
 
     std::cout << "  -> Capabilities Envelope Tests PASSED" << std::endl;
 }
@@ -232,34 +278,34 @@ void test_capabilities_envelope() {
 void test_lifecycle_state_machine() {
     std::cout << "[Test 6] Lifecycle State Machine Invariants..." << std::endl;
     lifecycle_status lc{};
-    assert(lc.state == lifecycle_state::received);
-    assert(!lc.has_terminal_outcome);
+    LINEP_TEST_CHECK(lc.state == lifecycle_state::received);
+    LINEP_TEST_CHECK(!lc.has_terminal_outcome);
 
     // Normal happy path: received -> accepted -> started -> terminal(completed)
-    assert(lc.transition_to(lifecycle_state::accepted));
-    assert(lc.transition_to(lifecycle_state::started));
-    assert(lc.transition_to(lifecycle_state::terminal, terminal_outcome::completed));
-    assert(lc.has_terminal_outcome);
-    assert(lc.outcome == terminal_outcome::completed);
+    LINEP_TEST_CHECK(lc.transition_to(lifecycle_state::accepted));
+    LINEP_TEST_CHECK(lc.transition_to(lifecycle_state::started));
+    LINEP_TEST_CHECK(lc.transition_to(lifecycle_state::terminal, terminal_outcome::completed));
+    LINEP_TEST_CHECK(lc.has_terminal_outcome);
+    LINEP_TEST_CHECK(lc.outcome == terminal_outcome::completed);
 
     // Terminal state is immutable: no further transitions allowed!
-    assert(!lc.can_transition_to(lifecycle_state::started));
-    assert(!lc.transition_to(lifecycle_state::started));
+    LINEP_TEST_CHECK(!lc.can_transition_to(lifecycle_state::started));
+    LINEP_TEST_CHECK(!lc.transition_to(lifecycle_state::started));
 
     // Cancel requested path:
     lifecycle_status lc_cancel{};
-    assert(lc_cancel.transition_to(lifecycle_state::accepted));
-    assert(lc_cancel.transition_to(lifecycle_state::started));
-    assert(lc_cancel.transition_to(lifecycle_state::cancel_requested));
+    LINEP_TEST_CHECK(lc_cancel.transition_to(lifecycle_state::accepted));
+    LINEP_TEST_CHECK(lc_cancel.transition_to(lifecycle_state::started));
+    LINEP_TEST_CHECK(lc_cancel.transition_to(lifecycle_state::cancel_requested));
     
     // Invariant: cancel_requested is NON-terminal!
-    assert(lc_cancel.state == lifecycle_state::cancel_requested);
-    assert(!lc_cancel.has_terminal_outcome);
+    LINEP_TEST_CHECK(lc_cancel.state == lifecycle_state::cancel_requested);
+    LINEP_TEST_CHECK(!lc_cancel.has_terminal_outcome);
 
     // cancel_requested transitions to terminal outcome
-    assert(lc_cancel.transition_to(lifecycle_state::terminal, terminal_outcome::cancelled));
-    assert(lc_cancel.has_terminal_outcome);
-    assert(lc_cancel.outcome == terminal_outcome::cancelled);
+    LINEP_TEST_CHECK(lc_cancel.transition_to(lifecycle_state::terminal, terminal_outcome::cancelled));
+    LINEP_TEST_CHECK(lc_cancel.has_terminal_outcome);
+    LINEP_TEST_CHECK(lc_cancel.outcome == terminal_outcome::cancelled);
 
     std::cout << "  -> Lifecycle Invariants Tests PASSED" << std::endl;
 }
@@ -269,8 +315,8 @@ void test_tampered_and_corrupt_envelopes() {
     // 1. Truncated buffer (< 32 bytes)
     std::vector<std::uint8_t> short_buf = {0x50, 0x4E, 0x4C, 0x32};
     request_envelope req_dec{};
-    assert(!decode_request(short_buf.data(), short_buf.size(), req_dec));
-    assert(peek_envelope_type(short_buf.data(), short_buf.size()) == runtime_envelope_type::unknown);
+    LINEP_TEST_CHECK(!decode_request(short_buf.data(), short_buf.size(), req_dec));
+    LINEP_TEST_CHECK(peek_envelope_type(short_buf.data(), short_buf.size()) == runtime_envelope_type::unknown);
 
     // 2. Corrupted magic bytes
     request_envelope req{};
@@ -279,11 +325,11 @@ void test_tampered_and_corrupt_envelopes() {
     req.model_id = "test-model";
     req.payload = "hi";
     std::vector<std::uint8_t> valid_buf;
-    assert(encode_request(req, valid_buf));
+    LINEP_TEST_CHECK(encode_request(req, valid_buf));
 
     valid_buf[0] = 0x00; // Corrupt magic
-    assert(!decode_request(valid_buf.data(), valid_buf.size(), req_dec));
-    assert(peek_envelope_type(valid_buf.data(), valid_buf.size()) == runtime_envelope_type::unknown);
+    LINEP_TEST_CHECK(!decode_request(valid_buf.data(), valid_buf.size(), req_dec));
+    LINEP_TEST_CHECK(peek_envelope_type(valid_buf.data(), valid_buf.size()) == runtime_envelope_type::unknown);
 
     std::cout << "  -> Tampered/Corrupt Buffer Tests PASSED" << std::endl;
 }
