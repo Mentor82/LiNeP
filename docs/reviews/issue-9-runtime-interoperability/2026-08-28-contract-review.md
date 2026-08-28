@@ -178,7 +178,62 @@ does not grant that permission either. Reassembly must not bypass runtime payloa
 limits; VINOX's documented 262,144-byte tool argument/output limit is independent
 of an individual LiNeP frame's capacity. See [VINOX readiness][vinox-readiness].
 
-### 2.5 Retry and measurement semantics
+### 2.5 Embedding semantics and vector-space identity
+
+Embedding inference should be represented as its own optional runtime profile,
+not treated as a special case of chat or token generation. A candidate embedding
+request identifies the input modality and any required output representation; a
+candidate result carries the produced vector plus enough metadata to determine
+whether that vector may be compared with another one.
+
+Vector dimensionality alone is not a compatibility guarantee. Two models can both
+produce, for example, 768-dimensional vectors while encoding unrelated semantic
+spaces. The runtime contract therefore needs an opaque, stable
+`embedding_space_id` (or equivalent representation identity) in addition to
+metadata such as model identity/revision, dimensions, numeric representation,
+normalization, and the supported comparison metric.
+
+Conceptually:
+
+```text
+EMBED request
+  modality: text | image | audio | multimodal
+  required_space_id: optional
+  output_representation: optional
+
+EMBED result
+  embedding_space_id: opaque stable identifier
+  model_id / model_revision
+  dimensions
+  dtype
+  normalization
+  distance_metric
+  vector
+```
+
+A caller or scheduler may require a specific vector space. If a runtime cannot
+produce that space, it must reject the required capability rather than silently
+substitute another embedding model. Equal dimensions, equal dtype, or the same
+runtime product do not make spaces interchangeable.
+
+Capability advertisement for embeddings should describe operation constraints,
+not only `embeddings=true`. Relevant properties may include supported modalities,
+spaces/models, dimensions, normalization, numeric representation, batch limits,
+and supported comparison metrics. Capability, current availability, and local
+authorization remain distinct.
+
+Single-input embedding requests normally produce one non-streamed result. Batch
+embedding is naturally multi-output: results may be returned incrementally with
+stable per-input/output ownership, but that must not be confused with token
+streaming. Partial batch completion and per-item errors need explicit semantics if
+supported.
+
+The same rule applies to multimodal embedding spaces: text and image vectors may
+be compared directly only when the selected model/space explicitly defines a
+shared representation. LiNeP does not define a universal embedding space and must
+not imply cross-model comparability.
+
+### 2.6 Retry and measurement semantics
 
 Routing, retries, and speculative execution are policy decisions above basic
 request transport. Do not automatically repeat a mutating operation whose outcome
@@ -234,6 +289,8 @@ path without demonstrating that the tested implementation is the same path.
 | C10 | Capability exists but local policy denies use; payload exceeds reassembled limit | Refusal before execution; LiNeP-SL does not bypass runtime governance |
 | C11 | Metrics omitted, cumulative, multi-output, or from different hosts | Correct units/scope; no unknown-to-zero conversion or clock mixing |
 | C12 | Existing Scheduler sends to the existing TCP Receiver | Exact task type/body and response extension/payload round trip |
+| C13 | Two embedding models expose equal vector dimensions but different spaces | Space identity prevents accidental cross-space comparison or silent model substitution |
+| C14 | Batch embedding returns partial results and one item fails | Stable per-item ownership, explicit per-item outcome, and unambiguous batch completion |
 
 Use contrasting implementations to test the abstraction: a task-queue engine,
 an async scheduled engine, a library-style generator, and a policy-aware runtime.
@@ -252,6 +309,7 @@ from reduced serialization work, or replace GPU collectives as part of this scop
 - Define identity scopes, admission authority, and terminal/cancel race rules.
 - Choose stream representations, bounded-buffer behavior, and compatibility rules.
 - Specify capability negotiation and unsupported-feature behavior.
+- Decide how embedding-space identity and batch-result ownership are represented.
 - Decide how to represent the contract using existing frames or explicit extensions,
   without retroactively changing the frozen V0.1 baseline.
 - Separate implementation gap fixes from adapter work and the architecture decision.
