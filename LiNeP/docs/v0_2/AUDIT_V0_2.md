@@ -61,7 +61,7 @@ This audit document records the implementation and verification evidence for:
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |          tcp_port (16)        |          reserved2 (16)       |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                       timestamp_us (64)                       |
+|                       lease_token (64)                        |
 |                                                               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                          crc32 (32)                           |
@@ -98,16 +98,17 @@ This audit document records the implementation and verification evidence for:
 
 | Invariant / Test | Description | Verification Method | Status |
 |---|---|---|---|
-| **Test 1: Node HELLO & Heartbeat Loopback** | Valid node/runtime identity registers and transitions to `SEEN`/`ACTIVE`. | Datagram parsed, CRC verified, router registers routable candidate. | 🟢 **PASSED** |
-| **Test 2: Duplicate Idempotence** | Retransmitted duplicate sequence numbers do not double-apply metrics. | Replaying duplicate `control_seq` leaves metrics and state unchanged. | 🟢 **PASSED** |
+| **Test 1: Normative State Machine** | HELLO $\rightarrow$ SEEN $\rightarrow$ INVITE $\rightarrow$ INVITED $\rightarrow$ LEASE_ACK $\rightarrow$ ACTIVE. | Uninvited node sending heartbeat/status rejected; full invite/lease flow tested. | 🟢 **PASSED** |
+| **Test 2: Duplicate Idempotence** | Retransmitted duplicate sequence numbers do not double-apply metrics. | Replaying duplicate sequence leaves metrics and state unchanged. | 🟢 **PASSED** |
 | **Test 3: Epoch & Replay Rejection** | Older epoch or stale sequence datagrams are strictly rejected/ignored. | Stale epoch rejected; out-of-order sequence ignored without state corruption. | 🟢 **PASSED** |
 | **Test 4: Stale Detection & Expiration** | Missing heartbeats transition node from `ACTIVE` $\rightarrow$ `COOLING` $\rightarrow$ `OFFLINE`. | Router time sweep transitions unrefreshed node out of new-work routing. | 🟢 **PASSED** |
-| **Test 5: Incarnation Recovery** | Node restart with newer epoch restores routability without resurrection. | Newer epoch resets sequence tracking and restores routable state. | 🟢 **PASSED** |
-| **Test 6: Capability Invalidation** | Change in capability revision/digest invalidates cached capability state. | Revision bump flags cache as invalid, forcing TCP capability fetch. | 🟢 **PASSED** |
+| **Test 5: Incarnation & Cache Invalidation** | Newer epoch strictly resets state to `SEEN` and invalidates capability cache. | Same revision/digest on epoch bump strictly wipes cached capabilities. | 🟢 **PASSED** |
+| **Test 6: Revision Invalidation & Permissions** | STATUS updates invalidate cache; PONG is strictly forbidden from changing capabilities/ports. | PONG tampering rejected; STATUS revision bump triggers cache invalidation. | 🟢 **PASSED** |
 | **Test 7: Dynamic Availability Routing** | Changing load/availability dynamically redirects candidate selection. | Low-load node chosen; degraded node incurs penalty directing traffic to healthy node. | 🟢 **PASSED** |
-| **Test 8: Invite / Lease Retry** | Deterministic lease invite, acknowledge, and retry idempotence. | Lease ACK with retried sequence acknowledged without duplicate application. | 🟢 **PASSED** |
+| **Test 8: Lease Token Enforcement** | Mismatched lease token in LEASE_ACK rejected; valid retry succeeds. | Proves unauthorized lease ACK fails closed; legitimate ACK activates node. | 🟢 **PASSED** |
 | **Test 9: UDP Loss vs TCP Isolation** | Total UDP heartbeat loss/offline does NOT abort active TCP data stream. | Node expires to OFFLINE in UDP router while active TCP stream finishes 100% with 200 OK. | 🟢 **PASSED** |
-| **Test 10: Dual-Plane Integration** | Real UDP socket channel discovery bound to persistent TCP data trunk. | UDP datagram read over real socket feeds router, selects node, and streams over TCP. | 🟢 **PASSED** |
+| **Test 10: Dual-Plane Identity Binding** | Real UDP socket discovery bound to persistent TCP data trunk with session validation. | UDP datagram read over real socket feeds router, binds lease token, and streams over TCP. | 🟢 **PASSED** |
+| **Test 11: Fail-Closed Semantic Decoder** | Exact 80-byte size check, valid enum values, `load_pct <= 100`, `reserved == 0`. | Decoder fails closed on oversized buffer, dirty reserved bits, or illegal enums. | 🟢 **PASSED** |
 
 ### Phase D: Conformance Test Engine (`test_v02_conformance`)
 
