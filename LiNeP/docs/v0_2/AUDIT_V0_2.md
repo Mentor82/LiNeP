@@ -108,7 +108,9 @@ This audit document records the implementation and verification evidence for:
 | **Test 8: Lease Token Enforcement** | Mismatched lease token in LEASE_ACK rejected; valid retry succeeds. | Proves unauthorized lease ACK fails closed; legitimate ACK activates node. | 🟢 **PASSED** |
 | **Test 9: UDP Loss vs TCP Isolation** | Total UDP heartbeat loss/offline does NOT abort active TCP data stream. | Node expires to OFFLINE in UDP router while active TCP stream finishes 100% with 200 OK. | 🟢 **PASSED** |
 | **Test 10: Dual-Plane Identity Binding** | Real UDP socket discovery bound to persistent TCP data trunk with session validation. | UDP datagram read over real socket feeds router, binds lease token, and streams over TCP. | 🟢 **PASSED** |
-| **Test 11: Fail-Closed Semantic Decoder** | Exact 80-byte size check, valid enum values, `load_pct <= 100`, `reserved == 0`. | Decoder fails closed on oversized buffer, dirty reserved bits, or illegal enums. | 🟢 **PASSED** |
+| **Test 11: Fail-Closed Semantic Decoder** | Exact 80-byte size check, valid enum values, `load_pct <= 100`, `reserved == 0`, dirty flags rejection. | Decoder fails closed on oversized buffer, dirty reserved bits, or illegal enums. | 🟢 **PASSED** |
+| **Test 12: Lease Bypass Prevention** | HEARTBEAT and STATUS cannot bypass LEASE_ACK from INVITED state. | Heartbeat/status while INVITED strictly fails closed; node remains INVITED and unroutable. | 🟢 **PASSED** |
+| **Test 13: Epoch Pre-Auth Guard & Invite Guard** | Rogue PING/STATUS with higher epoch cannot mutate state; issue_invite requires SEEN state. | State, lease, and capability cache strictly preserved on unauthorized higher-epoch probes. | 🟢 **PASSED** |
 
 ### Phase D: Conformance Test Engine (`test_v02_conformance`)
 
