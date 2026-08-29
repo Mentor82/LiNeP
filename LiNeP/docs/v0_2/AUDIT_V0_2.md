@@ -130,6 +130,13 @@ This audit document records the implementation and verification evidence for:
 | `CONTENT_SNAPSHOT_EQUIVALENCE` | Full cumulative snapshot streaming verification. | 🟢 **PASS** |
 | `MULTI_OUTPUT_STREAMING` | Multi-candidate generation (`output_id = 0, 1, ...`) under shared execution. | 🟢 **PASS** |
 
+### Phase D: Golden Interop & CLI Integration Suite (`test_v02_golden_interop`)
+
+| Suite ID | Tested Invariants | Verdict |
+|---|---|---|
+| `GOLDEN_FRAMES_ROUNDTRIP` | All 13 canonical TCP and UDP golden reference frames generated and verified with 100% byte fidelity. | 🟢 **PASS** |
+| `DYNAMIC_MOCK_CONFORMANCE` | `conformance_runner` programmatic execution against dynamic ephemeral mock runtime server. | 🟢 **PASS** |
+
 ### Profile Conformance Summary
 ```text
 PROFILE_GENERATE ...... CONFORMANT
@@ -139,28 +146,49 @@ PROFILE_EMBED ......... CONFORMANT
 
 ---
 
-## 4. Multi-Platform Execution Evidence
+## 4. Standalone CLI Tools & Executables (`tools/v0_2/`)
 
-### 4.1 Windows Host x64 (Native GCC/MinGW)
+The following standalone CLI tools are provided and integrated into the CMake build system:
+
+1. **`linep-v02-conformance`**:
+   - Standalone CLI Conformance Test Runner.
+   - Flags: `--endpoint <host:port>`, `--profile <generate|chat|embed|all>`, `--json`, `--output-report <file>`.
+2. **`linep-v02-mock-runtime`**:
+   - Standalone Deterministic Mock Runtime Server.
+   - Flags: `--port <p>`, `--udp-port <p>`, `--model <id>`, `--delay-per-event <ms>`, `--tokens <N>`, `--delta-mode`, `--snapshot-mode`, `--multi-output <N>`, `--fail-after <N>`, `--duplicate-event`, `--disconnect-before-terminal`, `--ignore-cancel`, `--cancel-after-accept`, `--slow-reader`, `--batch-embed <N>`.
+3. **`linep-v02-golden-frames`**:
+   - Standalone binary Golden Frames generator and verifier for cross-language validation (e.g. against Go implementation).
+4. **`linep-v02-golden-socket-test`**:
+   - Interactive TCP Socket client for live stream testing against running servers.
+5. **`linep-v02-golden-udp-socket-test`**:
+   - Interactive UDP Socket client for live control plane handshake verification (`HELLO` $\rightarrow$ `INVITE` $\rightarrow$ `LEASE_ACK` $\rightarrow$ `HEARTBEAT`).
+
+---
+
+## 5. Multi-Platform Execution Evidence
+
+### 5.1 Windows Host x64 (Native GCC/MinGW)
 - **V0.1 Regression Suite**: 29/29 Tests Passed (100%)
-- **V0.2 Full Test Suite**: 6/6 Suites Passed (100%)
-- **Total Test Count**: 35/35 Tests Passed (100%) in 2.49s
+- **V0.2 Full Test Suite**: 7/7 Suites Passed (100%)
+- **Total Test Count**: 36/36 Tests Passed (100%) in 6.87s
+- **CLI Verification**: `linep-v02-golden-frames` & `linep-v02-conformance` verified against `linep-v02-mock-runtime` 100%
 
-### 4.2 Debian 13 (trixie) WSL (GCC 14 x64)
+### 5.2 Debian 13 (trixie) WSL (GCC 14 x64)
 - **V0.1 Regression Suite**: 29/29 Tests Passed (100%)
-- **V0.2 Full Test Suite**: 6/6 Suites Passed (100%)
-- **Total Test Count**: 35/35 Tests Passed (100%) in 3.01s
+- **V0.2 Full Test Suite**: 7/7 Suites Passed (100%)
+- **Total Test Count**: 36/36 Tests Passed (100%) in 3.10s
 
-### 4.3 Raspberry Pi 5 (Debian 14 aarch64 / ARM64)
+### 5.3 Raspberry Pi 5 (Debian 14 aarch64 / ARM64)
 - **Hardware**: Raspberry Pi 5 (Broadcom BCM2712 4x Cortex-A76 @ 2.4 GHz)
 - **OS / Kernel**: Debian GNU/Linux (Kernel 6.18.39+rpt-rpi-2712 aarch64)
 - **Compiler**: GCC 14.2.0 (ARM64)
 - **V0.1 Regression Suite**: 29/29 Tests Passed (100%)
-- **V0.2 Full Test Suite**: 6/6 Suites Passed (100%)
-- **Total Test Count**: 35/35 Tests Passed (100%) in 2.39s
+- **V0.2 Full Test Suite**: 7/7 Suites Passed (100%)
+- **Total Test Count**: 36/36 Tests Passed (100%) in 2.54s
+- **CLI Verification**: `linep-v02-golden-frames` generated and verified on ARM64 100%
 
 ---
 
-## 5. Audit Conclusion
+## 6. Audit Conclusion
 
-The LiNeP V0.2 Runtime Baseline fulfills all requirements of **Phases A, B, C, and D** as specified in Issue #9 and Issue #10. The dual-plane design (UDP Control Plane + TCP Data Plane) is fully verified across platforms and architectures (Windows x64, Linux x64, and Linux ARM64) with complete isolation from the frozen V0.1 baseline.
+The LiNeP V0.2 Runtime Baseline fulfills all requirements of **Phases A, B, C, and D** as specified in Issue #9 and Issue #10. The dual-plane design (UDP Control Plane + TCP Data Plane), standalone CLI conformance tools, and cross-language golden interop suites are fully verified across platforms and architectures (Windows x64, Linux x64, and Linux ARM64) with complete isolation from the frozen V0.1 baseline.
