@@ -81,7 +81,7 @@ void encode_control_datagram(const udp_control_datagram& dgram, std::vector<std:
     write_u64(p + 56, dgram.capability_digest);
     write_u16(p + 64, dgram.tcp_port);
     write_u16(p + 66, dgram.reserved2);
-    write_u64(p + 68, dgram.timestamp_us);
+    write_u64(p + 68, dgram.lease_token);
 
     // Calculate CRC32 over the first 76 bytes
     std::uint32_t crc = calc_crc32(p, 76);
@@ -89,16 +89,19 @@ void encode_control_datagram(const udp_control_datagram& dgram, std::vector<std:
 }
 
 bool decode_control_datagram(const std::uint8_t* data, std::size_t size, udp_control_datagram& out_dgram) {
-    if (!data || size < LINEP_V02_UDP_DATAGRAM_SIZE) {
+    // 1. Strict exact size validation (reject trailing garbage)
+    if (!data || size != LINEP_V02_UDP_DATAGRAM_SIZE) {
         return false;
     }
 
+    // 2. Strict CRC32 check
     std::uint32_t expected_crc = read_u32(data + 76);
     std::uint32_t actual_crc = calc_crc32(data, 76);
     if (expected_crc != actual_crc) {
         return false; // Fail closed on CRC32 mismatch
     }
 
+    // 3. Header magic and version check
     out_dgram.magic = read_u32(data + 0);
     if (out_dgram.magic != LINEP_V02_UDP_MAGIC) {
         return false;
@@ -110,23 +113,53 @@ bool decode_control_datagram(const std::uint8_t* data, std::size_t size, udp_con
         return false;
     }
 
+    // 4. Semantic message_type validation (1..7)
     out_dgram.message_type = data[6];
+    if (out_dgram.message_type < static_cast<std::uint8_t>(control_message_type::node_hello) ||
+        out_dgram.message_type > static_cast<std::uint8_t>(control_message_type::pong)) {
+        return false;
+    }
+
     out_dgram.flags = data[7];
     out_dgram.node_id = read_u64(data + 8);
     out_dgram.runtime_id = read_u64(data + 16);
     out_dgram.endpoint_id = read_u32(data + 24);
     out_dgram.control_seq = read_u64(data + 28);
     out_dgram.control_epoch = read_u64(data + 36);
+
+    // 5. Semantic field boundaries (availability 0..3, health 0..3, load_pct <= 100)
     out_dgram.availability = data[44];
+    if (out_dgram.availability > static_cast<std::uint8_t>(node_availability::degraded)) {
+        return false;
+    }
+
     out_dgram.health = data[45];
+    if (out_dgram.health > static_cast<std::uint8_t>(node_health::unhealthy)) {
+        return false;
+    }
+
     out_dgram.load_pct = data[46];
+    if (out_dgram.load_pct > 100) {
+        return false; // Invalid load percentage
+    }
+
+    // 6. Strict reserved bits == 0 check
     out_dgram.reserved = data[47];
+    if (out_dgram.reserved != 0) {
+        return false;
+    }
+
     out_dgram.queue_depth = read_u32(data + 48);
     out_dgram.capability_revision = read_u32(data + 52);
     out_dgram.capability_digest = read_u64(data + 56);
     out_dgram.tcp_port = read_u16(data + 64);
+
     out_dgram.reserved2 = read_u16(data + 66);
-    out_dgram.timestamp_us = read_u64(data + 68);
+    if (out_dgram.reserved2 != 0) {
+        return false;
+    }
+
+    out_dgram.lease_token = read_u64(data + 68);
     out_dgram.crc32 = expected_crc;
 
     return true;
@@ -134,22 +167,55 @@ bool decode_control_datagram(const std::uint8_t* data, std::size_t size, udp_con
 
 // ── control_plane_router Implementation ──────────────────────────────────────
 
+bool control_plane_router::issue_invite(const node_endpoint_identity& id, std::uint64_t lease_token, udp_control_datagram& out_invite_dgram) {
+    if (id.node_id == 0 || lease_token == 0) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = nodes_.find(id);
+    if (it == nodes_.end()) {
+        return false;
+    }
+
+    auto& node = it->second;
+    node.state = control_node_lifecycle::invited;
+    node.active_lease_token = lease_token;
+
+    out_invite_dgram = {};
+    out_invite_dgram.node_id = id.node_id;
+    out_invite_dgram.runtime_id = id.runtime_id;
+    out_invite_dgram.endpoint_id = id.endpoint_id;
+    out_invite_dgram.control_epoch = node.last_control_epoch;
+    out_invite_dgram.control_seq = ++node.last_outbound_seq;
+    out_invite_dgram.message_type = static_cast<std::uint8_t>(control_message_type::invite);
+    out_invite_dgram.lease_token = lease_token;
+    return true;
+}
+
 bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, std::uint64_t current_time_us) {
     if (dgram.node_id == 0) {
         return false;
     }
 
     node_endpoint_identity id{dgram.node_id, dgram.runtime_id, dgram.endpoint_id};
+    control_message_type msg_type = static_cast<control_message_type>(dgram.message_type);
 
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = nodes_.find(id);
+
     if (it == nodes_.end()) {
-        // New node discovered
+        // Unknown node: ONLY NODE_HELLO can perform initial registration!
+        if (msg_type != control_message_type::node_hello) {
+            return false;
+        }
+
         control_plane_node_state node{};
         node.identity = id;
-        node.state = control_node_lifecycle::seen;
+        node.state = control_node_lifecycle::seen; // Must start at SEEN, never jump to ACTIVE!
         node.last_control_epoch = dgram.control_epoch;
-        node.last_control_seq = dgram.control_seq;
+        node.last_inbound_seq = dgram.control_seq;
+        node.last_outbound_seq = 0;
+        node.active_lease_token = 0;
         node.availability = static_cast<node_availability>(dgram.availability);
         node.health = static_cast<node_health>(dgram.health);
         node.load_pct = dgram.load_pct;
@@ -160,61 +226,153 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
         node.tcp_trunk_ready = dgram.is_trunk_ready();
         node.last_seen_us = current_time_us;
 
-        if (dgram.is_trunk_ready() && dgram.availability == static_cast<std::uint8_t>(node_availability::available)) {
-            node.state = control_node_lifecycle::active;
-        }
-
         nodes_[id] = node;
         return true;
     }
 
     auto& node = it->second;
 
-    // Epoch & Monotonic Sequence Invariant:
+    // ── Epoch & Incarnation Management ──────────────────────────────────────
     if (dgram.control_epoch < node.last_control_epoch) {
-        // Stale epoch from older incarnation -> ignore / reject
+        // Stale epoch from older incarnation -> strictly reject
         return false;
     }
 
     if (dgram.control_epoch > node.last_control_epoch) {
-        // Newer epoch: node restarted or upgraded incarnation
+        // Epoch changed: Node restarted or incarnation upgraded!
+        // Strictly invalidate old capability cache, active lease, and reset to SEEN:
+        capability_cache_.erase(id);
         node.last_control_epoch = dgram.control_epoch;
-        node.last_control_seq = dgram.control_seq;
-        node.state = control_node_lifecycle::seen; // Reset lifecycle on restart
+        node.last_inbound_seq = dgram.control_seq;
+        node.active_lease_token = 0;
+        node.state = control_node_lifecycle::seen;
     } else {
         // Same epoch: check sequence monotonicity
-        if (dgram.control_seq <= node.last_control_seq) {
+        if (dgram.control_seq <= node.last_inbound_seq) {
             // Duplicate or replayed datagram -> idempotent no-op
             return true;
         }
-        node.last_control_seq = dgram.control_seq;
+        node.last_inbound_seq = dgram.control_seq;
     }
 
-    node.availability = static_cast<node_availability>(dgram.availability);
-    node.health = static_cast<node_health>(dgram.health);
-    node.load_pct = dgram.load_pct;
-    node.queue_depth = dgram.queue_depth;
-    node.capability_revision = dgram.capability_revision;
-    node.capability_digest = dgram.capability_digest;
-    node.tcp_port = dgram.tcp_port;
-    node.tcp_trunk_ready = dgram.is_trunk_ready();
     node.last_seen_us = current_time_us;
 
-    // State machine updates
-    if (node.availability == node_availability::unavailable) {
-        node.state = control_node_lifecycle::cooling;
-    } else if (node.health == node_health::unhealthy) {
-        node.state = control_node_lifecycle::cooling;
-    } else if (node.health == node_health::degraded || node.availability == node_availability::degraded) {
-        node.state = control_node_lifecycle::degraded;
-    } else if (node.tcp_trunk_ready && node.tcp_port > 0) {
-        node.state = control_node_lifecycle::active;
+    // ── Strict Message-Type Dispatcher & Semantic Permissions ────────────────
+    switch (msg_type) {
+    case control_message_type::node_hello: {
+        // Discovery / Incarnation announcement: resets node to SEEN
+        node.state = control_node_lifecycle::seen;
+        node.active_lease_token = 0;
+        node.tcp_port = dgram.tcp_port;
+        node.tcp_trunk_ready = dgram.is_trunk_ready();
+        node.capability_revision = dgram.capability_revision;
+        node.capability_digest = dgram.capability_digest;
+        node.availability = static_cast<node_availability>(dgram.availability);
+        node.health = static_cast<node_health>(dgram.health);
+        break;
+    }
+
+    case control_message_type::invite: {
+        // Invite issued (Scheduler -> Node)
+        node.state = control_node_lifecycle::invited;
+        node.active_lease_token = dgram.lease_token;
+        break;
+    }
+
+    case control_message_type::lease_ack: {
+        // Node accepts lease offer:
+        // Must be in INVITED state, lease token must match non-zero active lease, and trunk must be ready!
+        if (node.state != control_node_lifecycle::invited || 
+            node.active_lease_token == 0 ||
+            dgram.lease_token != node.active_lease_token) {
+            return false; // Unauthorized or mismatched lease ACK
+        }
+        if (!dgram.is_trunk_ready() || dgram.tcp_port == 0) {
+            return false; // Trunk not ready
+        }
+
+        node.tcp_port = dgram.tcp_port;
+        node.tcp_trunk_ready = true;
+        node.availability = static_cast<node_availability>(dgram.availability);
+        node.health = static_cast<node_health>(dgram.health);
+
+        if (node.health == node_health::degraded || node.availability == node_availability::degraded) {
+            node.state = control_node_lifecycle::degraded;
+        } else {
+            node.state = control_node_lifecycle::active;
+        }
+        break;
+    }
+
+    case control_message_type::heartbeat: {
+        // Liveness & lightweight telemetry ONLY for active/degraded/cooling nodes
+        if (node.state == control_node_lifecycle::unknown || node.state == control_node_lifecycle::seen) {
+            // Uninvited/unactivated node sending heartbeat cannot jump to ACTIVE!
+            return false;
+        }
+
+        node.load_pct = dgram.load_pct;
+        node.queue_depth = dgram.queue_depth;
+        node.availability = static_cast<node_availability>(dgram.availability);
+        node.health = static_cast<node_health>(dgram.health);
+
+        // Heartbeat CANNOT alter capability digest or TCP trunk port!
+        if (node.availability == node_availability::unavailable || node.health == node_health::unhealthy) {
+            node.state = control_node_lifecycle::cooling;
+        } else if (node.health == node_health::degraded || node.availability == node_availability::degraded) {
+            node.state = control_node_lifecycle::degraded;
+        } else if (node.has_active_lease() && node.tcp_trunk_ready && node.tcp_port > 0) {
+            node.state = control_node_lifecycle::active;
+        }
+        break;
+    }
+
+    case control_message_type::status: {
+        // Full health and capability digest update
+        if (node.state == control_node_lifecycle::unknown || node.state == control_node_lifecycle::seen) {
+            return false;
+        }
+
+        node.load_pct = dgram.load_pct;
+        node.queue_depth = dgram.queue_depth;
+        node.availability = static_cast<node_availability>(dgram.availability);
+        node.health = static_cast<node_health>(dgram.health);
+        node.tcp_port = dgram.tcp_port;
+        node.tcp_trunk_ready = dgram.is_trunk_ready();
+
+        if (node.capability_revision != dgram.capability_revision ||
+            node.capability_digest != dgram.capability_digest) {
+            // Invalidate cached capabilities on revision/digest update!
+            capability_cache_.erase(id);
+            node.capability_revision = dgram.capability_revision;
+            node.capability_digest = dgram.capability_digest;
+        }
+
+        if (node.availability == node_availability::unavailable || node.health == node_health::unhealthy) {
+            node.state = control_node_lifecycle::cooling;
+        } else if (node.health == node_health::degraded || node.availability == node_availability::degraded) {
+            node.state = control_node_lifecycle::degraded;
+        } else if (node.has_active_lease() && node.tcp_trunk_ready && node.tcp_port > 0) {
+            node.state = control_node_lifecycle::active;
+        }
+        break;
+    }
+
+    case control_message_type::ping:
+    case control_message_type::pong: {
+        // Connectivity/RTT only: last_seen_us is already updated above.
+        // Strictly forbidden from altering lifecycle state, metrics, or capabilities!
+        break;
+    }
+
+    default:
+        return false;
     }
 
     return true;
 }
 
-bool control_plane_router::select_best_candidate(node_endpoint_identity& out_node, std::uint16_t& out_tcp_port) const {
+bool control_plane_router::select_best_candidate(node_endpoint_identity& out_node, std::uint16_t& out_tcp_port, std::uint64_t& out_lease_token) const {
     std::lock_guard<std::mutex> lock(mutex_);
     const control_plane_node_state* best_node = nullptr;
     std::uint64_t lowest_score = UINT64_MAX;
@@ -248,7 +406,23 @@ bool control_plane_router::select_best_candidate(node_endpoint_identity& out_nod
 
     out_node = best_node->identity;
     out_tcp_port = best_node->tcp_port;
+    out_lease_token = best_node->active_lease_token;
     return true;
+}
+
+bool control_plane_router::validate_tcp_session_binding(const node_endpoint_identity& id, std::uint64_t control_epoch, std::uint64_t lease_token) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = nodes_.find(id);
+    if (it == nodes_.end()) {
+        return false;
+    }
+    const auto& node = it->second;
+    return (node.state == control_node_lifecycle::active || node.state == control_node_lifecycle::degraded) &&
+           node.last_control_epoch == control_epoch &&
+           node.active_lease_token == lease_token &&
+           lease_token != 0 &&
+           node.tcp_trunk_ready &&
+           node.tcp_port > 0;
 }
 
 std::size_t control_plane_router::sweep_stale_nodes(std::uint64_t current_time_us, std::uint64_t stale_timeout_us, std::uint64_t offline_timeout_us) {
@@ -265,6 +439,7 @@ std::size_t control_plane_router::sweep_stale_nodes(std::uint64_t current_time_u
         if (elapsed > offline_timeout_us) {
             if (node.state != control_node_lifecycle::offline) {
                 node.state = control_node_lifecycle::offline;
+                node.active_lease_token = 0;
                 transition_count++;
             }
         } else if (elapsed > stale_timeout_us) {
@@ -295,6 +470,11 @@ bool control_plane_router::is_capability_cache_valid(const node_endpoint_identit
 void control_plane_router::set_cached_capability_valid(const node_endpoint_identity& id, std::uint32_t rev, std::uint64_t digest) {
     std::lock_guard<std::mutex> lock(mutex_);
     capability_cache_[id] = {rev, digest};
+}
+
+void control_plane_router::invalidate_capability_cache(const node_endpoint_identity& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    capability_cache_.erase(id);
 }
 
 std::size_t control_plane_router::get_node_count() const {

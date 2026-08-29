@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <cstdint>
 #include <memory>
@@ -68,7 +68,7 @@ struct udp_control_datagram {
     std::uint64_t capability_digest{0};
     std::uint16_t tcp_port{0};
     std::uint16_t reserved2{0};
-    std::uint64_t timestamp_us{0};
+    std::uint64_t lease_token{0}; // Explicit 64-bit lease/session token binding UDP to TCP
     std::uint32_t crc32{0};
 
     bool is_trunk_ready() const noexcept { return (flags & 0x01) != 0; }
@@ -109,7 +109,9 @@ struct control_plane_node_state {
     node_endpoint_identity identity;
     control_node_lifecycle state{control_node_lifecycle::unknown};
     std::uint64_t last_control_epoch{0};
-    std::uint64_t last_control_seq{0};
+    std::uint64_t last_inbound_seq{0};
+    std::uint64_t last_outbound_seq{0};
+    uint64_t active_lease_token{0};
     node_availability availability{node_availability::unknown};
     node_health health{node_health::unknown};
     std::uint8_t load_pct{0};
@@ -120,15 +122,19 @@ struct control_plane_node_state {
     bool tcp_trunk_ready{false};
     std::uint64_t last_seen_us{0};
 
+    bool has_active_lease() const noexcept {
+        return active_lease_token != 0;
+    }
+
     bool is_routable() const noexcept {
         return (state == control_node_lifecycle::active || state == control_node_lifecycle::degraded) &&
                (availability == node_availability::available || availability == node_availability::degraded) &&
                (health == node_health::healthy || health == node_health::degraded) &&
-               tcp_trunk_ready && tcp_port > 0;
+               tcp_trunk_ready && tcp_port > 0 && has_active_lease();
     }
 };
 
-// Serialization and validation functions
+// Serialization and strict fail-closed validation functions
 void encode_control_datagram(const udp_control_datagram& dgram, std::vector<std::uint8_t>& out_buf);
 bool decode_control_datagram(const std::uint8_t* data, std::size_t size, udp_control_datagram& out_dgram);
 
@@ -136,11 +142,17 @@ class control_plane_router {
 public:
     control_plane_router() = default;
 
-    // Ingest incoming UDP control datagram with epoch/seq monotonicity & idempotence
+    // Issue an INVITE with a lease token to a SEEN node
+    bool issue_invite(const node_endpoint_identity& id, std::uint64_t lease_token, udp_control_datagram& out_invite_dgram);
+
+    // Ingest incoming UDP control datagram with normative message-type dispatch & privileges
     bool ingest_datagram(const udp_control_datagram& dgram, std::uint64_t current_time_us);
 
-    // Select the best routable node candidate for new task placement based on load, queue & health
-    bool select_best_candidate(node_endpoint_identity& out_node, std::uint16_t& out_tcp_port) const;
+    // Select best routable node candidate for new task placement based on load, queue & health
+    bool select_best_candidate(node_endpoint_identity& out_node, std::uint16_t& out_tcp_port, std::uint64_t& out_lease_token) const;
+
+    // Validate that an in-flight TCP connection's identity matches the active UDP control epoch and lease token
+    bool validate_tcp_session_binding(const node_endpoint_identity& id, std::uint64_t control_epoch, std::uint64_t lease_token) const;
 
     // Sweep nodes for stale heartbeat expiration (active -> cooling -> offline)
     std::size_t sweep_stale_nodes(std::uint64_t current_time_us, std::uint64_t stale_timeout_us, std::uint64_t offline_timeout_us);
@@ -148,6 +160,7 @@ public:
     // Invalidate/query capability cache
     bool is_capability_cache_valid(const node_endpoint_identity& id) const;
     void set_cached_capability_valid(const node_endpoint_identity& id, std::uint32_t rev, std::uint64_t digest);
+    void invalidate_capability_cache(const node_endpoint_identity& id);
 
     std::size_t get_node_count() const;
     std::size_t get_routable_node_count() const;
