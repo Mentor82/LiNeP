@@ -951,6 +951,140 @@ void test_udp_higher_epoch_preauth_mutation_guard() {
     std::cout << "  -> Higher-Epoch Pre-Auth Mutation Protection & Invite Guards PASSED" << std::endl;
 }
 
+// ── Test 14: Rejected Message Sequence & Liveness Atomicity ──────────────────
+void test_udp_rejected_message_atomicity() {
+    std::cout << "[Test 14] UDP Control Plane: Rejected Message Sequence & Liveness Atomicity..." << std::endl;
+
+    control_plane_router router;
+    node_endpoint_identity id{1401, 2401, 1};
+
+    // 1. Establish node in SEEN state, then issue INVITE
+    udp_control_datagram hello{};
+    hello.node_id = 1401;
+    hello.runtime_id = 2401;
+    hello.endpoint_id = 1;
+    hello.control_epoch = 1;
+    hello.control_seq = 1;
+    hello.message_type = static_cast<std::uint8_t>(control_message_type::node_hello);
+    hello.tcp_port = 5401;
+    hello.set_trunk_ready(true);
+    LINEP_TEST_CHECK(router.ingest_datagram(hello, 1000));
+
+    udp_control_datagram inv{};
+    std::uint64_t lease_token = 0xAA55AA5511223344ULL;
+    LINEP_TEST_CHECK(router.issue_invite(id, lease_token, inv));
+
+    control_plane_node_state st{};
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::invited);
+    LINEP_TEST_CHECK(st.last_inbound_seq == 1);
+    LINEP_TEST_CHECK(st.last_seen_us == 1000);
+
+    // 2. Send rogue unauthorized HEARTBEAT with seq=1000 at t=9000000 (9 seconds later)
+    udp_control_datagram rogue_hb{};
+    rogue_hb.node_id = 1401;
+    rogue_hb.runtime_id = 2401;
+    rogue_hb.endpoint_id = 1;
+    rogue_hb.control_epoch = 1;
+    rogue_hb.control_seq = 1000; // Big sequence jump
+    rogue_hb.message_type = static_cast<std::uint8_t>(control_message_type::heartbeat);
+    rogue_hb.availability = static_cast<std::uint8_t>(node_availability::available);
+    rogue_hb.health = static_cast<std::uint8_t>(node_health::healthy);
+
+    // Must be rejected!
+    LINEP_TEST_CHECK(!router.ingest_datagram(rogue_hb, 9000000));
+
+    // CRITICAL: Rejected message MUST NOT consume sequence number or refresh last_seen_us!
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::invited);
+    LINEP_TEST_CHECK(st.last_inbound_seq == 1);     // MUST STILL BE 1 (NOT 1000!)
+    LINEP_TEST_CHECK(st.last_seen_us == 1000);       // MUST STILL BE 1000 (NOT 9000000!)
+
+    // 3. Legitimate LEASE_ACK with seq=2 arriving at t=2000 MUST SUCCEED (not blocked by seq=1000!)
+    udp_control_datagram ack{};
+    ack.node_id = 1401;
+    ack.runtime_id = 2401;
+    ack.endpoint_id = 1;
+    ack.control_epoch = 1;
+    ack.control_seq = 2; // seq=2 must be accepted because seq=1000 was never committed!
+    ack.message_type = static_cast<std::uint8_t>(control_message_type::lease_ack);
+    ack.availability = static_cast<std::uint8_t>(node_availability::available);
+    ack.health = static_cast<std::uint8_t>(node_health::healthy);
+    ack.tcp_port = 5401;
+    ack.set_trunk_ready(true);
+    ack.lease_token = lease_token;
+    LINEP_TEST_CHECK(router.ingest_datagram(ack, 2000));
+
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::active);
+    LINEP_TEST_CHECK(st.last_inbound_seq == 2);
+    LINEP_TEST_CHECK(st.last_seen_us == 2000);
+
+    // 4. Repeated invalid LEASE_ACK (mismatched token) with seq=999 at t=5000000 does NOT refresh last_seen
+    udp_control_datagram bad_ack = ack;
+    bad_ack.control_seq = 999;
+    bad_ack.lease_token = 0xDEAD; // Bad token
+    LINEP_TEST_CHECK(!router.ingest_datagram(bad_ack, 5000000));
+
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.last_inbound_seq == 2);   // Still 2
+    LINEP_TEST_CHECK(st.last_seen_us == 2000);     // Still 2000
+
+    std::cout << "  -> Rejected Message Sequence & Liveness Atomicity PASSED" << std::endl;
+}
+
+// ── Test 15: Inbound INVITE Rejection (Message Direction Enforcement) ────────
+void test_udp_inbound_invite_rejection() {
+    std::cout << "[Test 15] UDP Control Plane: Inbound INVITE Rejection (Direction Enforcement)..." << std::endl;
+
+    control_plane_router router;
+    node_endpoint_identity id{1501, 2501, 1};
+
+    // 1. Establish node in SEEN state
+    udp_control_datagram hello{};
+    hello.node_id = 1501;
+    hello.runtime_id = 2501;
+    hello.endpoint_id = 1;
+    hello.control_epoch = 1;
+    hello.control_seq = 1;
+    hello.message_type = static_cast<std::uint8_t>(control_message_type::node_hello);
+    hello.tcp_port = 5501;
+    hello.set_trunk_ready(true);
+    LINEP_TEST_CHECK(router.ingest_datagram(hello, 1000));
+
+    control_plane_node_state st{};
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::seen);
+
+    // 2. Node attempts to inject an inbound INVITE datagram: MUST BE REJECTED!
+    udp_control_datagram rogue_invite{};
+    rogue_invite.node_id = 1501;
+    rogue_invite.runtime_id = 2501;
+    rogue_invite.endpoint_id = 1;
+    rogue_invite.control_epoch = 1;
+    rogue_invite.control_seq = 2;
+    rogue_invite.message_type = static_cast<std::uint8_t>(control_message_type::invite);
+    rogue_invite.lease_token = 0xDEADBEEF6666ULL; // Attacker-chosen token
+    LINEP_TEST_CHECK(!router.ingest_datagram(rogue_invite, 2000));
+
+    // Assert: Node remains in SEEN state and active_lease_token is STILL 0
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::seen);
+    LINEP_TEST_CHECK(st.active_lease_token == 0);
+    LINEP_TEST_CHECK(st.last_inbound_seq == 1); // Sequence was NOT consumed
+
+    // 3. Legitimate Scheduler API issue_invite() correctly transitions to INVITED
+    udp_control_datagram legit_inv{};
+    std::uint64_t authentic_token = 0x1122334455667788ULL;
+    LINEP_TEST_CHECK(router.issue_invite(id, authentic_token, legit_inv));
+
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::invited);
+    LINEP_TEST_CHECK(st.active_lease_token == authentic_token);
+
+    std::cout << "  -> Inbound INVITE Rejection (Direction Enforcement) PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "=== LiNeP V0.2 UDP Control Plane Acceptance Test Suite ===" << std::endl;
     test_udp_hello_heartbeat_loopback();
@@ -966,6 +1100,8 @@ int main() {
     test_strict_fail_closed_decoder_validation();
     test_udp_heartbeat_cannot_bypass_lease_ack();
     test_udp_higher_epoch_preauth_mutation_guard();
-    std::cout << "ALL 13 V0.2 PHASE D UDP CONTROL PLANE TESTS PASSED 100%!" << std::endl;
+    test_udp_rejected_message_atomicity();
+    test_udp_inbound_invite_rejection();
+    std::cout << "ALL 15 V0.2 PHASE D UDP CONTROL PLANE TESTS PASSED 100%!" << std::endl;
     return 0;
 }

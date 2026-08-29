@@ -209,6 +209,12 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
     node_endpoint_identity id{dgram.node_id, dgram.runtime_id, dgram.endpoint_id};
     control_message_type msg_type = static_cast<control_message_type>(dgram.message_type);
 
+    // ── 1. Message Direction Enforcement (Inbound Node -> Scheduler) ────────
+    // INVITE is strictly a Scheduler -> Node message. A Node cannot inject an INVITE!
+    if (msg_type == control_message_type::invite) {
+        return false; // Unauthorized inbound direction
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = nodes_.find(id);
 
@@ -241,42 +247,37 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
 
     auto& node = it->second;
 
-    // ── Epoch & Incarnation Management ──────────────────────────────────────
+    // ── 2. Epoch & Incarnation Pre-Auth Checks ──────────────────────────────
     if (dgram.control_epoch < node.last_control_epoch) {
-        // Stale epoch from older incarnation -> strictly reject
+        // Stale epoch from older incarnation -> strictly reject without mutation
         return false;
     }
 
     if (dgram.control_epoch > node.last_control_epoch) {
         // ONLY NODE_HELLO is authorized to open/announce a new epoch incarnation!
         // Any other message type (e.g. rogue PING, STATUS, HEARTBEAT with higher epoch)
-        // must be REJECTED WITHOUT MUTATING existing state/lease/cache!
+        // must be REJECTED WITHOUT MUTATING existing state/lease/cache/seq/seen!
         if (msg_type != control_message_type::node_hello) {
             return false;
         }
-
-        // Legitimate new epoch via NODE_HELLO:
-        // Strictly invalidate old capability cache, active lease, and reset to SEEN:
-        capability_cache_.erase(id);
-        node.last_control_epoch = dgram.control_epoch;
-        node.last_inbound_seq = dgram.control_seq;
-        node.active_lease_token = 0;
-        node.state = control_node_lifecycle::seen;
     } else {
         // Same epoch: check sequence monotonicity
         if (dgram.control_seq <= node.last_inbound_seq) {
-            // Duplicate or replayed datagram -> idempotent no-op
+            // Duplicate or replayed datagram -> idempotent no-op (return true without re-processing)
             return true;
         }
-        node.last_inbound_seq = dgram.control_seq;
     }
 
-    node.last_seen_us = current_time_us;
-
-    // ── Strict Message-Type Dispatcher & Semantic Permissions ────────────────
+    // ── 3. Transactional Message Dispatch & Semantic Authorization ───────────
+    // State mutations, sequence bump, and last_seen refresh are ONLY committed if
+    // the message is 100% semantically valid and authorized.
     switch (msg_type) {
     case control_message_type::node_hello: {
-        // Discovery / Incarnation announcement: resets node to SEEN
+        // Legitimate NODE_HELLO: resets node to SEEN
+        if (dgram.control_epoch > node.last_control_epoch) {
+            capability_cache_.erase(id);
+            node.last_control_epoch = dgram.control_epoch;
+        }
         node.state = control_node_lifecycle::seen;
         node.active_lease_token = 0;
         node.tcp_port = dgram.tcp_port;
@@ -285,16 +286,11 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
         node.capability_digest = dgram.capability_digest;
         node.availability = static_cast<node_availability>(dgram.availability);
         node.health = static_cast<node_health>(dgram.health);
-        break;
-    }
 
-    case control_message_type::invite: {
-        // Invite issued (Scheduler -> Node)
-        if (node.state == control_node_lifecycle::seen) {
-            node.state = control_node_lifecycle::invited;
-            node.active_lease_token = dgram.lease_token;
-        }
-        break;
+        // Commit transaction:
+        node.last_inbound_seq = dgram.control_seq;
+        node.last_seen_us = current_time_us;
+        return true;
     }
 
     case control_message_type::lease_ack: {
@@ -303,10 +299,10 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
         if (node.state != control_node_lifecycle::invited || 
             node.active_lease_token == 0 ||
             dgram.lease_token != node.active_lease_token) {
-            return false; // Unauthorized or mismatched lease ACK
+            return false; // Unauthorized or mismatched lease ACK (ZERO state/seq mutation!)
         }
         if (!dgram.is_trunk_ready() || dgram.tcp_port == 0) {
-            return false; // Trunk not ready
+            return false; // Trunk not ready (ZERO state/seq mutation!)
         }
 
         node.tcp_port = dgram.tcp_port;
@@ -319,16 +315,20 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
         } else {
             node.state = control_node_lifecycle::active;
         }
-        break;
+
+        // Commit transaction:
+        node.last_inbound_seq = dgram.control_seq;
+        node.last_seen_us = current_time_us;
+        return true;
     }
 
     case control_message_type::heartbeat: {
         // Liveness & lightweight telemetry ONLY for active, degraded, or cooling nodes.
-        // Node in UNKNOWN, SEEN, or INVITED state CANNOT process heartbeats or jump to ACTIVE!
+        // Node in UNKNOWN, SEEN, or INVITED state CANNOT process heartbeats!
         if (node.state != control_node_lifecycle::active &&
             node.state != control_node_lifecycle::degraded &&
             node.state != control_node_lifecycle::cooling) {
-            return false;
+            return false; // Rejected without sequence or last_seen consumption!
         }
 
         node.load_pct = dgram.load_pct;
@@ -344,7 +344,11 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
         } else if (node.has_active_lease() && node.tcp_trunk_ready && node.tcp_port > 0) {
             node.state = control_node_lifecycle::active;
         }
-        break;
+
+        // Commit transaction:
+        node.last_inbound_seq = dgram.control_seq;
+        node.last_seen_us = current_time_us;
+        return true;
     }
 
     case control_message_type::status: {
@@ -352,7 +356,7 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
         if (node.state != control_node_lifecycle::active &&
             node.state != control_node_lifecycle::degraded &&
             node.state != control_node_lifecycle::cooling) {
-            return false;
+            return false; // Rejected without sequence or last_seen consumption!
         }
 
         node.load_pct = dgram.load_pct;
@@ -377,21 +381,28 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
         } else if (node.has_active_lease() && node.tcp_trunk_ready && node.tcp_port > 0) {
             node.state = control_node_lifecycle::active;
         }
-        break;
+
+        // Commit transaction:
+        node.last_inbound_seq = dgram.control_seq;
+        node.last_seen_us = current_time_us;
+        return true;
     }
 
     case control_message_type::ping:
     case control_message_type::pong: {
-        // Connectivity/RTT only: last_seen_us is already updated above.
-        // Strictly forbidden from altering lifecycle state, metrics, or capabilities!
-        break;
+        // Connectivity/RTT only: strictly forbidden from altering lifecycle state, metrics, or capabilities!
+        if (node.state == control_node_lifecycle::unknown) {
+            return false;
+        }
+        // Commit transaction:
+        node.last_inbound_seq = dgram.control_seq;
+        node.last_seen_us = current_time_us;
+        return true;
     }
 
     default:
         return false;
     }
-
-    return true;
 }
 
 bool control_plane_router::select_best_candidate(node_endpoint_identity& out_node, std::uint16_t& out_tcp_port, std::uint64_t& out_lease_token) const {
