@@ -1,17 +1,17 @@
-# LiNeP V0.2 Documentation & Verification Audits
+﻿# LiNeP V0.2 Runtime Baseline Documentation
 
-Tracking: [Issue #10](https://github.com/Mentor82/LiNeP/issues/10)
+Welcome to the **LiNeP V0.2 Runtime Baseline** specification and verification index.
 
-This directory contains specifications, runtime contracts, and audit reports for the testable V0.2 runtime baseline.
+## Documents
 
-V0.1 remains frozen. Documents here must not retroactively redefine V0.1 behavior.
+1. [**`RUNTIME_CONTRACT.md`**](RUNTIME_CONTRACT.md): Full specification of V0.2 envelope families, canonical 32-byte header, identity scopes, lifecycle state machine, and flow control.
+2. [**`CONFORMANCE.md`**](CONFORMANCE.md): Conformance runner specification, standardized test suites, and profile evaluation rules.
+3. [**`AUDIT_V0_2.md`**](AUDIT_V0_2.md): Multi-platform audit report across Windows Host x64 and Debian 13 WSL.
 
-## Audits & Verification Evidence
+## Test Suites
 
-- [`AUDIT_V0_2.md`](./AUDIT_V0_2.md) — Comprehensive audit report, wire-level specifications, invariant matrices, and raw multi-platform test execution logs for Phase A (Contract Types & Envelopes), Phase B (Persistent Session & TCP Multiplexing), and Phase C (Lifecycle, End-to-End Cancel & Hybrid Flow Control).
-
-## Planned Specifications
-
-- `PROTOCOL_V0_2_DRAFT.md` — candidate wire/envelope contract
-- `RUNTIME_CONTRACT.md` — lifecycle, identity, streaming, cancel, terminal semantics
-- `CONFORMANCE.md` — executable profile requirements and evidence rules
+- `test_v02_envelopes`: Envelope serialization, canonical little-endian framing, tampered buffer protection.
+- `test_v02_session`: Persistent session multiplexing, stream isolation, sequencing invariants.
+- `test_v02_socket_multiplexing`: Real TCP socket persistent multiplexing, interleaving, and disconnect recovery.
+- `test_v02_lifecycle_cancel_backpressure`: End-to-end socket cancellation, race resolution, hybrid backpressure, and fair send scheduler.
+- `test_v02_conformance`: Standardized 9-suite conformance verification and edge mode failure tests.

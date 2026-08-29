@@ -2,6 +2,19 @@
 #include "socket.hpp"
 #include <cstring>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#endif
+
 namespace linep::v0_2 {
 
 envelope_connection::envelope_connection() {
@@ -114,6 +127,11 @@ bool envelope_connection::send_capabilities(const capabilities_envelope& caps) {
     return send_bytes_locked(buf.data(), buf.size());
 }
 
+bool envelope_connection::send_frame_raw(const std::uint8_t* data, std::size_t len) {
+    std::lock_guard<std::mutex> lock(send_mutex_);
+    return send_bytes_locked(data, len);
+}
+
 bool envelope_connection::receive_envelope_raw(std::vector<std::uint8_t>& out_buffer) {
     out_buffer.clear();
     std::uint8_t hdr_bytes[LINEP_V02_HEADER_SIZE];
@@ -167,7 +185,24 @@ bool envelope_server::listen(std::uint16_t port, int backlog) {
         return false;
     }
     listen_sock_ = static_cast<std::uintptr_t>(s.fd);
-    port_ = port;
+
+    sockaddr_in sin{};
+#ifdef _WIN32
+    int sin_len = sizeof(sin);
+    if (::getsockname(static_cast<SOCKET>(s.fd), reinterpret_cast<sockaddr*>(&sin), &sin_len) == 0) {
+        port_ = ntohs(sin.sin_port);
+    } else {
+        port_ = port;
+    }
+#else
+    socklen_t sin_len = sizeof(sin);
+    if (::getsockname(s.fd, reinterpret_cast<sockaddr*>(&sin), &sin_len) == 0) {
+        port_ = ntohs(sin.sin_port);
+    } else {
+        port_ = port;
+    }
+#endif
+
     return true;
 }
 

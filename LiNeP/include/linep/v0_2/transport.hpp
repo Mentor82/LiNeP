@@ -34,6 +34,7 @@ public:
     bool send_event(const event_envelope& evt);
     bool send_control(const control_envelope& ctrl);
     bool send_capabilities(const capabilities_envelope& caps);
+    bool send_frame_raw(const std::uint8_t* data, std::size_t len);
 
     // Receive the next binary envelope from the TCP stream (blocking)
     bool receive_envelope_raw(std::vector<std::uint8_t>& out_buffer);

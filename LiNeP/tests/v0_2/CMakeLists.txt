@@ -22,3 +22,5 @@ linep_v02_add_test(test_v02_envelopes                       test_v02_envelopes.c
 linep_v02_add_test(test_v02_session                         test_v02_session.cpp)
 linep_v02_add_test(test_v02_socket_multiplexing             test_v02_socket_multiplexing.cpp)
 linep_v02_add_test(test_v02_lifecycle_cancel_backpressure   test_v02_lifecycle_cancel_backpressure.cpp)
+linep_v02_add_test(test_v02_conformance                    test_v02_conformance.cpp)
+linep_v02_add_test(test_v02_udp_control_plane              test_v02_udp_control_plane.cpp)

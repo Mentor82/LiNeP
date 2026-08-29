@@ -1,5 +1,7 @@
 build/
 **/build/
+build*/
+**/build*/
 build_linux/
 **/build_linux/
 *.exe

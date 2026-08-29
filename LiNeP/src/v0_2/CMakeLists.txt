@@ -2,6 +2,10 @@ add_library(linep_v02_core OBJECT
     envelopes.cpp
     session.cpp
     transport.cpp
+    mock_runtime.cpp
+    conformance.cpp
+    control_plane.cpp
+    udp_transport.cpp
 )
 
 target_include_directories(linep_v02_core PUBLIC
