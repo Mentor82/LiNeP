@@ -112,7 +112,9 @@ This audit document records the implementation and verification evidence for:
 | **Test 12: Lease Bypass Prevention** | HEARTBEAT and STATUS cannot bypass LEASE_ACK from INVITED state. | Heartbeat/status while INVITED strictly fails closed; node remains INVITED and unroutable. | 🟢 **PASSED** |
 | **Test 13: Epoch Pre-Auth Guard & Invite Guard** | Rogue PING/STATUS with higher epoch cannot mutate state; issue_invite requires SEEN state. | State, lease, and capability cache strictly preserved on unauthorized higher-epoch probes. | 🟢 **PASSED** |
 | **Test 14: Rejected Message Atomicity** | Rejected messages do not consume `last_inbound_seq` or refresh `last_seen_us`. | Sequence jumping rejected datagrams cannot lock out subsequent valid lower-sequence messages. | 🟢 **PASSED** |
-| **Test 15: Direction Enforcement** | Inbound INVITE datagrams from node to scheduler router are strictly rejected. | Scheduler API `issue_invite()` is the sole authorized transition from `SEEN` $\rightarrow$ `INVITED`. | 🟢 **PASSED** |
+| **Test 15: Direction Enforcement (INVITE)** | Inbound INVITE datagrams from node to scheduler router are strictly rejected. | Scheduler API `issue_invite()` is the sole authorized transition from `SEEN` $\rightarrow$ `INVITED`. | 🟢 **PASSED** |
+| **Test 16: Direction Enforcement (PING/PONG)** | Inbound PING is strictly rejected; only inbound PONG is accepted as liveness response. | Node cannot ping scheduler; scheduler verifies PONG responses without state tampering. | 🟢 **PASSED** |
+| **Test 17: Same-Epoch HELLO Protection** | Same-epoch `NODE_HELLO` cannot downgrade an `ACTIVE`/`INVITED` node to `SEEN` or wipe leases. | Prevents delayed/rogue HELLO packets from destroying active TCP lease bindings. | 🟢 **PASSED** |
 
 ### Phase D: Conformance Test Engine (`test_v02_conformance`)
 
