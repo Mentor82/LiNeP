@@ -353,6 +353,8 @@ def _candidate_libraries() -> list[str]:
         candidates.extend([
             str(repo_root / "build" / "liblinep.so"),
             str(repo_root / "build" / "liblinep.so.1"),
+            str(repo_root / "build_linux" / "liblinep.so"),
+            str(repo_root / "build_linux" / "liblinep.so.1"),
             str(repo_root / "build-linux-x64" / "liblinep.so"),
             str(repo_root / "build-linux-arm64" / "liblinep.so"),
         ])
@@ -364,7 +366,7 @@ def _candidate_libraries() -> list[str]:
     elif sys.platform == "darwin":
         candidates.extend([str(pkg_dir / "liblinep.dylib"), str(pkg_dir / "liblinep.1.dylib")])
     else:
-        candidates.extend([str(pkg_dir / "liblinep.so"), str(pkg_dir / "liblinep.so.1")])
+        candidates.extend([str(pkg_dir / "liblinep.so"), str(pkg_dir / "liblinep.so.1"), str(pkg_dir / "liblinep.so.1.0.0")])
 
     existing = [c for c in candidates if Path(c).is_file()]
     if existing:
@@ -399,4 +401,7 @@ if sys.platform == "win32":
     if hasattr(os, "add_dll_directory"):
         os.add_dll_directory(_pkg_dir)
 
-lib = _load_library()
+try:
+    lib = _load_library()
+except OSError:
+    lib = None
