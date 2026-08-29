@@ -17,6 +17,29 @@ Dual-Plane Runtime Contract
 
 LiNeP semantics are transport-neutral. UDP and TCP are reference transport profiles, not the semantic definition of LiNeP itself.
 
+## Node model
+
+LiNeP V0.2 distinguishes the network participant from the runtime implementation beneath it:
+
+```text
+LiNeP Node
+  ├── Scheduler / Orchestrator function
+  └── one or more Runtime(s)
+         └── one or more Endpoint(s)
+```
+
+The canonical identity hierarchy is:
+
+```text
+node_id
+  └── runtime_id
+       └── endpoint_id
+```
+
+A scheduler/orchestrator is a node function or role and is not inherently a separate network identity. A runtime adapter such as an Ollama adapter is likewise not necessarily a complete LiNeP Node.
+
+See [`NODE_MODEL.md`](./NODE_MODEL.md) for the normative definitions of Node, Runtime, Endpoint, Scheduler/Orchestrator, adapter boundaries, and topology.
+
 ## Identity
 
 ### Runtime/control identity
