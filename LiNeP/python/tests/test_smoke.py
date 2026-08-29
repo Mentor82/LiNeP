@@ -2,21 +2,27 @@ from __future__ import annotations
 
 import importlib
 import os
+import sys
 from pathlib import Path
 
 import pytest
 
 
 def _ensure_linep_lib_path() -> None:
-    # Keep local testing zero-config: if LINEP_LIB_PATH is unset,
-    # try the repository build output automatically.
     if os.environ.get("LINEP_LIB_PATH"):
         return
-
     repo_root = Path(__file__).resolve().parents[2]
-    candidate = repo_root / "build" / "liblinep.dll"
-    if candidate.exists():
-        os.environ["LINEP_LIB_PATH"] = str(candidate)
+    if sys.platform == "win32":
+        names = ["build/liblinep.dll", "build/linep.dll"]
+    elif sys.platform == "darwin":
+        names = ["build/liblinep.dylib"]
+    else:
+        names = ["build_linux/liblinep.so", "build/liblinep.so"]
+    for rel in names:
+        candidate = repo_root / rel
+        if candidate.exists():
+            os.environ["LINEP_LIB_PATH"] = str(candidate)
+            return
 
 
 @pytest.fixture(scope="session")
@@ -35,7 +41,7 @@ def linep_module():
 
 def test_import_and_version(linep_module):
     assert hasattr(linep_module, "__version__")
-    assert linep_module.__version__ == "0.1.0"
+    assert linep_module.__version__ == "0.2.0"
 
 
 def test_crc8_is_stable(linep_module):

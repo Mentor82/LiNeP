@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import sys
 import socket
 import threading
 import time
@@ -34,8 +35,14 @@ def _ensure_linep_lib_path() -> None:
     if os.environ.get("LINEP_LIB_PATH"):
         return
     repo_root = Path(__file__).resolve().parents[2]
-    for name in ("liblinep.dll", "liblinep.so", "liblinep.dylib"):
-        candidate = repo_root / "build" / name
+    if sys.platform == "win32":
+        names = ["build/liblinep.dll", "build/linep.dll"]
+    elif sys.platform == "darwin":
+        names = ["build/liblinep.dylib"]
+    else:
+        names = ["build_linux/liblinep.so", "build/liblinep.so"]
+    for rel in names:
+        candidate = repo_root / rel
         if candidate.exists():
             os.environ["LINEP_LIB_PATH"] = str(candidate)
             return

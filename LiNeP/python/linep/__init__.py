@@ -1,145 +1,96 @@
 """
-LiNeP — Liara Neural Protocol Python bindings
-==============================================
+LiNeP — Liara Neural Protocol Python Package
+=============================================
 
-This package exposes a Pythonic interface to the LiNeP binary protocol
-library via cffi.  The shared library (``linep.dll`` / ``liblinep.so``) must
-be either installed system-wide or placed next to this package directory.
+Sub-packages:
+- `linep.v0_2` — Pure-Python LiNeP V0.2 Dual-Plane Protocol (TCP Data Plane & UDP Control Plane).
+- `linep.v0_1` — Legacy LiNeP V0.1 CFFI bindings.
 
-Quick start
------------
-
-Send an inference task to a worker::
-
-    import linep
-    from linep.constants import TaskType, ResultStatus
-
-    linep.net_init()
-
-    with linep.tcp.Sender() as sender:
-        result = sender.send_task(
-            host="127.0.0.1",
-            port=9000,
-            task_type=TaskType.INSTRUCT,
-            payload=b"Summarise the following text: ...",
-            correlation_id=1,
-        )
-        if result.status == ResultStatus.OK:
-            print(result.text)
-
-    linep.net_cleanup()
-
-Build and validate a heartbeat frame::
-
-    from linep.framing import HeartbeatCompact
-    from linep.constants import SlotFlags
-
-    hb = HeartbeatCompact.build(
-        worker_id=1, slot_id=0,
-        slot_flags=SlotFlags.ALIVE | SlotFlags.READY,
-        load=10, queue_depth=0, sequence=1,
-        worker_score=100,
-    )
-    hb.validate()
-    raw: bytes = hb.to_bytes()   # 19 bytes, ready for UDP broadcast
-
-Sub-modules
------------
-- :mod:`linep.constants`   — IntEnum / IntFlag types and named constants.
-- :mod:`linep.framing`     — Header and HeartbeatCompact builders/validators.
-- :mod:`linep.tcp`         — Sender (client) and Receiver (server) classes.
-- :mod:`linep.exceptions`  — Exception hierarchy.
+Top-level backward compatibility:
+All V0.1 functions, classes, and sub-modules are loaded lazily on demand so importing
+`linep` or `linep.v0_2` does not require native shared libraries.
 """
 
 from __future__ import annotations
 
-from linep._cabi import ffi as ffi, lib as lib  # noqa: F401
-from linep import constants as constants, exceptions as exceptions, framing as framing, tcp as tcp, scoring as scoring
-from linep.constants import (
-    ErrorCode as ErrorCode,
-    HeaderFlags as HeaderFlags,
-    MsgType as MsgType,
-    ResultStatus as ResultStatus,
-    SlotFlags as SlotFlags,
-    TaskType as TaskType,
-)
-from linep.exceptions import LiNePError as LiNePError
-from linep.framing import (
-    BuildTimeExt as BuildTimeExt,
-    Header as Header,
-    HeartbeatCompact as HeartbeatCompact,
-    UdpHeartbeatAckFrame as UdpHeartbeatAckFrame,
-    UdpInviteAckFrame as UdpInviteAckFrame,
-    UdpInviteFrame as UdpInviteFrame,
-)
-from linep.ports import PortPair as PortPair
-from linep.tcp import Receiver as Receiver, Sender as Sender, TaskResult as TaskResult
-from linep.scoring import score_slot as score_slot, compute_worker_score as compute_worker_score
+import importlib
+from typing import Any
+
+from linep import v0_2 as v0_2
+
+__version__ = "0.2.0"
+
+_LEGACY_MODULES = {
+    "constants": "linep.constants",
+    "exceptions": "linep.exceptions",
+    "framing": "linep.framing",
+    "ports": "linep.ports",
+    "scoring": "linep.scoring",
+    "tcp": "linep.tcp",
+    "_cabi": "linep._cabi",
+}
+
+_LEGACY_SYMBOLS = {
+    # Constants / Enums
+    "MsgType": "linep.constants",
+    "TaskType": "linep.constants",
+    "ResultStatus": "linep.constants",
+    "SlotFlags": "linep.constants",
+    "HeaderFlags": "linep.constants",
+    "ErrorCode": "linep.constants",
+    # Exceptions
+    "LiNePError": "linep.exceptions",
+    # Framing
+    "Header": "linep.framing",
+    "BuildTimeExt": "linep.framing",
+    "HeartbeatCompact": "linep.framing",
+    "UdpInviteFrame": "linep.framing",
+    "UdpInviteAckFrame": "linep.framing",
+    "UdpHeartbeatAckFrame": "linep.framing",
+    # Ports
+    "PortPair": "linep.ports",
+    # TCP
+    "Sender": "linep.tcp",
+    "Receiver": "linep.tcp",
+    "TaskResult": "linep.tcp",
+    # Scoring
+    "score_slot": "linep.scoring",
+    "compute_worker_score": "linep.scoring",
+}
 
 __all__ = [
-    # Sub-modules
-    "constants",
-    "exceptions",
-    "framing",
-    "scoring",
-    "tcp",
-    # Enums / flags (re-exported for convenience)
-    "MsgType",
-    "TaskType",
-    "ResultStatus",
-    "SlotFlags",
-    "HeaderFlags",
-    "ErrorCode",
-    # Classes
-    "Header",
-    "BuildTimeExt",
-    "HeartbeatCompact",
-    "UdpInviteFrame",
-    "UdpInviteAckFrame",
-    "UdpHeartbeatAckFrame",
-    "PortPair",
-    "Sender",
-    "Receiver",
-    "TaskResult",
-    # Scoring helpers
-    "score_slot",
-    "compute_worker_score",
-    # Base exception
-    "LiNePError",
-    # Lifecycle
+    "v0_2",
+    "v0_1",
+    *list(_LEGACY_MODULES.keys()),
+    *list(_LEGACY_SYMBOLS.keys()),
     "net_init",
     "net_cleanup",
     "abi_version",
     "crc8",
 ]
 
-__version__ = "0.1.0"
-
 
 def net_init() -> None:
-    """Initialise the network layer (WSAStartup on Windows, no-op on POSIX).
-
-    Must be called once before any TCP or UDP operation.  Calling it multiple
-    times is safe — the underlying implementation is reference-counted.
-    """
+    """Initialise the network layer (WSAStartup on Windows, no-op on POSIX)."""
+    from linep._cabi import lib
+    if lib is None:
+        raise OSError("LiNeP V0.1 C-ABI shared library (linep.dll/liblinep.so) is not loaded.")
     lib.linep_net_init()
 
 
 def net_cleanup() -> None:
-    """Release network resources allocated by :func:`net_init`.
-
-    Should be called once at process shutdown.  After this call, no further
-    TCP or UDP operations may be performed without calling :func:`net_init`
-    again.
-    """
+    """Release network resources allocated by net_init."""
+    from linep._cabi import lib
+    if lib is None:
+        raise OSError("LiNeP V0.1 C-ABI shared library (linep.dll/liblinep.so) is not loaded.")
     lib.linep_net_cleanup()
 
 
 def abi_version() -> tuple[int, int, int]:
-    """Return the loaded C-ABI version as ``(major, minor, patch)``.
-
-    The raw encoding from the shared library is ``MAJOR<<16 | MINOR<<8 | PATCH``.
-    """
+    """Return the loaded C-ABI version as (major, minor, patch)."""
+    from linep._cabi import lib
+    if lib is None:
+        raise OSError("LiNeP V0.1 C-ABI shared library (linep.dll/liblinep.so) is not loaded.")
     raw = int(lib.linep_get_abi_version())
     major = (raw >> 16) & 0xFF
     minor = (raw >> 8) & 0xFF
@@ -148,23 +99,44 @@ def abi_version() -> tuple[int, int, int]:
 
 
 def crc8(data: bytes | bytearray) -> int:
-    """Compute CRC-8 (poly ``0x07``, init ``0x00``, no reflection).
-
-    This is the same CRC used to protect LiNeP header and heartbeat frames.
-    Exposed here for testing and manual frame construction.
-
-    Args:
-        data: Input bytes.
-
-    Returns:
-        CRC-8 value in the range 0–255.
-
-    Example::
-
-        import linep
-        print(hex(linep.crc8(b"hello")))  # e.g. 0x92
-    """
+    """Compute CRC-8 using C-ABI if available, or fallback to pure Python implementation."""
     if not data:
         return 0
-    c_data = ffi.from_buffer(bytes(data))
-    return lib.linep_crc8(c_data, len(data))
+    try:
+        from linep._cabi import ffi, lib
+        if lib is not None:
+            c_data = ffi.from_buffer(bytes(data))
+            return int(lib.linep_crc8(c_data, len(data)))
+    except Exception:
+        pass
+    # Pure Python CRC8 fallback (poly 0x07, init 0x00, no reflection)
+    crc = 0
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            if crc & 0x80:
+                crc = ((crc << 1) ^ 0x07) & 0xFF
+            else:
+                crc = (crc << 1) & 0xFF
+    return crc
+
+
+def __getattr__(name: str) -> Any:
+    if name == "v0_1":
+        mod = importlib.import_module("linep.v0_1")
+        globals()["v0_1"] = mod
+        return mod
+    if name in _LEGACY_MODULES:
+        mod = importlib.import_module(_LEGACY_MODULES[name])
+        globals()[name] = mod
+        return mod
+    if name in _LEGACY_SYMBOLS:
+        mod = importlib.import_module(_LEGACY_SYMBOLS[name])
+        attr = getattr(mod, name)
+        globals()[name] = attr
+        return attr
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+
+def __dir__() -> list[str]:
+    return sorted(list(globals().keys()) + __all__)
