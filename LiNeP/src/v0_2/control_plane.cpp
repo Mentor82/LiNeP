@@ -121,6 +121,10 @@ bool decode_control_datagram(const std::uint8_t* data, std::size_t size, udp_con
     }
 
     out_dgram.flags = data[7];
+    if ((out_dgram.flags & ~0x01) != 0) {
+        return false; // Reject unknown / reserved flag bits!
+    }
+
     out_dgram.node_id = read_u64(data + 8);
     out_dgram.runtime_id = read_u64(data + 16);
     out_dgram.endpoint_id = read_u32(data + 24);
@@ -178,6 +182,11 @@ bool control_plane_router::issue_invite(const node_endpoint_identity& id, std::u
     }
 
     auto& node = it->second;
+    // An invite can ONLY be issued to a node in the SEEN state!
+    if (node.state != control_node_lifecycle::seen) {
+        return false;
+    }
+
     node.state = control_node_lifecycle::invited;
     node.active_lease_token = lease_token;
 
@@ -239,7 +248,14 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
     }
 
     if (dgram.control_epoch > node.last_control_epoch) {
-        // Epoch changed: Node restarted or incarnation upgraded!
+        // ONLY NODE_HELLO is authorized to open/announce a new epoch incarnation!
+        // Any other message type (e.g. rogue PING, STATUS, HEARTBEAT with higher epoch)
+        // must be REJECTED WITHOUT MUTATING existing state/lease/cache!
+        if (msg_type != control_message_type::node_hello) {
+            return false;
+        }
+
+        // Legitimate new epoch via NODE_HELLO:
         // Strictly invalidate old capability cache, active lease, and reset to SEEN:
         capability_cache_.erase(id);
         node.last_control_epoch = dgram.control_epoch;
@@ -274,8 +290,10 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
 
     case control_message_type::invite: {
         // Invite issued (Scheduler -> Node)
-        node.state = control_node_lifecycle::invited;
-        node.active_lease_token = dgram.lease_token;
+        if (node.state == control_node_lifecycle::seen) {
+            node.state = control_node_lifecycle::invited;
+            node.active_lease_token = dgram.lease_token;
+        }
         break;
     }
 
@@ -305,9 +323,11 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
     }
 
     case control_message_type::heartbeat: {
-        // Liveness & lightweight telemetry ONLY for active/degraded/cooling nodes
-        if (node.state == control_node_lifecycle::unknown || node.state == control_node_lifecycle::seen) {
-            // Uninvited/unactivated node sending heartbeat cannot jump to ACTIVE!
+        // Liveness & lightweight telemetry ONLY for active, degraded, or cooling nodes.
+        // Node in UNKNOWN, SEEN, or INVITED state CANNOT process heartbeats or jump to ACTIVE!
+        if (node.state != control_node_lifecycle::active &&
+            node.state != control_node_lifecycle::degraded &&
+            node.state != control_node_lifecycle::cooling) {
             return false;
         }
 
@@ -316,7 +336,7 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
         node.availability = static_cast<node_availability>(dgram.availability);
         node.health = static_cast<node_health>(dgram.health);
 
-        // Heartbeat CANNOT alter capability digest or TCP trunk port!
+        // Heartbeat CANNOT alter capability digest, TCP trunk port, or lease token!
         if (node.availability == node_availability::unavailable || node.health == node_health::unhealthy) {
             node.state = control_node_lifecycle::cooling;
         } else if (node.health == node_health::degraded || node.availability == node_availability::degraded) {
@@ -328,8 +348,10 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
     }
 
     case control_message_type::status: {
-        // Full health and capability digest update
-        if (node.state == control_node_lifecycle::unknown || node.state == control_node_lifecycle::seen) {
+        // Full health and capability digest update ONLY for active, degraded, or cooling nodes.
+        if (node.state != control_node_lifecycle::active &&
+            node.state != control_node_lifecycle::degraded &&
+            node.state != control_node_lifecycle::cooling) {
             return false;
         }
 

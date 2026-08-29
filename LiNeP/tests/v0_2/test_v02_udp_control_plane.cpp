@@ -763,7 +763,192 @@ void test_strict_fail_closed_decoder_validation() {
     encode_control_datagram(valid_dgram, buf);
     LINEP_TEST_CHECK(!decode_control_datagram(buf.data(), buf.size(), decoded));
 
+    // Test unknown / dirty flag bit != 0 (e.g. flags = 0x02)
+    valid_dgram.reserved = 0;
+    valid_dgram.flags = 0x02; // Bit 1 is reserved/unknown
+    encode_control_datagram(valid_dgram, buf);
+    LINEP_TEST_CHECK(!decode_control_datagram(buf.data(), buf.size(), decoded));
+
     std::cout << "  -> Strict Fail-Closed Semantic Decoder Validation PASSED" << std::endl;
+}
+
+// ── Test 12: HEARTBEAT & STATUS Cannot Bypass LEASE_ACK ──────────────────────
+void test_udp_heartbeat_cannot_bypass_lease_ack() {
+    std::cout << "[Test 12] UDP Control Plane: HEARTBEAT/STATUS Cannot Bypass LEASE_ACK..." << std::endl;
+
+    control_plane_router router;
+    node_endpoint_identity id{1201, 2201, 1};
+
+    // 1. NODE_HELLO sets state to SEEN
+    udp_control_datagram hello{};
+    hello.node_id = 1201;
+    hello.runtime_id = 2201;
+    hello.endpoint_id = 1;
+    hello.control_epoch = 1;
+    hello.control_seq = 1;
+    hello.message_type = static_cast<std::uint8_t>(control_message_type::node_hello);
+    hello.tcp_port = 5201;
+    hello.set_trunk_ready(true);
+    LINEP_TEST_CHECK(router.ingest_datagram(hello, 1000));
+
+    // 2. issue_invite transitions node to INVITED with active lease token
+    udp_control_datagram inv{};
+    std::uint64_t lease_token = 0x1234567890ABCDEFULL;
+    LINEP_TEST_CHECK(router.issue_invite(id, lease_token, inv));
+
+    control_plane_node_state st{};
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::invited);
+    LINEP_TEST_CHECK(st.active_lease_token == lease_token);
+    LINEP_TEST_CHECK(!st.is_routable());
+
+    // 3. Attempt HEARTBEAT bypass while in INVITED state: MUST BE REJECTED!
+    udp_control_datagram hb{};
+    hb.node_id = 1201;
+    hb.runtime_id = 2201;
+    hb.endpoint_id = 1;
+    hb.control_epoch = 1;
+    hb.control_seq = 2;
+    hb.message_type = static_cast<std::uint8_t>(control_message_type::heartbeat);
+    hb.availability = static_cast<std::uint8_t>(node_availability::available);
+    hb.health = static_cast<std::uint8_t>(node_health::healthy);
+    hb.tcp_port = 5201;
+    hb.set_trunk_ready(true);
+
+    LINEP_TEST_CHECK(!router.ingest_datagram(hb, 2000)); // Must fail closed!
+
+    // Verify node is STILL INVITED and NOT ACTIVE
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::invited);
+    LINEP_TEST_CHECK(!st.is_routable());
+    LINEP_TEST_CHECK(router.get_routable_node_count() == 0);
+
+    // 4. Attempt STATUS bypass while in INVITED state: MUST BE REJECTED!
+    udp_control_datagram status = hb;
+    status.control_seq = 3;
+    status.message_type = static_cast<std::uint8_t>(control_message_type::status);
+    LINEP_TEST_CHECK(!router.ingest_datagram(status, 2500)); // Must fail closed!
+
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::invited);
+    LINEP_TEST_CHECK(!st.is_routable());
+
+    // 5. Legitimate LEASE_ACK transitions to ACTIVE
+    udp_control_datagram ack{};
+    ack.node_id = 1201;
+    ack.runtime_id = 2201;
+    ack.endpoint_id = 1;
+    ack.control_epoch = 1;
+    ack.control_seq = 4;
+    ack.message_type = static_cast<std::uint8_t>(control_message_type::lease_ack);
+    ack.availability = static_cast<std::uint8_t>(node_availability::available);
+    ack.health = static_cast<std::uint8_t>(node_health::healthy);
+    ack.tcp_port = 5201;
+    ack.set_trunk_ready(true);
+    ack.lease_token = lease_token;
+    LINEP_TEST_CHECK(router.ingest_datagram(ack, 3000));
+
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::active);
+    LINEP_TEST_CHECK(st.is_routable());
+    LINEP_TEST_CHECK(router.get_routable_node_count() == 1);
+
+    std::cout << "  -> HEARTBEAT/STATUS Cannot Bypass LEASE_ACK PASSED" << std::endl;
+}
+
+// ── Test 13: Higher-Epoch Pre-Auth Mutation Protection ────────────────────────
+void test_udp_higher_epoch_preauth_mutation_guard() {
+    std::cout << "[Test 13] UDP Control Plane: Higher-Epoch Pre-Auth Mutation Protection & Invite Guards..." << std::endl;
+
+    control_plane_router router;
+    node_endpoint_identity id{1301, 2301, 1};
+
+    // 1. Establish ACTIVE node in epoch=1 with valid lease and cached capability
+    udp_control_datagram hello{};
+    hello.node_id = 1301;
+    hello.runtime_id = 2301;
+    hello.endpoint_id = 1;
+    hello.control_epoch = 1;
+    hello.control_seq = 1;
+    hello.message_type = static_cast<std::uint8_t>(control_message_type::node_hello);
+    hello.capability_revision = 5;
+    hello.capability_digest = 0x5555;
+    hello.tcp_port = 5301;
+    hello.set_trunk_ready(true);
+    LINEP_TEST_CHECK(router.ingest_datagram(hello, 1000));
+
+    udp_control_datagram inv{};
+    std::uint64_t lease_token = 0xCAFECAFE11112222ULL;
+    LINEP_TEST_CHECK(router.issue_invite(id, lease_token, inv));
+
+    // Negative guard: issue_invite on INVITED node must be rejected!
+    udp_control_datagram inv_dup{};
+    LINEP_TEST_CHECK(!router.issue_invite(id, 0x9999, inv_dup));
+
+    udp_control_datagram ack{};
+    ack.node_id = 1301;
+    ack.runtime_id = 2301;
+    ack.endpoint_id = 1;
+    ack.control_epoch = 1;
+    ack.control_seq = 2;
+    ack.message_type = static_cast<std::uint8_t>(control_message_type::lease_ack);
+    ack.availability = static_cast<std::uint8_t>(node_availability::available);
+    ack.health = static_cast<std::uint8_t>(node_health::healthy);
+    ack.tcp_port = 5301;
+    ack.set_trunk_ready(true);
+    ack.lease_token = lease_token;
+    LINEP_TEST_CHECK(router.ingest_datagram(ack, 2000));
+
+    router.set_cached_capability_valid(id, 5, 0x5555);
+    LINEP_TEST_CHECK(router.is_capability_cache_valid(id));
+
+    // Negative guard: issue_invite on ACTIVE node must be rejected!
+    LINEP_TEST_CHECK(!router.issue_invite(id, 0x9999, inv_dup));
+
+    // 2. Send rogue PING with epoch=2: MUST BE REJECTED WITHOUT MUTATING STATE!
+    udp_control_datagram rogue_ping{};
+    rogue_ping.node_id = 1301;
+    rogue_ping.runtime_id = 2301;
+    rogue_ping.endpoint_id = 1;
+    rogue_ping.control_epoch = 2; // Higher epoch!
+    rogue_ping.control_seq = 1;
+    rogue_ping.message_type = static_cast<std::uint8_t>(control_message_type::ping);
+    LINEP_TEST_CHECK(!router.ingest_datagram(rogue_ping, 2500));
+
+    // CRITICAL: Node state, epoch, active lease, and capability cache MUST REMAIN INTACT!
+    control_plane_node_state st{};
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::active);
+    LINEP_TEST_CHECK(st.last_control_epoch == 1); // Epoch MUST STILL BE 1!
+    LINEP_TEST_CHECK(st.active_lease_token == lease_token);
+    LINEP_TEST_CHECK(router.is_capability_cache_valid(id)); // Cache MUST NOT be wiped!
+    LINEP_TEST_CHECK(st.is_routable());
+
+    // 3. Send rogue STATUS with epoch=999: MUST BE REJECTED WITHOUT MUTATING STATE!
+    udp_control_datagram rogue_status = rogue_ping;
+    rogue_status.control_epoch = 999;
+    rogue_status.message_type = static_cast<std::uint8_t>(control_message_type::status);
+    LINEP_TEST_CHECK(!router.ingest_datagram(rogue_status, 2600));
+
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::active);
+    LINEP_TEST_CHECK(st.last_control_epoch == 1);
+    LINEP_TEST_CHECK(st.active_lease_token == lease_token);
+    LINEP_TEST_CHECK(router.is_capability_cache_valid(id));
+
+    // 4. Legitimate NODE_HELLO with epoch=2 opens new incarnation and cleanly resets state
+    udp_control_datagram legit_hello = hello;
+    legit_hello.control_epoch = 2;
+    legit_hello.control_seq = 1;
+    LINEP_TEST_CHECK(router.ingest_datagram(legit_hello, 3000));
+
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::seen);
+    LINEP_TEST_CHECK(st.last_control_epoch == 2);
+    LINEP_TEST_CHECK(st.active_lease_token == 0);
+    LINEP_TEST_CHECK(!router.is_capability_cache_valid(id)); // Cleanly invalidated on legitimate new epoch!
+
+    std::cout << "  -> Higher-Epoch Pre-Auth Mutation Protection & Invite Guards PASSED" << std::endl;
 }
 
 int main() {
@@ -779,6 +964,8 @@ int main() {
     test_udp_failure_while_tcp_continues();
     test_dual_plane_integration_identity_binding();
     test_strict_fail_closed_decoder_validation();
-    std::cout << "ALL 11 V0.2 PHASE D UDP CONTROL PLANE TESTS PASSED 100%!" << std::endl;
+    test_udp_heartbeat_cannot_bypass_lease_ack();
+    test_udp_higher_epoch_preauth_mutation_guard();
+    std::cout << "ALL 13 V0.2 PHASE D UDP CONTROL PLANE TESTS PASSED 100%!" << std::endl;
     return 0;
 }
