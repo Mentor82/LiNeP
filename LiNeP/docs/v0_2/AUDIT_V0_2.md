@@ -1,4 +1,4 @@
-﻿# LiNeP V0.2 Audit & Protocol Verification Report (Phases A, B, C & D)
+# LiNeP V0.2 Audit & Protocol Verification Report (Phases A, B, C & D)
 
 **Date**: 2026-08-29  
 **Tracking Issues**: [Issue #9](https://github.com/Mentor82/LiNeP/issues/9), [Issue #10](https://github.com/Mentor82/LiNeP/issues/10)  
@@ -139,13 +139,21 @@ PROFILE_EMBED ......... CONFORMANT
 - **V0.2 Full Test Suite**: 6/6 Suites Passed (100%)
 - **Total Test Count**: 35/35 Tests Passed (100%) in 2.49s
 
-### 4.2 Debian 13 (trixie) WSL (GCC 14)
+### 4.2 Debian 13 (trixie) WSL (GCC 14 x64)
 - **V0.1 Regression Suite**: 29/29 Tests Passed (100%)
 - **V0.2 Full Test Suite**: 6/6 Suites Passed (100%)
 - **Total Test Count**: 35/35 Tests Passed (100%) in 3.01s
+
+### 4.3 Raspberry Pi 5 (Debian 14 aarch64 / ARM64)
+- **Hardware**: Raspberry Pi 5 (Broadcom BCM2712 4x Cortex-A76 @ 2.4 GHz)
+- **OS / Kernel**: Debian GNU/Linux (Kernel 6.18.39+rpt-rpi-2712 aarch64)
+- **Compiler**: GCC 14.2.0 (ARM64)
+- **V0.1 Regression Suite**: 29/29 Tests Passed (100%)
+- **V0.2 Full Test Suite**: 6/6 Suites Passed (100%)
+- **Total Test Count**: 35/35 Tests Passed (100%) in 2.39s
 
 ---
 
 ## 5. Audit Conclusion
 
-The LiNeP V0.2 Runtime Baseline fulfills all requirements of **Phases A, B, C, and D** as specified in Issue #9 and Issue #10. The dual-plane design (UDP Control Plane + TCP Data Plane) is fully verified across platforms with complete isolation from the frozen V0.1 baseline.
+The LiNeP V0.2 Runtime Baseline fulfills all requirements of **Phases A, B, C, and D** as specified in Issue #9 and Issue #10. The dual-plane design (UDP Control Plane + TCP Data Plane) is fully verified across platforms and architectures (Windows x64, Linux x64, and Linux ARM64) with complete isolation from the frozen V0.1 baseline.
