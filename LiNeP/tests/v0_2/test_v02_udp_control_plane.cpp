@@ -1085,6 +1085,147 @@ void test_udp_inbound_invite_rejection() {
     std::cout << "  -> Inbound INVITE Rejection (Direction Enforcement) PASSED" << std::endl;
 }
 
+// ── Test 16: Inbound PING Rejection & PONG Validation ────────────────────────
+void test_udp_inbound_ping_rejection_pong_validation() {
+    std::cout << "[Test 16] UDP Control Plane: Inbound PING Rejection & PONG Validation..." << std::endl;
+
+    control_plane_router router;
+    node_endpoint_identity id{1601, 2601, 1};
+
+    // 1. Establish node in ACTIVE state
+    udp_control_datagram hello{};
+    hello.node_id = 1601;
+    hello.runtime_id = 2601;
+    hello.endpoint_id = 1;
+    hello.control_epoch = 1;
+    hello.control_seq = 1;
+    hello.message_type = static_cast<std::uint8_t>(control_message_type::node_hello);
+    hello.tcp_port = 5601;
+    hello.set_trunk_ready(true);
+    LINEP_TEST_CHECK(router.ingest_datagram(hello, 1000));
+
+    udp_control_datagram inv{};
+    std::uint64_t lease_token = 0x55AA55AA12345678ULL;
+    LINEP_TEST_CHECK(router.issue_invite(id, lease_token, inv));
+
+    udp_control_datagram ack{};
+    ack.node_id = 1601;
+    ack.runtime_id = 2601;
+    ack.endpoint_id = 1;
+    ack.control_epoch = 1;
+    ack.control_seq = 2;
+    ack.message_type = static_cast<std::uint8_t>(control_message_type::lease_ack);
+    ack.availability = static_cast<std::uint8_t>(node_availability::available);
+    ack.health = static_cast<std::uint8_t>(node_health::healthy);
+    ack.tcp_port = 5601;
+    ack.set_trunk_ready(true);
+    ack.lease_token = lease_token;
+    LINEP_TEST_CHECK(router.ingest_datagram(ack, 2000));
+
+    control_plane_node_state st{};
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::active);
+    LINEP_TEST_CHECK(st.last_inbound_seq == 2);
+    LINEP_TEST_CHECK(st.last_seen_us == 2000);
+
+    // 2. Inbound PING is sent to the scheduler router: MUST BE REJECTED!
+    udp_control_datagram ping{};
+    ping.node_id = 1601;
+    ping.runtime_id = 2601;
+    ping.endpoint_id = 1;
+    ping.control_epoch = 1;
+    ping.control_seq = 3;
+    ping.message_type = static_cast<std::uint8_t>(control_message_type::ping);
+    LINEP_TEST_CHECK(!router.ingest_datagram(ping, 3000));
+
+    // Assert: Sequence not consumed, last_seen not refreshed
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.last_inbound_seq == 2);
+    LINEP_TEST_CHECK(st.last_seen_us == 2000);
+
+    // 3. Inbound PONG response from node: MUST SUCCEED!
+    udp_control_datagram pong = ping;
+    pong.message_type = static_cast<std::uint8_t>(control_message_type::pong);
+    LINEP_TEST_CHECK(router.ingest_datagram(pong, 4000));
+
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.last_inbound_seq == 3);
+    LINEP_TEST_CHECK(st.last_seen_us == 4000);
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::active); // State untouched
+
+    std::cout << "  -> Inbound PING Rejection & PONG Validation PASSED" << std::endl;
+}
+
+// ── Test 17: Same-Epoch NODE_HELLO Protection on ACTIVE/INVITED Node ──────────
+void test_udp_same_epoch_node_hello_protection() {
+    std::cout << "[Test 17] UDP Control Plane: Same-Epoch NODE_HELLO Protection..." << std::endl;
+
+    control_plane_router router;
+    node_endpoint_identity id{1701, 2701, 1};
+
+    // 1. Establish node in ACTIVE state with epoch=1 and active lease
+    udp_control_datagram hello{};
+    hello.node_id = 1701;
+    hello.runtime_id = 2701;
+    hello.endpoint_id = 1;
+    hello.control_epoch = 1;
+    hello.control_seq = 1;
+    hello.message_type = static_cast<std::uint8_t>(control_message_type::node_hello);
+    hello.tcp_port = 5701;
+    hello.set_trunk_ready(true);
+    LINEP_TEST_CHECK(router.ingest_datagram(hello, 1000));
+
+    udp_control_datagram inv{};
+    std::uint64_t lease_token = 0xBEEFBEEF99998888ULL;
+    LINEP_TEST_CHECK(router.issue_invite(id, lease_token, inv));
+
+    udp_control_datagram ack{};
+    ack.node_id = 1701;
+    ack.runtime_id = 2701;
+    ack.endpoint_id = 1;
+    ack.control_epoch = 1;
+    ack.control_seq = 2;
+    ack.message_type = static_cast<std::uint8_t>(control_message_type::lease_ack);
+    ack.availability = static_cast<std::uint8_t>(node_availability::available);
+    ack.health = static_cast<std::uint8_t>(node_health::healthy);
+    ack.tcp_port = 5701;
+    ack.set_trunk_ready(true);
+    ack.lease_token = lease_token;
+    LINEP_TEST_CHECK(router.ingest_datagram(ack, 2000));
+
+    control_plane_node_state st{};
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::active);
+    LINEP_TEST_CHECK(st.active_lease_token == lease_token);
+    LINEP_TEST_CHECK(st.is_routable());
+
+    // 2. Same-Epoch NODE_HELLO arrives (e.g. delayed or rogue): MUST BE REJECTED!
+    udp_control_datagram same_epoch_hello = hello;
+    same_epoch_hello.control_seq = 3;
+    LINEP_TEST_CHECK(!router.ingest_datagram(same_epoch_hello, 3000));
+
+    // Assert: Node remains ACTIVE, lease token intact, sequence not consumed!
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::active);
+    LINEP_TEST_CHECK(st.active_lease_token == lease_token);
+    LINEP_TEST_CHECK(st.last_inbound_seq == 2);
+    LINEP_TEST_CHECK(st.is_routable());
+
+    // 3. Higher-Epoch NODE_HELLO (epoch=2) opens a valid new incarnation: MUST SUCCEED!
+    udp_control_datagram new_epoch_hello = hello;
+    new_epoch_hello.control_epoch = 2;
+    new_epoch_hello.control_seq = 1;
+    LINEP_TEST_CHECK(router.ingest_datagram(new_epoch_hello, 4000));
+
+    LINEP_TEST_CHECK(router.get_node_state(id, st));
+    LINEP_TEST_CHECK(st.state == control_node_lifecycle::seen); // Cleanly reset for new incarnation
+    LINEP_TEST_CHECK(st.last_control_epoch == 2);
+    LINEP_TEST_CHECK(st.active_lease_token == 0);
+    LINEP_TEST_CHECK(!st.is_routable());
+
+    std::cout << "  -> Same-Epoch NODE_HELLO Protection PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "=== LiNeP V0.2 UDP Control Plane Acceptance Test Suite ===" << std::endl;
     test_udp_hello_heartbeat_loopback();
@@ -1102,6 +1243,8 @@ int main() {
     test_udp_higher_epoch_preauth_mutation_guard();
     test_udp_rejected_message_atomicity();
     test_udp_inbound_invite_rejection();
-    std::cout << "ALL 15 V0.2 PHASE D UDP CONTROL PLANE TESTS PASSED 100%!" << std::endl;
+    test_udp_inbound_ping_rejection_pong_validation();
+    test_udp_same_epoch_node_hello_protection();
+    std::cout << "ALL 17 V0.2 PHASE D UDP CONTROL PLANE TESTS PASSED 100%!" << std::endl;
     return 0;
 }

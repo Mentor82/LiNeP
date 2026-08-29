@@ -210,8 +210,9 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
     control_message_type msg_type = static_cast<control_message_type>(dgram.message_type);
 
     // ── 1. Message Direction Enforcement (Inbound Node -> Scheduler) ────────
-    // INVITE is strictly a Scheduler -> Node message. A Node cannot inject an INVITE!
-    if (msg_type == control_message_type::invite) {
+    // INVITE and PING are strictly Scheduler -> Node messages.
+    // A Node cannot inject an INVITE or PING into the scheduler router!
+    if (msg_type == control_message_type::invite || msg_type == control_message_type::ping) {
         return false; // Unauthorized inbound direction
     }
 
@@ -273,13 +274,26 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
     // the message is 100% semantically valid and authorized.
     switch (msg_type) {
     case control_message_type::node_hello: {
-        // Legitimate NODE_HELLO: resets node to SEEN
         if (dgram.control_epoch > node.last_control_epoch) {
+            // Legitimate new incarnation via higher epoch:
             capability_cache_.erase(id);
             node.last_control_epoch = dgram.control_epoch;
+            node.state = control_node_lifecycle::seen;
+            node.active_lease_token = 0;
+        } else {
+            // Same epoch:
+            // If the node is currently in INVITED, ACTIVE, or DEGRADED state,
+            // a same-epoch NODE_HELLO must NOT downgrade the node to SEEN or wipe active_lease_token!
+            // Reject without mutation to prevent delayed/rogue HELLO from destroying an active lease session.
+            if (node.state == control_node_lifecycle::invited ||
+                node.state == control_node_lifecycle::active ||
+                node.state == control_node_lifecycle::degraded) {
+                return false;
+            }
+            // Allowed for SEEN, COOLING, or OFFLINE nodes:
+            node.state = control_node_lifecycle::seen;
         }
-        node.state = control_node_lifecycle::seen;
-        node.active_lease_token = 0;
+
         node.tcp_port = dgram.tcp_port;
         node.tcp_trunk_ready = dgram.is_trunk_ready();
         node.capability_revision = dgram.capability_revision;
@@ -388,9 +402,8 @@ bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, st
         return true;
     }
 
-    case control_message_type::ping:
     case control_message_type::pong: {
-        // Connectivity/RTT only: strictly forbidden from altering lifecycle state, metrics, or capabilities!
+        // Connectivity/RTT response only from Node -> Scheduler
         if (node.state == control_node_lifecycle::unknown) {
             return false;
         }
