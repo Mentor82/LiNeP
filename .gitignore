@@ -14,4 +14,5 @@ build_linux/
 *.o
 __pycache__/
 *.pyc
+*.egg-info/
 .pytest_cache/

@@ -20,8 +20,6 @@ jobs:
             cmake_flags: ""
             artifact_name: linep-win-x64
           - target: win-arm64
-            cmake_flags: >-
-              -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/windows-arm64.cmake
             artifact_name: linep-win-arm64
 
     steps:
@@ -36,9 +34,9 @@ jobs:
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=arm64 -host_arch=amd64
-          cmake -S . -B build -G Ninja ^
+          cmake -S LiNeP -B build -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
-            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/windows-arm64.cmake ^
+            -DCMAKE_TOOLCHAIN_FILE="%GITHUB_WORKSPACE%\LiNeP\cmake\toolchains\windows-arm64.cmake" ^
             -DLINEP_BUILD_TESTS=OFF ^
             --log-level=WARNING
 
@@ -55,23 +53,26 @@ jobs:
 
       - name: Configure (win-x64)
         if: matrix.target == 'win-x64'
-        shell: pwsh
+        shell: cmd
         run: |
-          cmake -S . -B build -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DLINEP_BUILD_TESTS=OFF `
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
+          cmake -S LiNeP -B build -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DLINEP_BUILD_TESTS=OFF ^
             --log-level=WARNING
 
       - name: Build (win-x64)
         if: matrix.target == 'win-x64'
-        shell: pwsh
-        run: cmake --build build --parallel
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
+          cmake --build build --parallel
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: build/linep.dll
+          path: build/*linep.dll
           if-no-files-found: error
 
   # ── Linux: linux-x64 (native) + linux-arm64 (cross) ────────────────────────
@@ -84,13 +85,9 @@ jobs:
         include:
           - target: linux-x64
             packages: ""
-            cmake_flags: >-
-              -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/linux-x64.cmake
             artifact_name: linep-linux-x64
           - target: linux-arm64
             packages: gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-            cmake_flags: >-
-              -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/linux-arm64.cmake
             artifact_name: linep-linux-arm64
 
     steps:
@@ -103,9 +100,9 @@ jobs:
 
       - name: Configure
         run: |
-          cmake -S . -B build -G Ninja \
+          cmake -S LiNeP -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            ${{ matrix.cmake_flags }} \
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/LiNeP/cmake/toolchains/${{ matrix.target }}.cmake" \
             -DLINEP_BUILD_TESTS=OFF \
             --log-level=WARNING
 
@@ -128,16 +125,10 @@ jobs:
       matrix:
         include:
           - target: macos-arm64
-            cmake_flags: >-
-              -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/macos-arm64.cmake
             artifact_name: linep-macos-arm64
           - target: macos-x64
-            cmake_flags: >-
-              -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/macos-x64.cmake
             artifact_name: linep-macos-x64
           - target: macos-universal
-            cmake_flags: >-
-              -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/macos-universal.cmake
             artifact_name: linep-macos-universal
 
     steps:
@@ -148,9 +139,9 @@ jobs:
 
       - name: Configure
         run: |
-          cmake -S . -B build -G Ninja \
+          cmake -S LiNeP -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            ${{ matrix.cmake_flags }} \
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/LiNeP/cmake/toolchains/${{ matrix.target }}.cmake" \
             -DLINEP_BUILD_TESTS=OFF \
             --log-level=WARNING
 
@@ -167,10 +158,74 @@ jobs:
           path: build/liblinep.dylib
           if-no-files-found: error
 
+  # ── Native protocol verification: frozen V0.1 + opt-in V0.2 ────────────────
+  protocol-tests:
+    name: Protocol tests (Linux x64)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build g++
+
+      - name: Configure V0.1 + V0.2 tests
+        run: |
+          cmake -S LiNeP -B build-tests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLINEP_BUILD_TESTS=ON \
+            -DLINEP_BUILD_V02=ON \
+            --log-level=WARNING
+
+      - name: Build
+        run: cmake --build build-tests --parallel
+
+      - name: Run all C++ tests
+        run: ctest --test-dir build-tests --output-on-failure
+
+  # ── Python compatibility + V0.2 dual-plane verification ────────────────────
+  python-tests:
+    name: Python tests
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: LiNeP/python/pyproject.toml
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build g++
+
+      - name: Build native LiNeP library
+        run: |
+          cmake -S LiNeP -B LiNeP/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLINEP_BUILD_TESTS=OFF \
+            -DLINEP_BUILD_V02=OFF \
+            --log-level=WARNING
+          cmake --build LiNeP/build --parallel --target linep
+
+      - name: Install Python package and test dependencies
+        run: python -m pip install "./LiNeP/python[dev]"
+
+      - name: Run Python tests
+        env:
+          LINEP_LIB_PATH: ${{ github.workspace }}/LiNeP/build/liblinep.so
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m pytest -q LiNeP/python/tests
+
   # ── Bundle all artifacts into one release zip ────────────────────────────────
   bundle:
     name: Bundle release artifacts
-    needs: [windows, linux, macos]
+    needs: [windows, linux, macos, protocol-tests, python-tests]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
 

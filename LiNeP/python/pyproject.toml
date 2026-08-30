@@ -7,14 +7,13 @@ name = "linep"
 version = "0.2.0"
 description = "Python bindings and Dual-Plane protocol implementation for LiNeP — Liara Neural Protocol"
 readme = "README.md"
-license = { text = "MIT" }
+license = "Apache-2.0"
 requires-python = ">=3.9"
 keywords = ["neural", "protocol", "ai", "inference", "distributed", "cffi"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -39,8 +38,8 @@ dev = [
 ]
 
 [project.urls]
-"Source Code" = "https://github.com/your-org/LiNeP"
-"Bug Tracker"  = "https://github.com/your-org/LiNeP/issues"
+"Source Code" = "https://github.com/Mentor82/LiNeP"
+"Bug Tracker"  = "https://github.com/Mentor82/LiNeP/issues"
 "Documentation" = "https://linep.readthedocs.io"
 
 [project.scripts]

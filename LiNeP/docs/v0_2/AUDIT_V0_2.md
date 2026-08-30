@@ -2,7 +2,8 @@
 
 **Date**: 2026-08-29  
 **Tracking Issues**: [Issue #9](https://github.com/Mentor82/LiNeP/issues/9), [Issue #10](https://github.com/Mentor82/LiNeP/issues/10)  
-**Target Git Head**: `Phase D Complete`  
+**Implementation evidence through**: `e47ced6`
+
 **License**: Apache-2.0  
 
 ---
@@ -16,11 +17,17 @@ This audit document records the implementation and verification evidence for:
 - **Phase D**: UDP Control Plane (Node Discovery, Heartbeat, Liveness, Availability, Health, Load, Capability Revision, Leases) and Dual-Plane Mock Runtime Conformance Harness
 
 ### Key Audit Invariants
-1. **100% V0.1 Freeze**: Zero modifications to existing V0.1 public headers (`include/linep/*.h`), core transports (`src/core`, `src/udp`, `src/tcp`), scheduler logic, C-ABI, or tests.
-2. **Regression-Free Guarantee**: All **29/29 existing V0.1 regression tests** pass unconditionally on both Windows and Linux.
+1. **V0.1 C/C++ Freeze**: Existing V0.1 public C/C++ headers (`include/linep/*.h`), core transports (`src/core`, `src/udp`, `src/tcp`), scheduler logic, C-ABI, wire behavior, and C++ regression tests remain unchanged. The versioned Python package now exposes both V0.1 compatibility and V0.2 APIs; its package metadata and compatibility tests were updated accordingly.
+2. **Regression-Free Guarantee**: All **29/29 existing V0.1 C++ regression tests** pass unconditionally on both Windows and Linux.
 3. **Build Isolation**: V0.2 is controlled via an explicit opt-in CMake option (`LINEP_BUILD_V02`, defaulting to `OFF`), maintaining clean default builds.
 4. **Dual-Plane Architecture**: Transport-neutral LiNeP runtime semantics with **UDP reference Control Plane** and **persistent TCP reference Data Plane**.
-5. **Multi-Platform Parity**: 100% test pass rate across Windows 10/11 x64 Native Host and Debian 13 (trixie) WSL (35/35 tests passing).
+5. **Multi-Platform Parity**: Recorded platform evidence covers Windows 10/11 x64, Debian 13 (trixie) WSL, and Raspberry Pi 5 ARM64. Current native verification contains 29 V0.1 plus 7 V0.2 C++ suites (36 total).
+
+### Evidence categories
+
+- **Recorded platform evidence** below identifies results obtained on the named hosts at the time of the corresponding commits.
+- **Current local verification** must name the tested commit and must not be presented as GitHub CI evidence.
+- **GitHub CI verification** is authoritative only when the workflow completes successfully for the tested commit. The workflow builds from `LiNeP/`, runs all V0.1/V0.2 C++ suites with V0.2 explicitly enabled, and runs the Python compatibility/V0.2 suite in dedicated jobs.
 
 ---
 
@@ -191,4 +198,4 @@ The following standalone CLI tools are provided and integrated into the CMake bu
 
 ## 6. Audit Conclusion
 
-The LiNeP V0.2 Runtime Baseline fulfills all requirements of **Phases A, B, C, and D** as specified in Issue #9 and Issue #10. The dual-plane design (UDP Control Plane + TCP Data Plane), standalone CLI conformance tools, and cross-language golden interop suites are fully verified across platforms and architectures (Windows x64, Linux x64, and Linux ARM64) with complete isolation from the frozen V0.1 baseline.
+The implementation provides the Phase A–D dual-plane baseline, standalone CLI conformance tools, and cross-language golden interoperability suites described above. The frozen boundary applies to the V0.1 C/C++ wire/core/test baseline; the versioned Python distribution intentionally changed to expose V0.1 compatibility and V0.2 side by side. Formal completion of Issue #10 additionally requires a green GitHub Actions run for the acceptance commit and reconciliation of the issue checklist with executed evidence.
