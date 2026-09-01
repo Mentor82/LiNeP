@@ -1,16 +1,22 @@
 [build-system]
-requires = ["setuptools>=61.0", "cffi>=1.15.0"]
+requires = ["setuptools>=77", "cffi>=1.15.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "linep-sl"
 version = "0.2.0"
 description = "LiNeP-SL — Security Layers for LiNeP"
-readme = "../README.md"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.9"
 dependencies = [
     "cffi>=1.15.0",
 ]
+
+[project.urls]
+"Source Code" = "https://github.com/Mentor82/LiNeP"
+"Bug Tracker" = "https://github.com/Mentor82/LiNeP/issues"
 
 [project.optional-dependencies]
 test = [

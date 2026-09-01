@@ -32,6 +32,17 @@ LiNeP-SL is not a second transport. It adds progressively stronger security whil
 * 🌐 **[Windows ↔ Debian 13 Interoperability Report](./LiNeP-SL/INTEROP_WINDOWS_DEBIAN13.md)**
 * 📋 **[LiNeP-SL V0.1 Implementation Roadmap](./LiNeP-SL/TODO_V0_1.md)**
 
+## License, third-party software, and project name
+
+LiNeP and LiNeP-SL project material are licensed under Apache-2.0 unless a file
+states otherwise. Independent compatible implementations are explicitly
+encouraged; third-party components retain their own licenses, and use of the
+LiNeP name or logo is separate from implementation rights.
+
+See the [`docs/legal/`](./docs/legal) index for the licensing policy,
+third-party notices, dependency review, release requirements, and name-use
+policy.
+
 ### Implementation Issues & Verification:
 - **Issue #1**: [`fix(linep-sl): restore normative SL0–SL4 layer boundaries`](https://github.com/Mentor82/LiNeP/issues/1)
 - **Issue #2**: [`hardening(linep-sl/sl1): canonicalize MAC input`](https://github.com/Mentor82/LiNeP/issues/2)

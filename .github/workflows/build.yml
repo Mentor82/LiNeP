@@ -222,18 +222,58 @@ jobs:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python -m pytest -q LiNeP/python/tests
 
+  # ── Distribution licensing and third-party notice verification ─────────────
+  legal-compliance:
+    name: Legal artifact verification
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build Python distribution wheels
+        run: |
+          python -m pip wheel --no-deps --wheel-dir legal-dist LiNeP/python
+          python -m pip wheel --no-deps --wheel-dir legal-dist LiNeP-SL/python
+
+      - name: Verify wheel legal payloads
+        run: python scripts/check_legal_artifacts.py legal-dist
+
   # ── Bundle all artifacts into one release zip ────────────────────────────────
   bundle:
     name: Bundle release artifacts
-    needs: [windows, linux, macos, protocol-tests, python-tests]
+    needs: [windows, linux, macos, protocol-tests, python-tests, legal-compliance]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist/
+
+      - name: Stage licenses and notices
+        run: |
+          mkdir -p dist/legal/third-party
+          cp LICENSE NOTICE dist/
+          cp docs/legal/*.md dist/legal/
+          cp LiNeP/python/linep/licenses/*.txt dist/legal/third-party/
+
+      - name: Verify staged legal payload
+        run: |
+          test -f dist/LICENSE
+          test -f dist/NOTICE
+          test -f dist/legal/LICENSING_POLICY.md
+          test -f dist/legal/THIRD_PARTY_NOTICES.md
+          test -f dist/legal/TRADEMARK_POLICY.md
+          test -f dist/legal/third-party/GPL-3.0.txt
+          test -f dist/legal/third-party/GCC-RUNTIME-LIBRARY-EXCEPTION-3.1.txt
+          test -f dist/legal/third-party/LIBWINPTHREAD.txt
 
       - name: Show contents
         run: find dist/ -type f | sort
