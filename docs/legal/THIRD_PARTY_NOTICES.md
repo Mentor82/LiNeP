@@ -8,6 +8,22 @@ This inventory distinguishes material included in LiNeP distributions from
 dependencies that users, builders, or documentation authors obtain separately.
 Third-party licenses remain controlling for third-party material.
 
+## Versioned Python distribution boundary
+
+The `linep` Python distribution is versioned `0.2.x`, but it deliberately ships
+two separate protocol surfaces:
+
+- `linep.v0_1` is the frozen V0.1 compatibility namespace and uses the native
+  V0.1 C ABI when native operations are requested.
+- `linep.v0_2` is the V0.2 dual-plane implementation. Its current Python
+  envelope, control-plane, mock-runtime, and conformance paths are pure Python
+  and do not load the V0.1 native library merely by being imported.
+
+The MinGW runtime DLL notices below therefore apply to the bundled native
+`liblinep.dll` used by the V0.1 compatibility path. They are not dependencies of
+the pure-Python V0.2 protocol path. The C++ V0.2 implementation remains separate
+behind `LINEP_BUILD_V02` and is Apache-2.0 LiNeP project code.
+
 ## 1. Third-party binaries included in the repository and Python package
 
 The Windows Python package currently contains these unmodified compiler-runtime
@@ -36,9 +52,10 @@ and license payload. Distribution of the GCC runtime libraries must also satisfy
 the GPL's corresponding-source requirements; a link alone may not satisfy every
 distribution method.
 
-`LiNeP/python/linep/liblinep.dll` itself is LiNeP project output under
-Apache-2.0. Dynamic use of the listed runtime DLLs does not relicense LiNeP code,
-and Apache-2.0 does not relicense those DLLs.
+`LiNeP/python/linep/liblinep.dll` itself is LiNeP project output intended for the
+native V0.1 compatibility path and is under Apache-2.0. Dynamic use of the listed
+runtime DLLs does not relicense LiNeP code, and Apache-2.0 does not relicense
+those DLLs.
 
 ## 2. Runtime package dependencies not copied into this repository
 

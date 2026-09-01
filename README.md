@@ -34,10 +34,12 @@ LiNeP-SL is not a second transport. It adds progressively stronger security whil
 
 ## License, third-party software, and project name
 
-LiNeP and LiNeP-SL project material are licensed under Apache-2.0 unless a file
-states otherwise. Independent compatible implementations are explicitly
-encouraged; third-party components retain their own licenses, and use of the
-LiNeP name or logo is separate from implementation rights.
+The frozen LiNeP V0.1 baseline, the separate current LiNeP V0.2 baseline, and
+LiNeP-SL project material are licensed under Apache-2.0 unless a file states
+otherwise. Their common license does not merge V0.1, V0.2, or LiNeP-SL semantics.
+Independent compatible implementations are explicitly encouraged; third-party
+components retain their own licenses, and use of the LiNeP name or logo is
+separate from implementation rights.
 
 See the [`docs/legal/`](./docs/legal) index for the licensing policy,
 third-party notices, dependency review, release requirements, and name-use

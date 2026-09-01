@@ -13,6 +13,24 @@ root [`LICENSE`](../../LICENSE):
 - test code, test vectors, golden frames, fixtures, and conformance material;
 - project build scripts and project-produced binary artifacts.
 
+### Version scope
+
+This scope expressly includes both distinct LiNeP protocol baselines:
+
+- **LiNeP V0.1** — the frozen historical worker-protocol baseline and its native
+  C/C++ implementation and C ABI; and
+- **LiNeP V0.2** — the current engine-neutral runtime-interoperability baseline,
+  including its C++ and Python implementations, dual-plane contract, tools,
+  tests, fixtures, and conformance material.
+
+It also includes LiNeP-SL project material under the same Apache-2.0 repository
+license unless a file states otherwise. LiNeP-SL remains the separate security
+layer for LiNeP communication; it is not another protocol-version label.
+
+Licensing both baselines under Apache-2.0 does not merge their semantics. V0.1
+and V0.2 remain separate, are not implicitly wire-compatible, and retain the
+version and migration boundaries defined by the normative reference manual.
+
 Generated output that contains or is derived from LiNeP project code remains
 subject to Apache-2.0. Data, prompts, model output, or application content sent
 through LiNeP does not become Apache-2.0 merely because LiNeP transported it.

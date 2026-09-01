@@ -3,6 +3,10 @@ Copyright 2026 Mirko Waldhauer and LiNeP contributors
 
 This product includes software developed by the LiNeP project.
 
+This Python distribution exposes the separate `linep.v0_1` compatibility and
+`linep.v0_2` protocol namespaces. The bundled native library belongs to the V0.1
+compatibility path; importing the pure-Python V0.2 path does not require it.
+
 This Python distribution includes third-party components that remain under
 their own licenses. Their notices, license texts, and source references are
 provided in THIRD_PARTY_NOTICES.md and the linep/licenses directory. The

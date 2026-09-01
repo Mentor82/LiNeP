@@ -3,6 +3,9 @@ Copyright 2026 Mirko Waldhauer and LiNeP contributors
 
 This product includes software developed by the LiNeP project.
 
+LiNeP-SL is the security layer for LiNeP communication. It is distinct from the
+separate LiNeP V0.1 and V0.2 protocol baselines.
+
 LiNeP distributions may include third-party components that remain under
 their own licenses. Their notices, license texts, and source references are
 listed in docs/legal/THIRD_PARTY_NOTICES.md. The Apache License, Version 2.0
