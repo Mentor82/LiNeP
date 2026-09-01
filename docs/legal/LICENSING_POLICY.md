@@ -23,13 +23,16 @@ This scope expressly includes both distinct LiNeP protocol baselines:
   including its C++ and Python implementations, dual-plane contract, tools,
   tests, fixtures, and conformance material.
 
-It also includes LiNeP-SL project material under the same Apache-2.0 repository
-license unless a file states otherwise. LiNeP-SL remains the separate security
-layer for LiNeP communication; it is not another protocol-version label.
+It also includes the distinct **LiNeP-SL V0.1** security-layer baseline under
+the same Apache-2.0 repository license unless a file states otherwise.
+LiNeP-SL has its own version line: its V0.1 label names the current SL0-SL4
+security architecture and must not be confused with either LiNeP V0.1 or
+LiNeP V0.2. The `linep-sl` Python distribution version is a packaging version
+and does not rename the LiNeP-SL V0.1 protocol baseline.
 
-Licensing both baselines under Apache-2.0 does not merge their semantics. V0.1
-and V0.2 remain separate, are not implicitly wire-compatible, and retain the
-version and migration boundaries defined by the normative reference manual.
+Licensing all three baselines under Apache-2.0 does not merge their semantics.
+LiNeP V0.1, LiNeP V0.2, and LiNeP-SL V0.1 remain separate and retain the
+version and migration boundaries defined by their normative documentation.
 
 Generated output that contains or is derived from LiNeP project code remains
 subject to Apache-2.0. Data, prompts, model output, or application content sent

@@ -24,6 +24,10 @@ The MinGW runtime DLL notices below therefore apply to the bundled native
 the pure-Python V0.2 protocol path. The C++ V0.2 implementation remains separate
 behind `LINEP_BUILD_V02` and is Apache-2.0 LiNeP project code.
 
+The separate `linep-sl` Python distribution is currently packaged as `0.2.0`,
+but implements the independently versioned **LiNeP-SL V0.1** security baseline.
+Its package version must not be read as a LiNeP-SL V0.2 protocol designation.
+
 ## 1. Third-party binaries included in the repository and Python package
 
 The Windows Python package currently contains these unmodified compiler-runtime
