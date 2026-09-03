@@ -27,8 +27,8 @@ It also includes the distinct **LiNeP-SL V0.1** security-layer baseline under
 the same Apache-2.0 repository license unless a file states otherwise.
 LiNeP-SL has its own version line: its V0.1 label names the current SL0-SL4
 security architecture and must not be confused with either LiNeP V0.1 or
-LiNeP V0.2. The `linep-sl` Python distribution version is a packaging version
-and does not rename the LiNeP-SL V0.1 protocol baseline.
+LiNeP V0.2. Package and CMake metadata for the frozen implementation use the
+`0.1.x` line until a LiNeP-SL V0.2 release is deliberately produced.
 
 Licensing all three baselines under Apache-2.0 does not merge their semantics.
 LiNeP V0.1, LiNeP V0.2, and LiNeP-SL V0.1 remain separate and retain the

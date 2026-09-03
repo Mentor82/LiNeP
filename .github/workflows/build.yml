@@ -185,6 +185,45 @@ jobs:
       - name: Run all C++ tests
         run: ctest --test-dir build-tests --output-on-failure
 
+  # ── LiNeP-SL verification: frozen V0.1 + opt-in V0.2 contract ─────────────
+  linep-sl-tests:
+    name: LiNeP-SL tests (V0.1 + V0.2)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build g++
+          python -m pip install "cffi>=1.15" pytest
+
+      - name: Configure V0.1 + V0.2 tests
+        run: |
+          cmake -S LiNeP-SL -B build-sl-tests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON \
+            -DLINEP_SL_BUILD_V02=ON \
+            --log-level=WARNING
+
+      - name: Build
+        run: cmake --build build-sl-tests --parallel
+
+      - name: Run all LiNeP-SL C++ tests
+        run: ctest --test-dir build-sl-tests --output-on-failure
+
+      - name: Run LiNeP-SL V0.1 Python compatibility tests
+        env:
+          LINEP_SL_LIB_PATH: ${{ github.workspace }}/build-sl-tests/src/liblinep_sl.so
+          PYTHONPATH: ${{ github.workspace }}/LiNeP-SL/python
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m pytest -q LiNeP-SL/python/tests
+
   # ── Python compatibility + V0.2 dual-plane verification ────────────────────
   python-tests:
     name: Python tests

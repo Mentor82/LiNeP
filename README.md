@@ -31,6 +31,8 @@ LiNeP-SL is not a second transport. It adds progressively stronger security whil
 * 📊 **[Micro-Benchmark & Security Overhead Audit Report](./LiNeP-SL/AUDIT_PERFORMANCE_SL0_VS_SL4.md)**
 * 🌐 **[Windows ↔ Debian 13 Interoperability Report](./LiNeP-SL/INTEROP_WINDOWS_DEBIAN13.md)**
 * 📋 **[LiNeP-SL V0.1 Implementation Roadmap](./LiNeP-SL/TODO_V0_1.md)**
+* 🚧 **[LiNeP-SL V0.2 Bootstrap](./LiNeP-SL/V0_2_BOOTSTRAP.md)**
+* 📋 **[LiNeP-SL V0.2 Roadmap](./LiNeP-SL/TODO_V0_2.md)**
 
 ## License, third-party software, and project name
 

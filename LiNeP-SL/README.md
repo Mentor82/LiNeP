@@ -75,6 +75,9 @@ External/Federated Trust Domain SL0 + SL1 + SL2 + SL3 + SL4
 * 📊 **[Micro-Benchmark & Security Overhead Audit Report](./AUDIT_PERFORMANCE_SL0_VS_SL4.md)**
 * 🌐 **[Windows ↔ Debian 13 Interoperability Report](./INTEROP_WINDOWS_DEBIAN13.md)**
 * 📋 **[LiNeP-SL Implementation Roadmap](./TODO_V0_1.md)**
+* 🚧 **[LiNeP-SL V0.2 Bootstrap](./V0_2_BOOTSTRAP.md)**
+* 📋 **[LiNeP-SL V0.2 Roadmap](./TODO_V0_2.md)**
+* 🔒 **[LiNeP-SL V0.2 Security Contract](./docs/v0_2/SECURITY_CONTRACT.md)**
 
 ### Implementation Issues & Verification:
 - **Issue #1**: [`fix(linep-sl): restore normative SL0–SL4 layer boundaries`](https://github.com/Mentor82/LiNeP/issues/1)
