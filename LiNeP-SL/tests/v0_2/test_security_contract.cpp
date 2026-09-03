@@ -54,6 +54,14 @@ int main() {
     unknown_digest.common.digest = digest_algorithm::unknown;
     assert(!unknown_digest.is_valid());
 
+    auto wrong_digest_size = control;
+    wrong_digest_size.common.content_digest.resize(31);
+    assert(!wrong_digest_size.is_valid());
+
+    auto unknown_direction = control;
+    unknown_direction.common.direction = static_cast<message_direction>(99);
+    assert(!unknown_direction.is_valid());
+
     data_plane_binding request;
     request.common = valid_common(security_action::execute);
     request.message_class = data_message_class::request;

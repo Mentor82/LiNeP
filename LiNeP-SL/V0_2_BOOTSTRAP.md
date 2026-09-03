@@ -62,7 +62,7 @@ sessions, or modify LiNeP framing.
 
 ## Later phases
 
-1. Negotiation, algorithm suites and security-session lifecycle.
+1. Negotiation, algorithm suites and security-session lifecycle. **Implemented.**
 2. Authenticators and independent replay windows for both planes.
 3. Engine-neutral authorization and capability-to-policy mapping.
 4. Key rotation, governance, audit and federation.

@@ -5,6 +5,31 @@
 namespace linep::sl::v0_2 {
 namespace {
 
+bool known_direction(message_direction value) noexcept {
+    return value == message_direction::initiator_to_responder ||
+           value == message_direction::responder_to_initiator;
+}
+
+bool known_level(security_level value) noexcept {
+    return value >= security_level::sl0_baseline &&
+           value <= security_level::sl4_governed;
+}
+
+bool known_action(security_action value) noexcept {
+    return value >= security_action::advertise &&
+           value <= security_action::administer;
+}
+
+bool valid_digest(const common_binding& binding) noexcept {
+    if (binding.digest == digest_algorithm::sha256) {
+        return binding.content_digest.size() == 32;
+    }
+    if (binding.digest == digest_algorithm::sha512) {
+        return binding.content_digest.size() == 64;
+    }
+    return false;
+}
+
 template <typename T>
 void append_le(std::vector<std::uint8_t>& out, T value) {
     static_assert(std::is_integral_v<T>, "canonical fields must be integral");
@@ -48,14 +73,11 @@ bool security_session_identity::is_valid() const noexcept {
 }
 
 bool common_binding::is_valid() const noexcept {
-    return session.is_valid() && direction != message_direction::unknown &&
-           negotiated_level != security_level::unknown &&
-           required_level != security_level::unknown &&
+    return session.is_valid() && known_direction(direction) &&
+           known_level(negotiated_level) && known_level(required_level) &&
            static_cast<std::uint8_t>(negotiated_level) >=
                static_cast<std::uint8_t>(required_level) &&
-           action != security_action::unknown &&
-           digest != digest_algorithm::unknown && !content_digest.empty() &&
-           content_digest.size() <= max_content_digest_bytes;
+           known_action(action) && valid_digest(*this);
 }
 
 bool control_plane_binding::is_valid() const noexcept {
@@ -65,7 +87,10 @@ bool control_plane_binding::is_valid() const noexcept {
 }
 
 bool data_plane_binding::is_valid() const noexcept {
-    if (!common.is_valid() || message_class == data_message_class::unknown ||
+    if (!common.is_valid() ||
+        (message_class != data_message_class::request &&
+         message_class != data_message_class::event &&
+         message_class != data_message_class::control) ||
         !stream.is_valid()) {
         return false;
     }

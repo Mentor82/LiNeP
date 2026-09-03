@@ -19,11 +19,11 @@ LiNeP V0.2 normative reference before changing this contract.
 
 ## Phase B — negotiation and session lifecycle
 
-- [ ] define cryptographic suite identifiers and negotiation transcript
-- [ ] define peer authentication and security-session establishment
-- [ ] bind security sessions to trust domain, control epoch and authorized lease
-- [ ] define rotation, expiry, revocation and reconnect behavior
-- [ ] reject unsupported or downgraded profiles without fallback
+- [x] define cryptographic suite identifiers and negotiation transcript
+- [x] define peer authentication and security-session establishment
+- [x] bind security sessions to trust domain, control epoch and authorized lease
+- [x] define rotation, expiry, revocation and reconnect behavior
+- [x] reject unsupported or downgraded profiles without fallback
 
 ## Phase C — authenticators and replay protection
 

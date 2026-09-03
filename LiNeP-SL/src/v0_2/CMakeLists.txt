@@ -1,5 +1,7 @@
 add_library(linep_sl_v02 STATIC
+    negotiation.cpp
     security_contract.cpp
+    session.cpp
 )
 
 target_include_directories(linep_sl_v02 PUBLIC
