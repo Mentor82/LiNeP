@@ -4,7 +4,7 @@
 
 This specification defines the provider-neutral, MLS-compatible (RFC 9420) group security architecture in `linep::sl::v0_2`.
 
-In L.I.A.R.A. Cluster OS, distributed task execution involves dynamic sets of heterogeneous worker nodes (primary execution, redundant verification, quorum consensus, and failover). LiNeP-SL Group Security provides cryptographic context isolation and forward secrecy so task payloads and intermediate stream deltas are visible only to active, authorized members of the cryptographic execution group.
+In L.I.A.R.A. Cluster OS, distributed task execution involves dynamic sets of heterogeneous worker nodes (primary execution, redundant verification, quorum consensus, and failover). LiNeP-SL Group Security provides cryptographic context isolation, anti-impersonation, confidentiality and forward secrecy so task payloads and intermediate stream deltas are visible and authenticatable only to active, authorized members of the cryptographic execution group.
 
 ---
 
@@ -21,7 +21,7 @@ LiNeP-SL Authorization
     --> Decides WHO may perform WHICH action (capabilities, policies)
 
 LiNeP-SL Group Security (MLS-compatible)
-    --> Decides WHO can cryptographically send and receive group traffic
+    --> Decides WHO can cryptographically send, verify and decrypt group traffic
 ```
 
 ### Critical Security Invariants
@@ -34,23 +34,40 @@ LiNeP-SL Group Security (MLS-compatible)
    $$\text{task\_id} \neq \text{execution\_id} \neq \text{security\_group\_id} \neq \text{security\_session\_id}$$
 3. **No Authorization Shortcut**:
    Cryptographic group membership grants confidentiality/integrity over group traffic, but does **not** bypass action-level authorization checks.
-4. **Forward Secrecy & Post-Compromise Security**:
-   When a node is evicted (or revoked/quarantined), the group advances to $\text{epoch}_{N+1}$ with a new ratchet key. Removed members cannot decrypt or forge messages in subsequent epochs.
+4. **Forward Secrecy & Fresh Entropy Eviction**:
+   When a node is evicted, fresh commit entropy is injected into the KDF. Removed members holding all epoch $N$ keys cannot compute epoch $N+1$ keys.
+5. **Post-Compromise Security (PCS)**:
+   When a healing rekey occurs with fresh update entropy, compromise of epoch $N$ state does not expose traffic in epoch $N+1$.
+6. **Per-Sender Anti-Impersonation**:
+   Messages are authenticated using per-sender private leaf keys; active members cannot forge messages under another member's identity.
 
 ---
 
-## 3. Group Profiles
+## 3. RFC 9420 Ciphersuite Registry (16-Bit)
 
-| Group Profile | Type Enum | Typical Lifetime | Use Case |
-| :--- | :--- | :--- | :--- |
-| **Ephemeral Task** | `ephemeral_task` | Duration of single request/task | Sensitive inference, multi-stage task pipeline |
-| **Long-Lived Worker** | `long_lived_worker` | Runtime daemon lifecycle | Standard inference worker pool, shared capacity |
-| **Quorum Consensus** | `quorum_consensus` | Voting session | Byzantine fault tolerance, redundant cross-check |
-| **Federation Boundary**| `federation_boundary` | Multi-cluster peering | Cross-organization federated inference |
+| Value | Name | DHKEM | AEAD | Hash | Signature |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `0x0001` | `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519` | X25519 | AES-128-GCM | SHA-256 | Ed25519 |
+| `0x0002` | `MLS_128_DHKEMP256_AES128GCM_SHA256_P256` | P-256 | AES-128-GCM | SHA-256 | ECDSA-P256 |
+| `0x0003` | `MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519` | X25519 | ChaCha20Poly1305 | SHA-256 | Ed25519 |
+| `0x0004` | `MLS_256_DHKEMX448_AES256GCM_SHA512_Ed448` | X448 | AES-256-GCM | SHA-512 | Ed448 |
+| `0x0005` | `MLS_256_DHKEMP384_AES256GCM_SHA384_P384` | P-384 | AES-256-GCM | SHA-384 | ECDSA-P384 |
+| `0x0006` | `MLS_256_DHKEMP521_AES256GCM_SHA512_P521` | P-521 | AES-256-GCM | SHA-512 | ECDSA-P521 |
+| `0x0007` | `MLS_256_DHKEMX448_CHACHA20POLY1305_SHA512_Ed448` | X448 | ChaCha20Poly1305 | SHA-512 | Ed448 |
 
 ---
 
-## 4. Group Message Authenticator Binding (`LNS2_GROUP`)
+## 4. Public State vs. Private Secrets Hygiene
+
+- `group_context` contains **only public authenticated state** (RFC 9420 Section 6.1 `GroupContext`):
+  - `group_id`, `group_epoch`, `type`, `ciphersuite`, `state`, `created_at_us`, `epoch_advanced_at_us`
+  - `members` (public endpoint identities and public keys)
+  - `execution_group_state_hash`, `tree_hash`, `confirmed_transcript_hash`
+- **Secret state** (epoch secrets, leaf secrets, sender signing keys, encryption streams) is kept opaque inside `group_crypto_provider` and is never exposed through public inspection APIs.
+
+---
+
+## 5. Group Message Authenticator Binding (`LNS2_GROUP`)
 
 The canonical little-endian byte representation for group message signatures:
 
@@ -69,23 +86,19 @@ Offset  Size  Field
 0x32    8     sender_subject_id (uint64 LE)
 0x3A    1     message_class (uint8: 1=request, 2=event, 3=control)
 0x3B    1     digest_algorithm (uint8: 1=SHA-256, 2=SHA-512)
-0x3C    8     message_seq (uint64 LE)
-0x44    2     content_digest_len (uint16 LE)
-0x46    N     content_digest (N bytes)
+0x3C    8     message_seq (uint64 LE - Application sequence)
+0x44    4     ratchet_generation (uint32 LE - Cryptographic ratchet)
+0x48    2     content_digest_len (uint16 LE)
+0x4A    N     content_digest (N bytes)
 ```
 
 ---
 
-## 5. Failover & Eviction Flow
+## 6. Protection Modes
 
-```text
-1. Coordinator creates group (Epoch 1)
-2. Scheduler adds GPU-A (Primary), GPU-B (Redundant), CPU-C (Validator) (Epoch 4)
-3. Coordinator sends Task Request (Epoch 4)
-4. GPU-A streams intermediate Event Deltas (Epoch 4)
-5. GPU-A fails hardware check / heartbeat timeout
-6. Scheduler evicts GPU-A -> remove_member() advances group to Epoch 5
-7. GPU-B is promoted to Primary Worker
-8. GPU-B continues execution in Epoch 5 with new epoch key
-9. GPU-A is cryptographically excluded from Epoch 5
-```
+1. **`authenticated_only`** (`group_protection_mode::authenticated_only`):
+   - Corresponds to MLS `PublicMessage` semantics.
+   - Payload is transmitted as plaintext with anti-impersonation sender authentication tag.
+2. **`confidential_and_authenticated`** (`group_protection_mode::confidential_and_authenticated`):
+   - Corresponds to MLS `PrivateMessage` semantics.
+   - Payload is encrypted on the wire; decrypted only by active members possessing epoch keys.

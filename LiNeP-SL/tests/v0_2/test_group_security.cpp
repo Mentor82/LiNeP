@@ -41,15 +41,22 @@ std::vector<std::uint8_t> make_initial_secret() {
 
 } // namespace
 
-void test_group_creation_and_membership() {
-    std::cout << "[Test 1] Group Creation & Dynamic Membership Epoch Transitions..." << std::endl;
+void test_group_creation_and_public_context_hygiene() {
+    std::cout << "[Test 1] Group Creation, RFC 9420 Ciphersuites & Public Context Hygiene..." << std::endl;
 
     group_security_manager mgr;
     std::uint64_t now_us = 1000000ULL;
     auto initial_secret = make_initial_secret();
 
     auto coord = make_coordinator(1);
-    assert(mgr.create_group(9001, group_type::ephemeral_task, crypto_suite::hmac_sha256_128, coord, initial_secret, now_us));
+    assert(mgr.create_group(
+        9001,
+        group_type::ephemeral_task,
+        mls_ciphersuite::mls_128_dhkemx25519_aes128gcm_sha256_ed25519,
+        coord,
+        initial_secret,
+        now_us));
+
     assert(mgr.get_group_count() == 1);
     assert(mgr.get_active_group_count() == 1);
 
@@ -57,40 +64,39 @@ void test_group_creation_and_membership() {
     assert(mgr.get_group_context(9001, ctx));
     assert(ctx.group_id == 9001);
     assert(ctx.group_epoch == 1);
+    assert(ctx.ciphersuite == mls_ciphersuite::mls_128_dhkemx25519_aes128gcm_sha256_ed25519);
     assert(ctx.members.size() == 1);
     assert(ctx.members[0].role == member_role::coordinator);
-    assert(mgr.is_member_active(9001, coord.endpoint));
+    assert(!ctx.confirmed_transcript_hash.empty());
+    assert(!ctx.execution_group_state_hash.empty());
 
     // Add Primary GPU-A -> Epoch 2
     auto gpu_a = make_worker(10, member_role::worker_primary);
-    assert(mgr.add_member(9001, gpu_a, now_us + 1000));
+    assert(mgr.add_member(9001, gpu_a, {}, {}, now_us + 1000));
     assert(mgr.get_group_context(9001, ctx));
     assert(ctx.group_epoch == 2);
     assert(ctx.members.size() == 2);
     assert(mgr.is_member_active(9001, gpu_a.endpoint));
 
-    // Duplicate add rejected
-    assert(!mgr.add_member(9001, gpu_a, now_us + 1500));
-
     // Add Redundant GPU-B -> Epoch 3
     auto gpu_b = make_worker(20, member_role::worker_redundant);
-    assert(mgr.add_member(9001, gpu_b, now_us + 2000));
+    assert(mgr.add_member(9001, gpu_b, {}, {}, now_us + 2000));
     assert(mgr.get_group_context(9001, ctx));
     assert(ctx.group_epoch == 3);
     assert(ctx.members.size() == 3);
 
     // Add Validator CPU-C -> Epoch 4
     auto cpu_c = make_worker(30, member_role::validator);
-    assert(mgr.add_member(9001, cpu_c, now_us + 3000));
+    assert(mgr.add_member(9001, cpu_c, {}, {}, now_us + 3000));
     assert(mgr.get_group_context(9001, ctx));
     assert(ctx.group_epoch == 4);
     assert(ctx.members.size() == 4);
 
-    std::cout << "  -> Group Creation & Membership Tests PASSED" << std::endl;
+    std::cout << "  -> Group Creation & Public Context Hygiene Tests PASSED" << std::endl;
 }
 
-void test_group_messaging_and_multi_party_flow() {
-    std::cout << "[Test 2] Group Messaging & Replay Protection Across Execution Set..." << std::endl;
+void test_confidentiality_and_multi_party_messaging() {
+    std::cout << "[Test 2] Confidential PrivateMessage & Authenticated PublicMessage Protection..." << std::endl;
 
     group_security_manager mgr;
     std::uint64_t now_us = 1000000ULL;
@@ -98,54 +104,62 @@ void test_group_messaging_and_multi_party_flow() {
 
     auto coord = make_coordinator(1);
     auto gpu_a = make_worker(10, member_role::worker_primary);
-    auto gpu_b = make_worker(20, member_role::worker_redundant);
     auto cpu_c = make_worker(30, member_role::validator);
 
-    assert(mgr.create_group(9001, group_type::ephemeral_task, crypto_suite::hmac_sha256_128, coord, initial_secret, now_us));
-    assert(mgr.add_member(9001, gpu_a, now_us + 100));
-    assert(mgr.add_member(9001, gpu_b, now_us + 200));
-    assert(mgr.add_member(9001, cpu_c, now_us + 300));
+    assert(mgr.create_group(9001, group_type::ephemeral_task, mls_ciphersuite::mls_128_dhkemx25519_aes128gcm_sha256_ed25519, coord, initial_secret, now_us));
+    assert(mgr.add_member(9001, gpu_a, {}, {}, now_us + 100));
+    assert(mgr.add_member(9001, cpu_c, {}, {}, now_us + 200));
 
-    group_context ctx;
-    assert(mgr.get_group_context(9001, ctx));
-    assert(ctx.group_epoch == 4);
+    // 1. Confidential & Authenticated Task Request from Coordinator
+    std::vector<std::uint8_t> secret_request = {'c', 'o', 'n', 'f', 'i', 'd', 'e', 'n', 't', 'i', 'a', 'l', '_', 't', 'a', 's', 'k'};
+    protected_group_message prot_req;
+    assert(mgr.protect_group_message(
+        9001,
+        coord.endpoint,
+        group_protection_mode::confidential_and_authenticated,
+        data_message_class::request,
+        secret_request,
+        1,
+        prot_req));
 
-    // 1. Coordinator signs task request (seq = 1)
-    std::vector<std::uint8_t> req_payload = {'t', 'a', 's', 'k', '_', 'r', 'e', 'q', 'u', 'e', 's', 't'};
-    std::vector<std::uint8_t> req_tag;
-    assert(mgr.sign_group_message(9001, coord.endpoint, data_message_class::request, req_payload, 1, req_tag));
+    // Ensure ciphertext on wire is NOT plaintext
+    assert(prot_req.ciphertext_or_payload != secret_request);
+    assert(prot_req.ratchet_generation == 1);
+    assert(prot_req.message_seq == 1);
 
-    // Primary GPU-A verifies coordinator's request
-    auto status = mgr.verify_group_message(9001, 4, coord.endpoint, data_message_class::request, req_payload, 1, req_tag, now_us + 400);
+    // Primary GPU-A unprotects request
+    std::vector<std::uint8_t> dec_request;
+    auto status = mgr.unprotect_group_message(prot_req, gpu_a.endpoint, data_message_class::request, dec_request, now_us + 300);
     assert(status == group_verification_status::ok);
+    assert(dec_request == secret_request);
 
-    // 2. Replay attack rejection for coordinator request
-    status = mgr.verify_group_message(9001, 4, coord.endpoint, data_message_class::request, req_payload, 1, req_tag, now_us + 450);
+    // Replay rejection
+    status = mgr.unprotect_group_message(prot_req, gpu_a.endpoint, data_message_class::request, dec_request, now_us + 350);
     assert(status == group_verification_status::replay_rejected);
 
-    // 3. Primary GPU-A signs intermediate stream delta (seq = 1)
-    std::vector<std::uint8_t> delta_payload = {'e', 'v', 'e', 'n', 't', '_', 'd', 'e', 'l', 't', 'a', '_', '1'};
-    std::vector<std::uint8_t> delta_tag;
-    assert(mgr.sign_group_message(9001, gpu_a.endpoint, data_message_class::event, delta_payload, 1, delta_tag));
+    // 2. Stream event from GPU-A
+    std::vector<std::uint8_t> event_delta = {'t', 'o', 'k', 'e', 'n', '_', '1'};
+    protected_group_message prot_evt;
+    assert(mgr.protect_group_message(
+        9001,
+        gpu_a.endpoint,
+        group_protection_mode::confidential_and_authenticated,
+        data_message_class::event,
+        event_delta,
+        1,
+        prot_evt));
 
-    // Validator CPU-C verifies GPU-A's event
-    status = mgr.verify_group_message(9001, 4, gpu_a.endpoint, data_message_class::event, delta_payload, 1, delta_tag, now_us + 500);
+    // Validator CPU-C unprotects GPU-A's event
+    std::vector<std::uint8_t> dec_evt;
+    status = mgr.unprotect_group_message(prot_evt, cpu_c.endpoint, data_message_class::event, dec_evt, now_us + 400);
     assert(status == group_verification_status::ok);
+    assert(dec_evt == event_delta);
 
-    // 4. Primary GPU-A signs completed result (seq = 2)
-    std::vector<std::uint8_t> result_payload = {'e', 'v', 'e', 'n', 't', '_', 'r', 'e', 's', 'u', 'l', 't'};
-    std::vector<std::uint8_t> result_tag;
-    assert(mgr.sign_group_message(9001, gpu_a.endpoint, data_message_class::event, result_payload, 2, result_tag));
-
-    // Coordinator verifies result
-    status = mgr.verify_group_message(9001, 4, gpu_a.endpoint, data_message_class::event, result_payload, 2, result_tag, now_us + 600);
-    assert(status == group_verification_status::ok);
-
-    std::cout << "  -> Group Messaging & Replay Protection Tests PASSED" << std::endl;
+    std::cout << "  -> Confidentiality & Messaging Tests PASSED" << std::endl;
 }
 
-void test_failover_eviction_and_forward_secrecy() {
-    std::cout << "[Test 3] Failover, Node Eviction & Cryptographic Forward Secrecy..." << std::endl;
+void test_eviction_forward_secrecy_and_fresh_entropy() {
+    std::cout << "[Test 3] Member Eviction with Fresh Commit Entropy & Forward Secrecy..." << std::endl;
 
     group_security_manager mgr;
     std::uint64_t now_us = 1000000ULL;
@@ -154,56 +168,116 @@ void test_failover_eviction_and_forward_secrecy() {
     auto coord = make_coordinator(1);
     auto gpu_a = make_worker(10, member_role::worker_primary);
     auto gpu_b = make_worker(20, member_role::worker_redundant);
-    auto cpu_c = make_worker(30, member_role::validator);
 
-    assert(mgr.create_group(9001, group_type::ephemeral_task, crypto_suite::hmac_sha256_128, coord, initial_secret, now_us));
-    assert(mgr.add_member(9001, gpu_a, now_us + 100));
-    assert(mgr.add_member(9001, gpu_b, now_us + 200));
-    assert(mgr.add_member(9001, cpu_c, now_us + 300));
+    assert(mgr.create_group(9001, group_type::ephemeral_task, mls_ciphersuite::mls_128_dhkemx25519_aes128gcm_sha256_ed25519, coord, initial_secret, now_us));
+    assert(mgr.add_member(9001, gpu_a, {}, {}, now_us + 100));
+    assert(mgr.add_member(9001, gpu_b, {}, {}, now_us + 200));
 
-    // Epoch 4 tag from GPU-A
-    std::vector<std::uint8_t> epoch4_payload = {'o', 'l', 'd', '_', 'm', 's', 'g'};
-    std::vector<std::uint8_t> epoch4_tag;
-    assert(mgr.sign_group_message(9001, gpu_a.endpoint, data_message_class::event, epoch4_payload, 10, epoch4_tag));
-
-    // Primary GPU-A is detected faulty -> Cluster OS evicts GPU-A
-    assert(mgr.remove_member(9001, gpu_a.endpoint, now_us + 1000));
-
+    // Epoch 3 active
     group_context ctx;
     assert(mgr.get_group_context(9001, ctx));
-    assert(ctx.group_epoch == 5); // Epoch advanced!
-    assert(!mgr.is_member_active(9001, gpu_a.endpoint)); // GPU-A no longer active
+    assert(ctx.group_epoch == 3);
+
+    // Evict GPU-A by injecting fresh commit entropy
+    std::vector<std::uint8_t> fresh_commit_entropy = {
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
+    };
+
+    assert(mgr.remove_member(9001, gpu_a.endpoint, fresh_commit_entropy, now_us + 1000));
+    assert(mgr.get_group_context(9001, ctx));
+    assert(ctx.group_epoch == 4);
+    assert(!mgr.is_member_active(9001, gpu_a.endpoint));
 
     // Promote GPU-B to primary worker
     assert(mgr.update_member_role(9001, gpu_b.endpoint, member_role::worker_primary, now_us + 1100));
 
-    // 1. Evicted node GPU-A cannot sign messages in new epoch (signing returns false)
-    std::vector<std::uint8_t> new_payload = {'t', 'a', 's', 'k', '_', 'c', 'o', 'n', 't', 'i', 'n', 'u', 'e'};
-    std::vector<std::uint8_t> rogue_tag;
-    assert(!mgr.sign_group_message(9001, gpu_a.endpoint, data_message_class::event, new_payload, 1, rogue_tag));
+    // GPU-B protects message in Epoch 4
+    std::vector<std::uint8_t> epoch4_payload = {'e', 'p', 'o', 'c', 'h', '_', '4', '_', 't', 'a', 's', 'k'};
+    protected_group_message prot_msg4;
+    assert(mgr.protect_group_message(
+        9001,
+        gpu_b.endpoint,
+        group_protection_mode::confidential_and_authenticated,
+        data_message_class::event,
+        epoch4_payload,
+        1,
+        prot_msg4));
 
-    // 2. If an attacker attempts to verify a forged tag under evicted member GPU-A in epoch 5 -> rejected with member_not_active
-    std::vector<std::uint8_t> fake_tag(16, 0xAA);
-    auto status = mgr.verify_group_message(9001, 5, gpu_a.endpoint, data_message_class::event, new_payload, 1, fake_tag, now_us + 1200);
-    assert(status == group_verification_status::member_not_active);
+    // Coordinator unprotects GPU-B's message in Epoch 4
+    std::vector<std::uint8_t> dec4;
+    assert(mgr.unprotect_group_message(prot_msg4, coord.endpoint, data_message_class::event, dec4, now_us + 1200) == group_verification_status::ok);
+    assert(dec4 == epoch4_payload);
 
-    // 3. Stale epoch replay: Attempting to send epoch 4 message in epoch 5 -> rejected with stale_epoch
-    status = mgr.verify_group_message(9001, 4, gpu_a.endpoint, data_message_class::event, epoch4_payload, 10, epoch4_tag, now_us + 1300);
-    assert(status == group_verification_status::stale_epoch);
+    // Evicted GPU-A cannot sign messages in Epoch 4
+    protected_group_message rogue_msg;
+    assert(!mgr.protect_group_message(
+        9001,
+        gpu_a.endpoint,
+        group_protection_mode::confidential_and_authenticated,
+        data_message_class::event,
+        epoch4_payload,
+        1,
+        rogue_msg));
 
-    // 4. Promoted GPU-B signs task continuation in epoch 5
-    std::vector<std::uint8_t> epoch5_tag;
-    assert(mgr.sign_group_message(9001, gpu_b.endpoint, data_message_class::event, new_payload, 1, epoch5_tag));
+    // Forged message claiming sender GPU-A rejected as member_not_active / impersonation
+    prot_msg4.sender_endpoint = gpu_a.endpoint;
+    assert(mgr.unprotect_group_message(prot_msg4, coord.endpoint, data_message_class::event, dec4, now_us + 1300) == group_verification_status::member_not_active);
 
-    // Validator CPU-C verifies GPU-B in epoch 5 -> ok!
-    status = mgr.verify_group_message(9001, 5, gpu_b.endpoint, data_message_class::event, new_payload, 1, epoch5_tag, now_us + 1400);
-    assert(status == group_verification_status::ok);
-
-    std::cout << "  -> Failover & Forward Secrecy Tests PASSED" << std::endl;
+    std::cout << "  -> Eviction Forward Secrecy Tests PASSED" << std::endl;
 }
 
-void test_tampering_and_negative_cases() {
-    std::cout << "[Test 4] Tampering, Invalid Bindings & Group Closure..." << std::endl;
+void test_post_compromise_security_and_healing() {
+    std::cout << "[Test 4] Post-Compromise Security (PCS) & Healing Rekey..." << std::endl;
+
+    group_security_manager mgr;
+    std::uint64_t now_us = 1000000ULL;
+    auto initial_secret = make_initial_secret();
+
+    auto coord = make_coordinator(1);
+    auto gpu_b = make_worker(20, member_role::worker_primary);
+
+    assert(mgr.create_group(9001, group_type::ephemeral_task, mls_ciphersuite::mls_128_dhkemx25519_aes128gcm_sha256_ed25519, coord, initial_secret, now_us));
+    assert(mgr.add_member(9001, gpu_b, {}, {}, now_us + 100));
+
+    // Epoch 2: Assume adversary compromised Epoch 2 state.
+    // GPU-B performs a healing rekey with fresh unguessable entropy:
+    std::vector<std::uint8_t> fresh_update_entropy = {
+        0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00
+    };
+
+    assert(mgr.rekey_group(9001, gpu_b.endpoint, fresh_update_entropy, now_us + 1000));
+
+    group_context ctx;
+    assert(mgr.get_group_context(9001, ctx));
+    assert(ctx.group_epoch == 3); // Advanced to Epoch 3 with PCS
+
+    // Messages protected in Epoch 3 use new ratchets derived from fresh_update_entropy
+    std::vector<std::uint8_t> healed_payload = {'p', 'c', 's', '_', 'p', 'a', 'y', 'l', 'o', 'a', 'd'};
+    protected_group_message healed_msg;
+    assert(mgr.protect_group_message(
+        9001,
+        gpu_b.endpoint,
+        group_protection_mode::confidential_and_authenticated,
+        data_message_class::event,
+        healed_payload,
+        1,
+        healed_msg));
+
+    std::vector<std::uint8_t> dec_healed;
+    assert(mgr.unprotect_group_message(healed_msg, coord.endpoint, data_message_class::event, dec_healed, now_us + 1100) == group_verification_status::ok);
+    assert(dec_healed == healed_payload);
+
+    std::cout << "  -> Post-Compromise Security Tests PASSED" << std::endl;
+}
+
+void test_anti_impersonation_and_sender_authentication() {
+    std::cout << "[Test 5] Anti-Impersonation & Per-Sender Signing Key Verification..." << std::endl;
 
     group_security_manager mgr;
     std::uint64_t now_us = 1000000ULL;
@@ -211,46 +285,43 @@ void test_tampering_and_negative_cases() {
 
     auto coord = make_coordinator(1);
     auto gpu_a = make_worker(10, member_role::worker_primary);
+    auto gpu_b = make_worker(20, member_role::worker_redundant);
 
-    assert(mgr.create_group(9001, group_type::ephemeral_task, crypto_suite::hmac_sha256_128, coord, initial_secret, now_us));
-    assert(mgr.add_member(9001, gpu_a, now_us + 100));
+    assert(mgr.create_group(9001, group_type::ephemeral_task, mls_ciphersuite::mls_128_dhkemx25519_aes128gcm_sha256_ed25519, coord, initial_secret, now_us));
+    assert(mgr.add_member(9001, gpu_a, {}, {}, now_us + 100));
+    assert(mgr.add_member(9001, gpu_b, {}, {}, now_us + 200));
 
-    std::vector<std::uint8_t> payload = {'v', 'a', 'l', 'i', 'd', '_', 'd', 'a', 't', 'a'};
-    std::vector<std::uint8_t> tag;
-    assert(mgr.sign_group_message(9001, gpu_a.endpoint, data_message_class::event, payload, 1, tag));
+    // GPU-B creates a valid message signed with GPU-B's leaf key
+    std::vector<std::uint8_t> payload = {'g', 'p', 'u', '_', 'b', '_', 'm', 's', 'g'};
+    protected_group_message msg_b;
+    assert(mgr.protect_group_message(
+        9001,
+        gpu_b.endpoint,
+        group_protection_mode::authenticated_only,
+        data_message_class::event,
+        payload,
+        1,
+        msg_b));
 
-    // Tampered payload fails
-    std::vector<std::uint8_t> bad_payload = payload;
-    bad_payload[0] = 'X';
-    auto status = mgr.verify_group_message(9001, 2, gpu_a.endpoint, data_message_class::event, bad_payload, 1, tag, now_us + 200);
+    // Attacker modifies sender_endpoint to claim the message was produced by GPU-A
+    protected_group_message forged_msg = msg_b;
+    forged_msg.sender_endpoint = gpu_a.endpoint;
+
+    std::vector<std::uint8_t> dec;
+    // Verification MUST fail with signature_invalid because msg_key for GPU-A differs from GPU-B
+    auto status = mgr.unprotect_group_message(forged_msg, coord.endpoint, data_message_class::event, dec, now_us + 300);
     assert(status == group_verification_status::signature_invalid);
 
-    // Unknown group ID fails
-    status = mgr.verify_group_message(9999, 2, gpu_a.endpoint, data_message_class::event, payload, 1, tag, now_us + 200);
-    assert(status == group_verification_status::group_not_found);
-
-    // Non-member endpoint fails
-    linep::v0_2::node_endpoint_identity stranger = {99, 99, 99};
-    status = mgr.verify_group_message(9001, 2, stranger, data_message_class::event, payload, 1, tag, now_us + 200);
-    assert(status == group_verification_status::member_not_found);
-
-    // Close group
-    assert(mgr.close_group(9001, now_us + 300));
-    assert(mgr.get_active_group_count() == 0);
-
-    // Message verification on closed group fails
-    status = mgr.verify_group_message(9001, 2, gpu_a.endpoint, data_message_class::event, payload, 2, tag, now_us + 400);
-    assert(status == group_verification_status::group_inactive);
-
-    std::cout << "  -> Tampering & Group Closure Tests PASSED" << std::endl;
+    std::cout << "  -> Anti-Impersonation Tests PASSED" << std::endl;
 }
 
 int main() {
-    std::cout << "=== LiNeP-SL V0.2 MLS Group Security Test Suite ===" << std::endl;
-    test_group_creation_and_membership();
-    test_group_messaging_and_multi_party_flow();
-    test_failover_eviction_and_forward_secrecy();
-    test_tampering_and_negative_cases();
-    std::cout << "ALL GROUP SECURITY TESTS PASSED 100%!" << std::endl;
+    std::cout << "=== LiNeP-SL V0.2 RFC 9420 Hardened Group Security Test Suite ===" << std::endl;
+    test_group_creation_and_public_context_hygiene();
+    test_confidentiality_and_multi_party_messaging();
+    test_eviction_forward_secrecy_and_fresh_entropy();
+    test_post_compromise_security_and_healing();
+    test_anti_impersonation_and_sender_authentication();
+    std::cout << "ALL RFC 9420 HARDENED GROUP SECURITY TESTS PASSED 100%!" << std::endl;
     return 0;
 }

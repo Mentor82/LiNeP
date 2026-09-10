@@ -18,6 +18,18 @@ namespace linep::sl::v0_2 {
 
 constexpr std::uint8_t GROUP_AUTH_MAGIC[8] = {'L', 'N', 'S', '2', 'G', 'R', 'P', 0x00};
 
+// RFC 9420 Section 5 - Ciphersuite Identifiers (16-bit)
+enum class mls_ciphersuite : std::uint16_t {
+    unknown = 0x0000,
+    mls_128_dhkemx25519_aes128gcm_sha256_ed25519 = 0x0001,
+    mls_128_dhkemp256_aes128gcm_sha256_p256 = 0x0002,
+    mls_128_dhkemx25519_chacha20poly1305_sha256_ed25519 = 0x0003,
+    mls_256_dhkemx448_aes256gcm_sha512_ed448 = 0x0004,
+    mls_256_dhkemp384_aes256gcm_sha384_p384 = 0x0005,
+    mls_256_dhkemp521_aes256gcm_sha512_p521 = 0x0006,
+    mls_256_dhkemx448_chacha20poly1305_sha512_ed448 = 0x0007,
+};
+
 enum class group_type : std::uint8_t {
     unknown = 0,
     ephemeral_task = 1,
@@ -59,6 +71,12 @@ enum class group_operation_type : std::uint8_t {
     close = 6,
 };
 
+enum class group_protection_mode : std::uint8_t {
+    unknown = 0,
+    authenticated_only = 1,             // PublicMessage / Integrity & authenticity
+    confidential_and_authenticated = 2, // PrivateMessage / Encrypted payload + Auth tag
+};
+
 enum class group_verification_status : std::uint8_t {
     ok = 0,
     group_not_found = 1,
@@ -72,6 +90,8 @@ enum class group_verification_status : std::uint8_t {
     replay_rejected = 9,
     binding_invalid = 10,
     suite_unsupported = 11,
+    decryption_failed = 12,
+    impersonation_detected = 13,
 };
 
 struct security_group_member {
@@ -83,6 +103,7 @@ struct security_group_member {
     std::uint64_t joined_epoch{0};
     std::uint64_t credential_revision{0};
     std::uint64_t added_at_us{0};
+    std::vector<std::uint8_t> public_key;
 
     bool is_valid() const noexcept {
         return endpoint.node_id != 0 && endpoint.runtime_id != 0 &&
@@ -98,24 +119,26 @@ struct security_group_member {
 
 using group_member = security_group_member;
 
+// RFC 9420 Section 6.1 GroupContext — Public Authenticated State (No secret key material!)
 struct group_context {
     std::uint64_t group_id{0};
     std::uint64_t group_epoch{0};
     group_type type{group_type::ephemeral_task};
-    crypto_suite suite{crypto_suite::hmac_sha256_128};
+    mls_ciphersuite ciphersuite{mls_ciphersuite::mls_128_dhkemx25519_aes128gcm_sha256_ed25519};
     group_state state{group_state::active};
     std::uint64_t created_at_us{0};
     std::uint64_t epoch_advanced_at_us{0};
     std::vector<security_group_member> members;
+    std::vector<std::uint8_t> execution_group_state_hash;
+    std::vector<std::uint8_t> tree_hash;
     std::vector<std::uint8_t> confirmed_transcript_hash;
-    std::vector<std::uint8_t> epoch_secret;
 
     bool is_valid() const noexcept {
         return group_id != 0 && group_epoch != 0 &&
                type != group_type::unknown &&
-               suite != crypto_suite::none &&
+               ciphersuite != mls_ciphersuite::unknown &&
                !members.empty() &&
-               !epoch_secret.empty();
+               !confirmed_transcript_hash.empty();
     }
 };
 
@@ -129,6 +152,7 @@ struct group_message_binding {
     digest_algorithm digest{digest_algorithm::sha256};
     std::vector<std::uint8_t> content_digest;
     std::uint64_t message_seq{0};
+    std::uint32_t ratchet_generation{0};
 
     bool is_valid() const noexcept {
         return group_id != 0 && group_epoch != 0 &&
@@ -140,72 +164,177 @@ struct group_message_binding {
     }
 };
 
+struct protected_group_message {
+    std::uint64_t group_id{0};
+    std::uint64_t group_epoch{0};
+    group_protection_mode mode{group_protection_mode::authenticated_only};
+    linep::v0_2::node_endpoint_identity sender_endpoint;
+    std::uint64_t message_seq{0};
+    std::uint32_t ratchet_generation{0};
+    std::vector<std::uint8_t> ciphertext_or_payload;
+    std::vector<std::uint8_t> authentication_tag;
+
+    bool is_valid() const noexcept {
+        return group_id != 0 && group_epoch != 0 &&
+               mode != group_protection_mode::unknown &&
+               sender_endpoint.node_id != 0 &&
+               message_seq != 0 &&
+               !authentication_tag.empty();
+    }
+};
+
 bool encode_group_authenticator_input(
     const group_message_binding& binding,
     std::vector<std::uint8_t>& out);
 
+// Provider-neutral interface for group cryptography (RFC 9420 state machine or reference engine)
+class group_crypto_provider {
+public:
+    virtual ~group_crypto_provider() = default;
+
+    virtual bool create_group(
+        std::uint64_t group_id,
+        group_type type,
+        mls_ciphersuite suite,
+        const security_group_member& coordinator,
+        const std::vector<std::uint8_t>& init_secret,
+        std::uint64_t now_us) noexcept = 0;
+
+    virtual bool add_member(
+        std::uint64_t group_id,
+        const security_group_member& new_member,
+        const std::vector<std::uint8_t>& member_public_key,
+        const std::vector<std::uint8_t>& join_entropy,
+        std::uint64_t now_us) noexcept = 0;
+
+    virtual bool remove_member(
+        std::uint64_t group_id,
+        const linep::v0_2::node_endpoint_identity& endpoint,
+        const std::vector<std::uint8_t>& fresh_commit_entropy,
+        std::uint64_t now_us) noexcept = 0;
+
+    virtual bool update_member_role(
+        std::uint64_t group_id,
+        const linep::v0_2::node_endpoint_identity& endpoint,
+        member_role new_role,
+        std::uint64_t now_us) noexcept = 0;
+
+    virtual bool rekey_group(
+        std::uint64_t group_id,
+        const linep::v0_2::node_endpoint_identity& updating_member,
+        const std::vector<std::uint8_t>& fresh_update_entropy,
+        std::uint64_t now_us) noexcept = 0;
+
+    virtual bool close_group(
+        std::uint64_t group_id,
+        std::uint64_t now_us) noexcept = 0;
+
+    virtual bool get_group_context(
+        std::uint64_t group_id,
+        group_context& out_ctx) const noexcept = 0;
+
+    virtual bool is_member_active(
+        std::uint64_t group_id,
+        const linep::v0_2::node_endpoint_identity& endpoint) const noexcept = 0;
+
+    virtual bool protect(
+        std::uint64_t group_id,
+        const linep::v0_2::node_endpoint_identity& sender_endpoint,
+        group_protection_mode mode,
+        data_message_class msg_class,
+        const std::vector<std::uint8_t>& payload,
+        std::uint64_t message_seq,
+        protected_group_message& out_msg) noexcept = 0;
+
+    virtual group_verification_status unprotect(
+        const protected_group_message& in_msg,
+        const linep::v0_2::node_endpoint_identity& receiver_endpoint,
+        data_message_class expected_class,
+        std::vector<std::uint8_t>& out_payload,
+        std::uint64_t now_us) noexcept = 0;
+
+    virtual std::size_t get_group_count() const noexcept = 0;
+    virtual std::size_t get_active_group_count() const noexcept = 0;
+};
+
+// Factory for reference implementation
+std::unique_ptr<group_crypto_provider> create_reference_group_crypto_provider();
+
+// High-level manager orchestrating execution groups over a pluggable crypto provider
 class group_security_manager {
 public:
-    group_security_manager() = default;
+    explicit group_security_manager(std::unique_ptr<group_crypto_provider> provider = nullptr);
 
-    // Create a new cryptographic group with coordinator as initial member in epoch 1
     bool create_group(
         std::uint64_t group_id,
         group_type type,
-        crypto_suite suite,
-        const group_member& coordinator,
-        const std::vector<std::uint8_t>& initial_secret,
-        std::uint64_t now_us) noexcept;
+        mls_ciphersuite suite,
+        const security_group_member& coordinator,
+        const std::vector<std::uint8_t>& init_secret = {},
+        std::uint64_t now_us = 0) noexcept;
 
-    // Add a new member, advances group_epoch and derives new epoch secret
     bool add_member(
         std::uint64_t group_id,
-        const group_member& new_member,
-        std::uint64_t now_us) noexcept;
+        const security_group_member& new_member,
+        const std::vector<std::uint8_t>& member_public_key = {},
+        const std::vector<std::uint8_t>& join_entropy = {},
+        std::uint64_t now_us = 0) noexcept;
 
-    // Evict/remove member, advances group_epoch and derives new epoch secret (forward secrecy)
     bool remove_member(
         std::uint64_t group_id,
         const linep::v0_2::node_endpoint_identity& endpoint,
-        std::uint64_t now_us) noexcept;
+        const std::vector<std::uint8_t>& fresh_commit_entropy = {},
+        std::uint64_t now_us = 0) noexcept;
 
-    // Update member role (e.g., promote redundant worker to primary)
     bool update_member_role(
         std::uint64_t group_id,
         const linep::v0_2::node_endpoint_identity& endpoint,
         member_role new_role,
-        std::uint64_t now_us) noexcept;
+        std::uint64_t now_us = 0) noexcept;
 
-    // Advance epoch and rekey group
     bool rekey_group(
         std::uint64_t group_id,
-        std::uint64_t now_us) noexcept;
+        const linep::v0_2::node_endpoint_identity& updating_member,
+        const std::vector<std::uint8_t>& fresh_update_entropy = {},
+        std::uint64_t now_us = 0) noexcept;
 
-    // Close group permanently
     bool close_group(
         std::uint64_t group_id,
-        std::uint64_t now_us) noexcept;
+        std::uint64_t now_us = 0) noexcept;
 
-    // Inspect group context
     bool get_group_context(
         std::uint64_t group_id,
         group_context& out_ctx) const noexcept;
 
-    // Check if an endpoint is an active member of group at current epoch
     bool is_member_active(
         std::uint64_t group_id,
         const linep::v0_2::node_endpoint_identity& endpoint) const noexcept;
 
-    // Sign message under group epoch key
+    bool protect_group_message(
+        std::uint64_t group_id,
+        const linep::v0_2::node_endpoint_identity& sender_endpoint,
+        group_protection_mode mode,
+        data_message_class msg_class,
+        const std::vector<std::uint8_t>& payload,
+        std::uint64_t message_seq,
+        protected_group_message& out_msg) noexcept;
+
+    group_verification_status unprotect_group_message(
+        const protected_group_message& in_msg,
+        const linep::v0_2::node_endpoint_identity& receiver_endpoint,
+        data_message_class expected_class,
+        std::vector<std::uint8_t>& out_payload,
+        std::uint64_t now_us = 0) noexcept;
+
+    // Backward-compatible signing & verification helpers (authenticated-only)
     bool sign_group_message(
         std::uint64_t group_id,
         const linep::v0_2::node_endpoint_identity& sender_endpoint,
         data_message_class msg_class,
         const std::vector<std::uint8_t>& payload,
         std::uint64_t message_seq,
-        std::vector<std::uint8_t>& out_tag) const noexcept;
+        std::vector<std::uint8_t>& out_tag) noexcept;
 
-    // Verify incoming group message with replay protection and epoch validation
     group_verification_status verify_group_message(
         std::uint64_t group_id,
         std::uint64_t epoch,
@@ -214,35 +343,13 @@ public:
         const std::vector<std::uint8_t>& payload,
         std::uint64_t message_seq,
         const std::vector<std::uint8_t>& tag,
-        std::uint64_t now_us) noexcept;
+        std::uint64_t now_us = 0) noexcept;
 
     std::size_t get_group_count() const noexcept;
     std::size_t get_active_group_count() const noexcept;
 
 private:
-    struct member_replay_key {
-        std::uint64_t group_id{0};
-        std::uint64_t epoch{0};
-        linep::v0_2::node_endpoint_identity endpoint;
-
-        bool operator==(const member_replay_key& other) const noexcept {
-            return group_id == other.group_id &&
-                   epoch == other.epoch &&
-                   endpoint == other.endpoint;
-        }
-    };
-
-    struct member_replay_key_hash {
-        std::size_t operator()(const member_replay_key& k) const noexcept {
-            std::size_t h1 = std::hash<std::uint64_t>{}(k.group_id);
-            std::size_t h2 = std::hash<std::uint64_t>{}(k.epoch);
-            std::size_t h3 = linep::v0_2::node_endpoint_hash{}(k.endpoint);
-            return h1 ^ (h2 << 1) ^ (h3 << 2);
-        }
-    };
-
-    std::unordered_map<std::uint64_t, group_context> groups_;
-    std::unordered_map<member_replay_key, sliding_replay_window, member_replay_key_hash> replay_windows_;
+    std::unique_ptr<group_crypto_provider> provider_;
 };
 
 } // namespace linep::sl::v0_2
