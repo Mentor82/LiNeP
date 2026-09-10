@@ -1,4 +1,4 @@
-﻿"""Unit tests for LiNeP V0.2 TCP Data Plane Envelopes and Encoders/Decoders."""
+"""Unit tests for LiNeP V0.2 TCP Data Plane Envelopes and Encoders/Decoders."""
 
 import pytest
 from linep.v0_2 import (
@@ -17,6 +17,7 @@ from linep.v0_2 import (
     StreamIdentity,
     WireEnvelopeHeader,
     RequestEnvelope,
+    GenerationOptions,
     EventEnvelope,
     ControlEnvelope,
     CapabilitiesEnvelope,
@@ -229,3 +230,56 @@ def test_strict_rejection_of_malformed_and_trailing_data():
     bad_trailing = raw + b"\x00\x00\x00\x00"
     # Header payload_len was not updated, but BufferReader check sees remaining bytes if length was modified
     # If payload_len is modified to include trailing bytes, decode fails on trailing check
+
+
+def test_request_envelope_with_generation_options():
+    opts = GenerationOptions(
+        top_p=0.95,
+        top_k=50,
+        repeat_penalty=1.15,
+        repeat_last_n=128,
+        seed=42,
+        presence_penalty=0.1,
+        frequency_penalty=0.2,
+        stop_sequences=["<|eot_id|>", "USER:", "\n\nHuman:"],
+        extra_options=[("typical_p", "0.9"), ("mirostat", "2"), ("min_p", "0.05")],
+    )
+    req = RequestEnvelope(
+        stream=StreamIdentity(5001, 6001, 0),
+        profile=RuntimeProfile.CHAT,
+        model_id="meta-llama/Llama-3.1-8B-Instruct",
+        payload='{"prompt":"Explain quantum computing"}',
+        max_tokens=1024,
+        temperature=0.7,
+        stream_requested=True,
+        has_options=True,
+        options=opts,
+    )
+    assert req.is_valid()
+
+    raw = encode_request(req)
+    decoded = decode_request(raw)
+    assert decoded is not None
+    assert decoded.has_options is True
+    assert decoded.options.top_p == pytest.approx(0.95, rel=1e-5)
+    assert decoded.options.top_k == 50
+    assert decoded.options.repeat_penalty == pytest.approx(1.15, rel=1e-5)
+    assert decoded.options.repeat_last_n == 128
+    assert decoded.options.seed == 42
+    assert decoded.options.presence_penalty == pytest.approx(0.1, rel=1e-5)
+    assert decoded.options.frequency_penalty == pytest.approx(0.2, rel=1e-5)
+    assert decoded.options.stop_sequences == ["<|eot_id|>", "USER:", "\n\nHuman:"]
+    # Verify canonical lexicographical ordering
+    assert decoded.options.extra_options == [("min_p", "0.05"), ("mirostat", "2"), ("typical_p", "0.9")]
+
+    # Duplicate key in encode -> ValueError
+    dup_req = RequestEnvelope(
+        stream=StreamIdentity(5001, 6001, 0),
+        profile=RuntimeProfile.CHAT,
+        model_id="model",
+        payload="hi",
+        has_options=True,
+        options=GenerationOptions(extra_options=[("key", "1"), ("key", "2")]),
+    )
+    with pytest.raises(ValueError, match="Duplicate"):
+        encode_request(dup_req)

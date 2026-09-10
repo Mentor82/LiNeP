@@ -72,6 +72,43 @@ void test_golden_frames_roundtrip() {
     LINEP_TEST_CHECK(decoded_req.model_id == req.model_id);
     LINEP_TEST_CHECK(decoded_req.max_tokens == 512);
 
+    // 1b. Request with Generation Options
+    request_envelope req_opts{};
+    req_opts.stream.request_id = 5001;
+    req_opts.stream.execution_id = 6001;
+    req_opts.stream.output_id = 0;
+    req_opts.profile = runtime_profile::chat;
+    req_opts.model_id = "meta-llama/Llama-3.1-8B-Instruct";
+    req_opts.payload = R"({"prompt":"Explain quantum computing"})";
+    req_opts.max_tokens = 1024;
+    req_opts.temperature = 0.7f;
+    req_opts.stream_requested = true;
+    req_opts.has_options = true;
+    req_opts.options.top_p = 0.95f;
+    req_opts.options.top_k = 50;
+    req_opts.options.repeat_penalty = 1.15f;
+    req_opts.options.repeat_last_n = 128;
+    req_opts.options.seed = 42ULL;
+    req_opts.options.presence_penalty = 0.1f;
+    req_opts.options.frequency_penalty = 0.2f;
+    req_opts.options.stop_sequences = {"<|eot_id|>", "USER:"};
+    req_opts.options.extra_options = {{"min_p", "0.05"}, {"mirostat", "2"}};
+
+    std::vector<std::uint8_t> req_opts_buf;
+    LINEP_TEST_CHECK(encode_request(req_opts, req_opts_buf));
+    LINEP_TEST_CHECK(write_file((temp_dir / "request_chat_with_options_cpp.bin").string(), req_opts_buf));
+
+    LINEP_TEST_CHECK(read_file((temp_dir / "request_chat_with_options_cpp.bin").string(), read_buf));
+    request_envelope decoded_req_opts{};
+    LINEP_TEST_CHECK(decode_request(read_buf.data(), read_buf.size(), decoded_req_opts));
+    LINEP_TEST_CHECK(decoded_req_opts.has_options);
+    LINEP_TEST_CHECK(decoded_req_opts.options.top_p == 0.95f);
+    LINEP_TEST_CHECK(decoded_req_opts.options.seed == 42ULL);
+    LINEP_TEST_CHECK(decoded_req_opts.options.stop_sequences.size() == 2);
+    LINEP_TEST_CHECK(decoded_req_opts.options.extra_options.size() == 2);
+    LINEP_TEST_CHECK(decoded_req_opts.options.extra_options[0].first == "min_p");
+    LINEP_TEST_CHECK(decoded_req_opts.options.extra_options[1].first == "mirostat");
+
     // 2. UDP Control Datagram (Hello)
     udp_control_datagram udp_hello{};
     udp_hello.magic = LINEP_V02_UDP_MAGIC;

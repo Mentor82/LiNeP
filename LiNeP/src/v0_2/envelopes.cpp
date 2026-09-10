@@ -1,4 +1,5 @@
 #include "linep/v0_2/envelopes.hpp"
+#include <algorithm>
 #include <cstring>
 
 namespace linep::v0_2 {
@@ -19,6 +20,12 @@ inline void write_u32(std::vector<std::uint8_t>& buf, std::uint32_t val) {
     buf.push_back(static_cast<std::uint8_t>((val >> 8) & 0xFF));
     buf.push_back(static_cast<std::uint8_t>((val >> 16) & 0xFF));
     buf.push_back(static_cast<std::uint8_t>((val >> 24) & 0xFF));
+}
+
+inline void write_i32(std::vector<std::uint8_t>& buf, std::int32_t val) {
+    std::uint32_t uval{};
+    std::memcpy(&uval, &val, sizeof(std::int32_t));
+    write_u32(buf, uval);
 }
 
 inline void write_u64(std::vector<std::uint8_t>& buf, std::uint64_t val) {
@@ -79,6 +86,13 @@ public:
               (static_cast<std::uint32_t>(data_[offset_ + 2]) << 16) |
               (static_cast<std::uint32_t>(data_[offset_ + 3]) << 24);
         offset_ += 4;
+        return true;
+    }
+
+    bool read_i32(std::int32_t& out) noexcept {
+        std::uint32_t uval{};
+        if (!read_u32(uval)) return false;
+        std::memcpy(&out, &uval, sizeof(std::int32_t));
         return true;
     }
 
@@ -180,6 +194,39 @@ bool encode_request(const request_envelope& req, std::vector<std::uint8_t>& out_
     write_float(payload_buf, req.temperature);
     write_u8(payload_buf, req.stream_requested ? 1 : 0);
 
+    if (req.has_options) {
+        std::uint32_t flags = 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x20 | 0x40;
+        write_u32(payload_buf, flags);
+        write_float(payload_buf, req.options.top_p);
+        write_i32(payload_buf, req.options.top_k);
+        write_float(payload_buf, req.options.repeat_penalty);
+        write_i32(payload_buf, req.options.repeat_last_n);
+        write_u64(payload_buf, req.options.seed);
+        write_float(payload_buf, req.options.presence_penalty);
+        write_float(payload_buf, req.options.frequency_penalty);
+
+        if (req.options.stop_sequences.size() > 0xFFFF) return false;
+        write_u16(payload_buf, static_cast<std::uint16_t>(req.options.stop_sequences.size()));
+        for (const auto& stop : req.options.stop_sequences) {
+            write_string_u16(payload_buf, stop);
+        }
+
+        if (req.options.extra_options.size() > 0xFFFF) return false;
+        auto sorted_extras = req.options.extra_options;
+        std::sort(sorted_extras.begin(), sorted_extras.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        for (std::size_t i = 1; i < sorted_extras.size(); ++i) {
+            if (sorted_extras[i].first == sorted_extras[i - 1].first) {
+                return false; // Reject duplicate keys
+            }
+        }
+        write_u16(payload_buf, static_cast<std::uint16_t>(sorted_extras.size()));
+        for (const auto& kv : sorted_extras) {
+            write_string_u16(payload_buf, kv.first);
+            write_string_u16(payload_buf, kv.second);
+        }
+    }
+
     wire_envelope_header hdr{};
     hdr.magic = LINEP_V02_MAGIC;
     hdr.version_major = LINEP_V02_VERSION_MAJOR;
@@ -233,6 +280,52 @@ bool decode_request(const std::uint8_t* data, std::size_t size, request_envelope
     std::uint8_t stream_req{};
     if (!r.read_u8(stream_req)) return false;
     out_req.stream_requested = (stream_req != 0);
+
+    if (r.remaining() == 0) {
+        // Baseline V0.2 request without options
+        out_req.has_options = false;
+        out_req.options = generation_options{};
+        return out_req.is_valid();
+    }
+
+    // Decode generation_options
+    out_req.has_options = true;
+    std::uint32_t flags{};
+    if (!r.read_u32(flags)) return false;
+    if (!r.read_float(out_req.options.top_p)) return false;
+    if (!r.read_i32(out_req.options.top_k)) return false;
+    if (!r.read_float(out_req.options.repeat_penalty)) return false;
+    if (!r.read_i32(out_req.options.repeat_last_n)) return false;
+    if (!r.read_u64(out_req.options.seed)) return false;
+    if (!r.read_float(out_req.options.presence_penalty)) return false;
+    if (!r.read_float(out_req.options.frequency_penalty)) return false;
+
+    std::uint16_t stop_count{};
+    if (!r.read_u16(stop_count)) return false;
+    out_req.options.stop_sequences.clear();
+    out_req.options.stop_sequences.reserve(stop_count);
+    for (std::uint16_t i = 0; i < stop_count; ++i) {
+        std::string stop;
+        if (!r.read_string_u16(stop)) return false;
+        out_req.options.stop_sequences.push_back(std::move(stop));
+    }
+
+    std::uint16_t extra_count{};
+    if (!r.read_u16(extra_count)) return false;
+    out_req.options.extra_options.clear();
+    out_req.options.extra_options.reserve(extra_count);
+    std::string prev_key;
+    for (std::uint16_t i = 0; i < extra_count; ++i) {
+        std::string k, v;
+        if (!r.read_string_u16(k)) return false;
+        if (!r.read_string_u16(v)) return false;
+        // Strict canonical ordering check: keys must be strictly increasing
+        if (i > 0 && k <= prev_key) {
+            return false; // Unsorted or duplicate key rejection!
+        }
+        prev_key = k;
+        out_req.options.extra_options.emplace_back(std::move(k), std::move(v));
+    }
 
     if (r.remaining() != 0) {
         return false; // Strict canonical framing: reject trailing garbage

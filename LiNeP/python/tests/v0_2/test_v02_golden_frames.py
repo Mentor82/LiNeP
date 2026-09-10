@@ -86,6 +86,18 @@ def test_python_decodes_cpp_generated_golden_frames():
         assert req.max_tokens == 512
         assert abs(req.temperature - 0.8) < 1e-4
 
+        # 1b. Verify C++ Request with Generation Options Frame
+        req_opts_bytes = (p / "request_chat_with_options_cpp.bin").read_bytes()
+        req_opts = decode_request(req_opts_bytes)
+        assert req_opts is not None
+        assert req_opts.stream.request_id == 5001
+        assert req_opts.has_options is True
+        assert abs(req_opts.options.top_p - 0.95) < 1e-4
+        assert req_opts.options.top_k == 50
+        assert req_opts.options.seed == 42
+        assert req_opts.options.stop_sequences == ["<|eot_id|>", "USER:"]
+        assert req_opts.options.extra_options == [("min_p", "0.05"), ("mirostat", "2")]
+
         # 2. Verify C++ Content Delta Event
         delta_bytes = (p / "event_content_delta_cpp.bin").read_bytes()
         evt_delta = decode_event(delta_bytes)

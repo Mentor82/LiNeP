@@ -1,4 +1,4 @@
-﻿"""LiNeP V0.2 High-Level Streaming TCP Client."""
+"""LiNeP V0.2 High-Level Streaming TCP Client."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from linep.v0_2.envelopes import (
     StreamIdentity,
     WireEnvelopeHeader,
     RequestEnvelope,
+    GenerationOptions,
     EventEnvelope,
     ControlEnvelope,
     CapabilitiesEnvelope,
@@ -143,7 +144,12 @@ class LiNePClient:
                 break
 
     def stream_chat(
-        self, model: str, prompt: str, max_tokens: int = 512, temperature: float = 0.7
+        self,
+        model: str,
+        prompt: str,
+        max_tokens: int = 512,
+        temperature: float = 0.7,
+        options: Optional[GenerationOptions] = None,
     ) -> Iterator[EventEnvelope]:
         self._request_counter += 1
         stream = StreamIdentity(request_id=self._request_counter, execution_id=self._request_counter * 10, output_id=0)
@@ -155,6 +161,31 @@ class LiNePClient:
             max_tokens=max_tokens,
             temperature=temperature,
             stream_requested=True,
+            has_options=options is not None,
+            options=options or GenerationOptions(),
+        )
+        yield from self.execute_stream(req)
+
+    def stream_generate(
+        self,
+        model: str,
+        prompt: str,
+        max_tokens: int = 512,
+        temperature: float = 0.7,
+        options: Optional[GenerationOptions] = None,
+    ) -> Iterator[EventEnvelope]:
+        self._request_counter += 1
+        stream = StreamIdentity(request_id=self._request_counter, execution_id=self._request_counter * 10, output_id=0)
+        req = RequestEnvelope(
+            stream=stream,
+            profile=RuntimeProfile.GENERATE,
+            model_id=model,
+            payload=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stream_requested=True,
+            has_options=options is not None,
+            options=options or GenerationOptions(),
         )
         yield from self.execute_stream(req)
 

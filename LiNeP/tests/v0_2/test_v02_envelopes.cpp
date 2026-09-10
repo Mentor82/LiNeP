@@ -352,6 +352,73 @@ void test_tampered_and_corrupt_envelopes() {
     std::cout << "  -> Tampered/Corrupt Buffer Tests PASSED" << std::endl;
 }
 
+void test_request_envelope_with_generation_options() {
+    std::cout << "[Test 8] Request Envelope with Generation Options (Runtime Parity & Canonical Sorting)..." << std::endl;
+    request_envelope req{};
+    req.stream.request_id = 5001;
+    req.stream.execution_id = 6001;
+    req.stream.output_id = 0;
+    req.profile = runtime_profile::chat;
+    req.model_id = "meta-llama/Llama-3.1-8B-Instruct";
+    req.payload = R"({"prompt":"Explain quantum computing"})";
+    req.max_tokens = 1024;
+    req.temperature = 0.7f;
+    req.stream_requested = true;
+    req.has_options = true;
+    req.options.top_p = 0.95f;
+    req.options.top_k = 50;
+    req.options.repeat_penalty = 1.15f;
+    req.options.repeat_last_n = 128;
+    req.options.seed = 42ULL;
+    req.options.presence_penalty = 0.1f;
+    req.options.frequency_penalty = 0.2f;
+    req.options.stop_sequences = {"<|eot_id|>", "USER:", "\n\nHuman:"};
+    // Deliberately unsorted in struct to test automatic canonical sorting during encode
+    req.options.extra_options = {
+        {"typical_p", "0.9"},
+        {"mirostat", "2"},
+        {"min_p", "0.05"}
+    };
+
+    LINEP_TEST_CHECK(req.is_valid());
+
+    std::vector<std::uint8_t> buf;
+    bool enc_ok = encode_request(req, buf);
+    LINEP_TEST_CHECK(enc_ok);
+
+    request_envelope dec{};
+    bool dec_ok = decode_request(buf.data(), buf.size(), dec);
+    LINEP_TEST_CHECK(dec_ok);
+    LINEP_TEST_CHECK(dec.has_options == true);
+    LINEP_TEST_CHECK(dec.options.top_p == 0.95f);
+    LINEP_TEST_CHECK(dec.options.top_k == 50);
+    LINEP_TEST_CHECK(dec.options.repeat_penalty == 1.15f);
+    LINEP_TEST_CHECK(dec.options.repeat_last_n == 128);
+    LINEP_TEST_CHECK(dec.options.seed == 42ULL);
+    LINEP_TEST_CHECK(dec.options.presence_penalty == 0.1f);
+    LINEP_TEST_CHECK(dec.options.frequency_penalty == 0.2f);
+    LINEP_TEST_CHECK(dec.options.stop_sequences.size() == 3);
+    LINEP_TEST_CHECK(dec.options.stop_sequences[0] == "<|eot_id|>");
+    LINEP_TEST_CHECK(dec.options.stop_sequences[1] == "USER:");
+    LINEP_TEST_CHECK(dec.options.stop_sequences[2] == "\n\nHuman:");
+    LINEP_TEST_CHECK(dec.options.extra_options.size() == 3);
+    // Verified canonical lexicographical sorting: "min_p", "mirostat", "typical_p"
+    LINEP_TEST_CHECK(dec.options.extra_options[0].first == "min_p");
+    LINEP_TEST_CHECK(dec.options.extra_options[0].second == "0.05");
+    LINEP_TEST_CHECK(dec.options.extra_options[1].first == "mirostat");
+    LINEP_TEST_CHECK(dec.options.extra_options[1].second == "2");
+    LINEP_TEST_CHECK(dec.options.extra_options[2].first == "typical_p");
+    LINEP_TEST_CHECK(dec.options.extra_options[2].second == "0.9");
+
+    // Test duplicate key rejection in encode
+    request_envelope dup_req = req;
+    dup_req.options.extra_options = {{"mirostat", "1"}, {"mirostat", "2"}};
+    std::vector<std::uint8_t> dup_buf;
+    LINEP_TEST_CHECK(!encode_request(dup_req, dup_buf)); // Must reject duplicate keys!
+
+    std::cout << "  -> Request with Generation Options Tests PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "=== LiNeP V0.2 Envelope & Contract Test Suite ===" << std::endl;
     test_request_envelope();
@@ -361,6 +428,7 @@ int main() {
     test_capabilities_envelope();
     test_lifecycle_state_machine();
     test_tampered_and_corrupt_envelopes();
+    test_request_envelope_with_generation_options();
     std::cout << "ALL V0.2 PHASE A ENVELOPE AND CONTRACT TESTS PASSED 100%!" << std::endl;
     return 0;
 }

@@ -56,6 +56,33 @@ int do_generate(const std::string& dir) {
         return 1;
     }
 
+    // 1b. Request with Generation Options
+    request_envelope req_opts{};
+    req_opts.stream.request_id = 5001;
+    req_opts.stream.execution_id = 6001;
+    req_opts.stream.output_id = 0;
+    req_opts.profile = runtime_profile::chat;
+    req_opts.model_id = "meta-llama/Llama-3.1-8B-Instruct";
+    req_opts.payload = R"({"prompt":"Explain quantum computing"})";
+    req_opts.max_tokens = 1024;
+    req_opts.temperature = 0.7f;
+    req_opts.stream_requested = true;
+    req_opts.has_options = true;
+    req_opts.options.top_p = 0.95f;
+    req_opts.options.top_k = 50;
+    req_opts.options.repeat_penalty = 1.15f;
+    req_opts.options.repeat_last_n = 128;
+    req_opts.options.seed = 42ULL;
+    req_opts.options.presence_penalty = 0.1f;
+    req_opts.options.frequency_penalty = 0.2f;
+    req_opts.options.stop_sequences = {"<|eot_id|>", "USER:"};
+    req_opts.options.extra_options = {{"min_p", "0.05"}, {"mirostat", "2"}};
+
+    std::vector<std::uint8_t> req_opts_buf;
+    if (!encode_request(req_opts, req_opts_buf) || !write_file(dir + "/request_chat_with_options_cpp.bin", req_opts_buf)) {
+        return 1;
+    }
+
     // 2. Event Content Delta
     event_envelope evt_delta{};
     evt_delta.stream.request_id = 1001;
@@ -446,6 +473,17 @@ int do_verify_cpp(const std::string& dir) {
         return 1;
     }
     std::cout << "  -> request_chat_cpp.bin: PASS" << std::endl;
+
+    // 1b. Request with Generation Options
+    if (!read_file(dir + "/request_chat_with_options_cpp.bin", buf)) return 1;
+    request_envelope req_opts{};
+    if (!decode_request(buf.data(), buf.size(), req_opts) || req_opts.stream.request_id != 5001 ||
+        !req_opts.has_options || req_opts.options.top_p != 0.95f || req_opts.options.seed != 42ULL ||
+        req_opts.options.stop_sequences.size() != 2 || req_opts.options.extra_options.size() != 2) {
+        std::cerr << "C++ verification failed on request_chat_with_options_cpp.bin!" << std::endl;
+        return 1;
+    }
+    std::cout << "  -> request_chat_with_options_cpp.bin: PASS" << std::endl;
 
     // 2. Content Delta
     if (!read_file(dir + "/event_content_delta_cpp.bin", buf)) return 1;

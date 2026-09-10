@@ -1,10 +1,10 @@
-﻿"""LiNeP V0.2 Canonical TCP Data Plane Envelopes and Encoders/Decoders."""
+"""LiNeP V0.2 Canonical TCP Data Plane Envelopes and Encoders/Decoders."""
 
 from __future__ import annotations
 
 import struct
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from linep.v0_2.constants import (
     LINEP_V02_MAGIC,
@@ -35,6 +35,9 @@ class BufferWriter:
 
     def write_u32(self, val: int) -> None:
         self._buf.extend(struct.pack("<I", val & 0xFFFFFFFF))
+
+    def write_i32(self, val: int) -> None:
+        self._buf.extend(struct.pack("<i", int(val)))
 
     def write_u64(self, val: int) -> None:
         self._buf.extend(struct.pack("<Q", val & 0xFFFFFFFFFFFFFFFF))
@@ -89,6 +92,13 @@ class BufferReader:
         if not self.has_remaining(4):
             raise ValueError("Buffer underflow reading uint32")
         val = struct.unpack_from("<I", self._data, self._offset)[0]
+        self._offset += 4
+        return val
+
+    def read_i32(self) -> int:
+        if not self.has_remaining(4):
+            raise ValueError("Buffer underflow reading int32")
+        val = struct.unpack_from("<i", self._data, self._offset)[0]
         self._offset += 4
         return val
 
@@ -147,6 +157,32 @@ class WireEnvelopeHeader:
 
 
 @dataclass
+class GenerationOptions:
+    top_p: float = 0.9
+    top_k: int = 40
+    repeat_penalty: float = 1.0
+    repeat_last_n: int = 64
+    seed: int = 0
+    presence_penalty: float = 0.0
+    frequency_penalty: float = 0.0
+    stop_sequences: List[str] = field(default_factory=list)
+    extra_options: List[Tuple[str, str]] = field(default_factory=list)
+
+    def is_default(self) -> bool:
+        return (
+            self.top_p == 0.9 and
+            self.top_k == 40 and
+            self.repeat_penalty == 1.0 and
+            self.repeat_last_n == 64 and
+            self.seed == 0 and
+            self.presence_penalty == 0.0 and
+            self.frequency_penalty == 0.0 and
+            not self.stop_sequences and
+            not self.extra_options
+        )
+
+
+@dataclass
 class RequestEnvelope:
     stream: StreamIdentity = field(default_factory=StreamIdentity)
     profile: RuntimeProfile = RuntimeProfile.CHAT
@@ -155,6 +191,8 @@ class RequestEnvelope:
     max_tokens: int = 512
     temperature: float = 0.7
     stream_requested: bool = True
+    has_options: bool = False
+    options: GenerationOptions = field(default_factory=GenerationOptions)
 
     def is_valid(self) -> bool:
         return self.stream.is_valid() and bool(self.model_id) and self.profile != RuntimeProfile.UNSPECIFIED
@@ -298,6 +336,35 @@ def encode_request(req: RequestEnvelope) -> bytes:
     pw.write_u32(req.max_tokens)
     pw.write_float(req.temperature)
     pw.write_u8(1 if req.stream_requested else 0)
+
+    if req.has_options:
+        flags = 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x20 | 0x40
+        pw.write_u32(flags)
+        pw.write_float(req.options.top_p)
+        pw.write_i32(req.options.top_k)
+        pw.write_float(req.options.repeat_penalty)
+        pw.write_i32(req.options.repeat_last_n)
+        pw.write_u64(req.options.seed)
+        pw.write_float(req.options.presence_penalty)
+        pw.write_float(req.options.frequency_penalty)
+
+        if len(req.options.stop_sequences) > 0xFFFF:
+            raise ValueError("stop_sequences exceeds uint16 limit")
+        pw.write_u16(len(req.options.stop_sequences))
+        for stop in req.options.stop_sequences:
+            pw.write_string_u16(stop)
+
+        if len(req.options.extra_options) > 0xFFFF:
+            raise ValueError("extra_options exceeds uint16 limit")
+        sorted_extras = sorted(req.options.extra_options, key=lambda x: x[0])
+        for i in range(1, len(sorted_extras)):
+            if sorted_extras[i][0] == sorted_extras[i - 1][0]:
+                raise ValueError(f"Duplicate extra_options key: {sorted_extras[i][0]}")
+        pw.write_u16(len(sorted_extras))
+        for k, v in sorted_extras:
+            pw.write_string_u16(k)
+            pw.write_string_u16(v)
+
     payload = pw.to_bytes()
 
     hdr = WireEnvelopeHeader(
@@ -334,8 +401,60 @@ def decode_request(data: bytes) -> Optional[RequestEnvelope]:
         max_tokens = r.read_u32()
         temp = r.read_float()
         stream_req = bool(r.read_u8())
+
+        if r.remaining() == 0:
+            # Baseline V0.2 request without options
+            req = RequestEnvelope(
+                stream=StreamIdentity(hdr.request_id, hdr.execution_id, hdr.output_id),
+                profile=prof,
+                model_id=model_id,
+                payload=payload,
+                max_tokens=max_tokens,
+                temperature=temp,
+                stream_requested=stream_req,
+                has_options=False,
+                options=GenerationOptions(),
+            )
+            return req if req.is_valid() else None
+
+        # Decode generation options
+        flags = r.read_u32()
+        top_p = r.read_float()
+        top_k = r.read_i32()
+        repeat_penalty = r.read_float()
+        repeat_last_n = r.read_i32()
+        seed = r.read_u64()
+        presence_penalty = r.read_float()
+        frequency_penalty = r.read_float()
+
+        stop_count = r.read_u16()
+        stop_sequences = [r.read_string_u16() for _ in range(stop_count)]
+
+        extra_count = r.read_u16()
+        extra_options: List[Tuple[str, str]] = []
+        prev_key = ""
+        for i in range(extra_count):
+            k = r.read_string_u16()
+            v = r.read_string_u16()
+            if i > 0 and k <= prev_key:
+                return None  # Non-canonical / unsorted / duplicate keys rejected!
+            prev_key = k
+            extra_options.append((k, v))
+
         if r.remaining() != 0:
-            return None  # Reject trailing garbage
+            return None  # Strict canonical framing: reject trailing garbage
+
+        opts = GenerationOptions(
+            top_p=top_p,
+            top_k=top_k,
+            repeat_penalty=repeat_penalty,
+            repeat_last_n=repeat_last_n,
+            seed=seed,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            stop_sequences=stop_sequences,
+            extra_options=extra_options,
+        )
         req = RequestEnvelope(
             stream=StreamIdentity(hdr.request_id, hdr.execution_id, hdr.output_id),
             profile=prof,
@@ -344,6 +463,8 @@ def decode_request(data: bytes) -> Optional[RequestEnvelope]:
             max_tokens=max_tokens,
             temperature=temp,
             stream_requested=stream_req,
+            has_options=True,
+            options=opts,
         )
         return req if req.is_valid() else None
     except Exception:

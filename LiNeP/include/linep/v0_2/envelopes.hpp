@@ -62,6 +62,30 @@ struct wire_envelope_header {
 
 static_assert(sizeof(wire_envelope_header) == 32, "wire_envelope_header must be exactly 32 bytes");
 
+struct generation_options {
+    float top_p{0.9f};
+    std::int32_t top_k{40};
+    float repeat_penalty{1.0f};
+    std::int32_t repeat_last_n{64};
+    std::uint64_t seed{0};
+    float presence_penalty{0.0f};
+    float frequency_penalty{0.0f};
+    std::vector<std::string> stop_sequences;
+    std::vector<std::pair<std::string, std::string>> extra_options;
+
+    bool is_default() const noexcept {
+        return top_p == 0.9f &&
+               top_k == 40 &&
+               repeat_penalty == 1.0f &&
+               repeat_last_n == 64 &&
+               seed == 0 &&
+               presence_penalty == 0.0f &&
+               frequency_penalty == 0.0f &&
+               stop_sequences.empty() &&
+               extra_options.empty();
+    }
+};
+
 struct request_envelope {
     stream_identity stream;
     runtime_profile profile{runtime_profile::generate};
@@ -70,6 +94,8 @@ struct request_envelope {
     std::uint32_t max_tokens{0};
     float temperature{0.7f};
     bool stream_requested{true};
+    bool has_options{false};
+    generation_options options;
 
     bool is_valid() const noexcept {
         return stream.is_valid() &&
