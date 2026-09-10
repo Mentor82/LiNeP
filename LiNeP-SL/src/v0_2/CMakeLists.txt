@@ -1,5 +1,6 @@
 add_library(linep_sl_v02 STATIC
     authenticator.cpp
+    group_security.cpp
     negotiation.cpp
     plane_authenticator.cpp
     replay_window.cpp

@@ -60,3 +60,14 @@ set_target_properties(test_sl_v02_plane_protection PROPERTIES
 )
 add_test(NAME test_sl_v02_plane_protection COMMAND test_sl_v02_plane_protection)
 
+add_executable(test_sl_v02_group_security
+    test_group_security.cpp
+)
+target_link_libraries(test_sl_v02_group_security PRIVATE linep_sl_v02)
+set_target_properties(test_sl_v02_group_security PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME test_sl_v02_group_security COMMAND test_sl_v02_group_security)
+
+
