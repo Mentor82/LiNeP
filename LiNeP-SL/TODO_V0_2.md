@@ -27,11 +27,11 @@ LiNeP V0.2 normative reference before changing this contract.
 
 ## Phase C — authenticators and replay protection
 
-- [ ] implement provider-neutral authenticator interfaces
-- [ ] add independent replay windows per session, direction and plane
-- [ ] protect UDP Control Plane messages
-- [ ] protect TCP Data Plane requests, events and controls
-- [ ] prove correct `event_seq` and `fragment_seq` handling
+- [x] implement provider-neutral authenticator interfaces
+- [x] add independent replay windows per session, direction and plane
+- [x] protect UDP Control Plane messages
+- [x] protect TCP Data Plane requests, events and controls
+- [x] prove correct `event_seq` and `fragment_seq` handling
 
 ## Phase D — authorization
 
