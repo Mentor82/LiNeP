@@ -410,12 +410,107 @@ void test_tcp_data_plane_control_protection() {
     std::cout << "  -> TCP Data Plane Control Protection PASSED" << std::endl;
 }
 
+void test_tcp_session_binding_validation() {
+    std::cout << "[Test 5] TCP Session Binding Validation (Issue #16)..." << std::endl;
+
+    auto session = make_test_session();
+    session.initiator_control_epoch = 5;
+    session.initiator_lease_token = 0x1234567890ABCDEFULL;
+    session.responder_control_epoch = 9;
+    session.responder_lease_token = 0xCAFEBABE00112233ULL;
+    std::uint64_t now_us = 2000000ULL;
+
+    // 1. Valid matching bind for initiator
+    linep::v0_2::session_bind_envelope valid_init_bind;
+    valid_init_bind.identity = session.initiator.endpoint;
+    valid_init_bind.control_epoch = session.initiator_control_epoch;
+    valid_init_bind.lease_token = session.initiator_lease_token;
+    assert(valid_init_bind.is_valid());
+
+    assert(validate_transport_session_binding(
+        session, message_direction::initiator_to_responder,
+        valid_init_bind, now_us) == verification_status::ok);
+
+    // 2. Valid matching bind for responder
+    linep::v0_2::session_bind_envelope valid_resp_bind;
+    valid_resp_bind.identity = session.responder.endpoint;
+    valid_resp_bind.control_epoch = session.responder_control_epoch;
+    valid_resp_bind.lease_token = session.responder_lease_token;
+    assert(valid_resp_bind.is_valid());
+
+    assert(validate_transport_session_binding(
+        session, message_direction::responder_to_initiator,
+        valid_resp_bind, now_us) == verification_status::ok);
+
+    // 3. Node mismatch
+    auto bad_node_bind = valid_init_bind;
+    bad_node_bind.identity.node_id = 999;
+    assert(validate_transport_session_binding(
+        session, message_direction::initiator_to_responder,
+        bad_node_bind, now_us) == verification_status::endpoint_mismatch);
+
+    // 4. Runtime mismatch
+    auto bad_rt_bind = valid_init_bind;
+    bad_rt_bind.identity.runtime_id = 999;
+    assert(validate_transport_session_binding(
+        session, message_direction::initiator_to_responder,
+        bad_rt_bind, now_us) == verification_status::endpoint_mismatch);
+
+    // 5. Endpoint mismatch
+    auto bad_ep_bind = valid_init_bind;
+    bad_ep_bind.identity.endpoint_id = 999;
+    assert(validate_transport_session_binding(
+        session, message_direction::initiator_to_responder,
+        bad_ep_bind, now_us) == verification_status::endpoint_mismatch);
+
+    // 6. Control epoch mismatch
+    auto bad_epoch_bind = valid_init_bind;
+    bad_epoch_bind.control_epoch = 6;
+    assert(validate_transport_session_binding(
+        session, message_direction::initiator_to_responder,
+        bad_epoch_bind, now_us) == verification_status::epoch_lease_mismatch);
+
+    // 7. Lease token mismatch
+    auto bad_lease_bind = valid_init_bind;
+    bad_lease_bind.lease_token = 0xDEADBEEFULL;
+    assert(validate_transport_session_binding(
+        session, message_direction::initiator_to_responder,
+        bad_lease_bind, now_us) == verification_status::epoch_lease_mismatch);
+
+    // 8. Inactive session (expired)
+    assert(validate_transport_session_binding(
+        session, message_direction::initiator_to_responder,
+        valid_init_bind, session.expires_at_us + 1000) == verification_status::session_inactive);
+
+    // 9. Inactive session (revoked)
+    auto revoked_session = session;
+    revoked_session.state = session_state::revoked;
+    assert(validate_transport_session_binding(
+        revoked_session, message_direction::initiator_to_responder,
+        valid_init_bind, now_us) == verification_status::session_inactive);
+
+    // 10. Invalid bind envelope (e.g. node_id=0 or lease=0)
+    linep::v0_2::session_bind_envelope invalid_bind;
+    invalid_bind.identity = {0, 0, 0};
+    assert(validate_transport_session_binding(
+        session, message_direction::initiator_to_responder,
+        invalid_bind, now_us) == verification_status::binding_invalid);
+
+    // 11. Direction mismatch
+    assert(validate_transport_session_binding(
+        session, message_direction::unknown,
+        valid_init_bind, now_us) == verification_status::direction_mismatch);
+
+    std::cout << "  -> TCP Session Binding Validation PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "=== LiNeP-SL V0.2 Plane Protection & Replay Verification Suite ===" << std::endl;
     test_udp_control_plane_protection();
     test_tcp_data_plane_request_protection();
     test_tcp_data_plane_event_protection();
     test_tcp_data_plane_control_protection();
+    test_tcp_session_binding_validation();
     std::cout << "ALL PLANE PROTECTION TESTS PASSED 100%!" << std::endl;
     return 0;
 }

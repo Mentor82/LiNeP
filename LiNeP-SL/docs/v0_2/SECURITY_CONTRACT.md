@@ -122,3 +122,18 @@ The registry enforces these invariants:
 Lifecycle states are `pending`, `active`, `expired`, `revoked`, and `closed`.
 Phase B manages contract state only; key derivation, proof verification,
 authenticator generation, and replay windows remain Phase C work.
+
+## TCP Data Plane Session Binding (Issue #16)
+
+For protected Data Plane operation, the authenticated LiNeP-SL endpoint incarnation MUST match the active LiNeP V0.2 `SESSION_BIND` of the underlying TCP connection. Endpoint identity, `control_epoch`, and `lease_token` mismatches MUST fail closed.
+
+Formally:
+
+```text
+SL_authenticated_endpoint == TCP_bound_endpoint
+SL_control_epoch          == TCP_bound_control_epoch
+SL_lease_token            == TCP_bound_lease_token
+```
+
+A mismatch in any field MUST fail closed. An old SL session MUST NOT be used to authenticate a newly bound endpoint incarnation unless its security contract explicitly validates the new binding.
+

@@ -70,4 +70,35 @@ set_target_properties(test_sl_v02_group_security PROPERTIES
 )
 add_test(NAME test_sl_v02_group_security COMMAND test_sl_v02_group_security)
 
+add_executable(test_sl_v02_authorization
+    test_authorization.cpp
+)
+target_link_libraries(test_sl_v02_authorization PRIVATE linep_sl_v02)
+set_target_properties(test_sl_v02_authorization PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME test_sl_v02_authorization COMMAND test_sl_v02_authorization)
+
+add_executable(test_sl_v02_governance
+    test_governance.cpp
+)
+target_link_libraries(test_sl_v02_governance PRIVATE linep_sl_v02)
+set_target_properties(test_sl_v02_governance PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME test_sl_v02_governance COMMAND test_sl_v02_governance)
+
+add_executable(test_sl_v02_conformance_hardening
+    test_conformance_hardening.cpp
+)
+target_link_libraries(test_sl_v02_conformance_hardening PRIVATE linep_sl_v02)
+set_target_properties(test_sl_v02_conformance_hardening PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME test_sl_v02_conformance_hardening COMMAND test_sl_v02_conformance_hardening)
+
+
 

@@ -1,5 +1,7 @@
 add_library(linep_sl_v02 STATIC
     authenticator.cpp
+    authorization.cpp
+    governance.cpp
     group_security.cpp
     negotiation.cpp
     plane_authenticator.cpp
@@ -7,6 +9,7 @@ add_library(linep_sl_v02 STATIC
     security_contract.cpp
     session.cpp
     ${PROJECT_SOURCE_DIR}/../LiNeP/src/v0_2/control_plane.cpp
+    ${PROJECT_SOURCE_DIR}/../LiNeP/src/v0_2/envelopes.cpp
 )
 
 target_link_libraries(linep_sl_v02 PUBLIC linep_sl_core)

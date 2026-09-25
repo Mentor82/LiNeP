@@ -474,4 +474,47 @@ verification_status verify_control(
     return verification_status::ok;
 }
 
+verification_status validate_transport_session_binding(
+    const session_record& security_session,
+    message_direction direction,
+    const linep::v0_2::session_bind_envelope& transport_binding,
+    std::uint64_t now_us) noexcept {
+    if (direction != message_direction::initiator_to_responder &&
+        direction != message_direction::responder_to_initiator) {
+        return verification_status::direction_mismatch;
+    }
+
+    if (security_session.state != session_state::active) {
+        return verification_status::session_inactive;
+    }
+    if (now_us != 0 && !security_session.is_active_at(now_us)) {
+        return verification_status::session_inactive;
+    }
+
+    if (!transport_binding.is_valid()) {
+        return verification_status::binding_invalid;
+    }
+
+    const auto& expected_peer = (direction == message_direction::initiator_to_responder)
+        ? security_session.initiator
+        : security_session.responder;
+    const auto expected_epoch = (direction == message_direction::initiator_to_responder)
+        ? security_session.initiator_control_epoch
+        : security_session.responder_control_epoch;
+    const auto expected_lease = (direction == message_direction::initiator_to_responder)
+        ? security_session.initiator_lease_token
+        : security_session.responder_lease_token;
+
+    if (transport_binding.identity != expected_peer.endpoint) {
+        return verification_status::endpoint_mismatch;
+    }
+
+    if (transport_binding.control_epoch != expected_epoch ||
+        transport_binding.lease_token != expected_lease) {
+        return verification_status::epoch_lease_mismatch;
+    }
+
+    return verification_status::ok;
+}
+
 } // namespace linep::sl::v0_2

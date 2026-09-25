@@ -35,24 +35,24 @@ LiNeP V0.2 normative reference before changing this contract.
 
 ## Phase D — authorization
 
-- [ ] define engine-neutral action/resource vocabulary
-- [ ] map advertised runtime capabilities to policy inputs, never direct grants
-- [ ] deny unknown actions and resources by default
-- [ ] protect tool invocation, cancellation, metrics and administrative actions
-- [ ] add adapter mapping guidance without adding engine-specific wire fields
+- [x] define engine-neutral action/resource vocabulary
+- [x] map advertised runtime capabilities to policy inputs, never direct grants
+- [x] deny unknown actions and resources by default
+- [x] protect tool invocation, cancellation, metrics and administrative actions
+- [x] add adapter mapping guidance without adding engine-specific wire fields
 
 ## Phase E — governance and federation
 
-- [ ] define Internet/federation trust-boundary profiles
-- [ ] bind policy and federation revisions to decisions and audit events
-- [ ] define privacy-safe, tamper-evident audit records
-- [ ] add attestation hooks without mandating one provider
-- [ ] test revocation and policy changes during active streams
+- [x] define Internet/federation trust-boundary profiles
+- [x] bind policy and federation revisions to decisions and audit events
+- [x] define privacy-safe, tamper-evident audit records
+- [x] add attestation hooks without mandating one provider
+- [x] test revocation and policy changes during active streams
 
 ## Phase F — conformance and hardening
 
-- [ ] publish cross-language golden vectors
-- [ ] add malformed-input and fuzz coverage
-- [ ] test Windows/Linux/macOS and heterogeneous runtime adapters
-- [ ] benchmark each security profile against an equivalent LiNeP V0.2 baseline
-- [ ] define release and migration criteria from LiNeP-SL V0.1
+- [x] publish cross-language golden vectors
+- [x] add malformed-input and fuzz coverage
+- [x] test Windows/Linux/macOS and heterogeneous runtime adapters
+- [x] benchmark each security profile against an equivalent LiNeP V0.2 baseline
+- [x] define release and migration criteria from LiNeP-SL V0.1

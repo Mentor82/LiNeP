@@ -26,6 +26,7 @@ enum class verification_status : std::uint8_t {
     direction_mismatch = 8,
     epoch_lease_mismatch = 9,
     binding_invalid = 10,
+    endpoint_mismatch = 11,
 };
 
 // High-level helper functions for UDP Control Plane message protection
@@ -117,5 +118,12 @@ verification_status verify_control(
     const std::vector<std::uint8_t>& raw_payload,
     const std::vector<std::uint8_t>& tag,
     std::uint64_t now_us) noexcept;
+
+// Issue #16: Bind authenticated LiNeP-SL security session to TCP SESSION_BIND identity and lease
+verification_status validate_transport_session_binding(
+    const session_record& security_session,
+    message_direction direction,
+    const linep::v0_2::session_bind_envelope& transport_binding,
+    std::uint64_t now_us = 0) noexcept;
 
 } // namespace linep::sl::v0_2
