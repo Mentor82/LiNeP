@@ -419,6 +419,94 @@ void test_request_envelope_with_generation_options() {
     std::cout << "  -> Request with Generation Options Tests PASSED" << std::endl;
 }
 
+void test_session_bind_envelope() {
+    std::cout << "[Test 9] Session Bind Envelope & Connection-level Events (Issue #15)..." << std::endl;
+
+    session_bind_envelope bind{};
+    bind.identity.node_id = 0x1122334455667788ULL;
+    bind.identity.runtime_id = 0x8877665544332211ULL;
+    bind.identity.endpoint_id = 42;
+    bind.control_epoch = 7;
+    bind.lease_token = 0xAABBCCDDEEFF0011ULL;
+
+    LINEP_TEST_CHECK(bind.is_valid());
+
+    std::vector<std::uint8_t> buffer;
+    LINEP_TEST_CHECK(encode_session_bind(bind, buffer));
+    LINEP_TEST_CHECK(buffer.size() == (LINEP_V02_HEADER_SIZE + LINEP_V02_SESSION_BIND_PAYLOAD_SIZE)); // Exactly 32 + 36 = 68 bytes
+    LINEP_TEST_CHECK(peek_envelope_type(buffer.data(), buffer.size()) == runtime_envelope_type::session_bind);
+
+    session_bind_envelope dec_bind{};
+    LINEP_TEST_CHECK(decode_session_bind(buffer.data(), buffer.size(), dec_bind));
+    LINEP_TEST_CHECK(dec_bind.identity == bind.identity);
+    LINEP_TEST_CHECK(dec_bind.control_epoch == 7);
+    LINEP_TEST_CHECK(dec_bind.lease_token == 0xAABBCCDDEEFF0011ULL);
+
+    // Fail-closed checks:
+    // 1. Zero lease token
+    session_bind_envelope zero_token = bind;
+    zero_token.lease_token = 0;
+    LINEP_TEST_CHECK(!zero_token.is_valid());
+    std::vector<std::uint8_t> bad_buf;
+    LINEP_TEST_CHECK(!encode_session_bind(zero_token, bad_buf));
+
+    // 2. Tampered header checks:
+    // a) Non-zero request_id (must be rejected)
+    std::vector<std::uint8_t> tampered_req = buffer;
+    tampered_req[8] = 0x01; // set request_id != 0
+    session_bind_envelope bad_dec{};
+    LINEP_TEST_CHECK(!decode_session_bind(tampered_req.data(), tampered_req.size(), bad_dec));
+
+    // b) Non-zero execution_id (must be rejected)
+    std::vector<std::uint8_t> tampered_exec = buffer;
+    tampered_exec[16] = 0x01; // set execution_id != 0
+    LINEP_TEST_CHECK(!decode_session_bind(tampered_exec.data(), tampered_exec.size(), bad_dec));
+
+    // c) Non-zero output_id (must be rejected)
+    std::vector<std::uint8_t> tampered_out = buffer;
+    tampered_out[24] = 0x01; // set output_id != 0
+    LINEP_TEST_CHECK(!decode_session_bind(tampered_out.data(), tampered_out.size(), bad_dec));
+
+    // d) Non-zero flags (must be rejected)
+    std::vector<std::uint8_t> tampered_flags = buffer;
+    tampered_flags[6] = 0x01; // set flags != 0
+    LINEP_TEST_CHECK(!decode_session_bind(tampered_flags.data(), tampered_flags.size(), bad_dec));
+
+    // e) Wrong payload length in header (e.g. 35 or 37 bytes instead of 36)
+    std::vector<std::uint8_t> tampered_len = buffer;
+    tampered_len[28] = 37;
+    LINEP_TEST_CHECK(!decode_session_bind(tampered_len.data(), tampered_len.size(), bad_dec));
+
+    // f) Trailing garbage bytes in buffer (must reject trailing bytes, exact wire size 68 required)
+    std::vector<std::uint8_t> trailing_buf = buffer;
+    trailing_buf.push_back(0xFF);
+    LINEP_TEST_CHECK(!decode_session_bind(trailing_buf.data(), trailing_buf.size(), bad_dec));
+
+    // 3. Connection-level terminal EVENT (request_id=0, execution_id=0, output_id=0)
+    event_envelope conn_evt{};
+    conn_evt.stream = stream_identity{0, 0, 0};
+    conn_evt.event_seq = 1;
+    conn_evt.event_type = runtime_event_type::failed;
+    conn_evt.outcome = terminal_outcome::failed;
+    conn_evt.error.category = error_category::unauthorized;
+    conn_evt.error.code = 401;
+    conn_evt.error.message = "lease_invalid";
+
+    LINEP_TEST_CHECK(conn_evt.stream.is_connection_level());
+    LINEP_TEST_CHECK(conn_evt.is_valid());
+
+    std::vector<std::uint8_t> conn_evt_buf;
+    LINEP_TEST_CHECK(encode_event(conn_evt, conn_evt_buf));
+    event_envelope dec_conn_evt{};
+    LINEP_TEST_CHECK(decode_event(conn_evt_buf.data(), conn_evt_buf.size(), dec_conn_evt));
+    LINEP_TEST_CHECK(dec_conn_evt.stream.is_connection_level());
+    LINEP_TEST_CHECK(dec_conn_evt.error.category == error_category::unauthorized);
+    LINEP_TEST_CHECK(dec_conn_evt.error.code == 401);
+    LINEP_TEST_CHECK(dec_conn_evt.error.message == "lease_invalid");
+
+    std::cout << "  -> Session Bind Envelope Tests PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "=== LiNeP V0.2 Envelope & Contract Test Suite ===" << std::endl;
     test_request_envelope();
@@ -429,6 +517,7 @@ int main() {
     test_lifecycle_state_machine();
     test_tampered_and_corrupt_envelopes();
     test_request_envelope_with_generation_options();
+    test_session_bind_envelope();
     std::cout << "ALL V0.2 PHASE A ENVELOPE AND CONTRACT TESTS PASSED 100%!" << std::endl;
     return 0;
 }

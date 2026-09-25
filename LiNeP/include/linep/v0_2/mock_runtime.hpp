@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <atomic>
 #include <cstdint>
@@ -34,7 +34,10 @@ struct mock_runtime_config {
     std::string embedding_space_id{"nomic-embed-v1.5"};
     std::uint32_t embedding_dimensions{768};
     std::size_t max_buffered_bytes_per_stream{1024 * 1024};
+    bool require_lease{false};
 };
+
+class control_plane_router;
 
 class mock_runtime_server {
 public:
@@ -55,6 +58,7 @@ public:
 
     const mock_runtime_config& config() const noexcept { return config_; }
     void set_config(const mock_runtime_config& config) { config_ = config; }
+    void set_control_plane_router(const control_plane_router* router) noexcept { router_ = router; }
 
 private:
     void accept_loop();
@@ -68,6 +72,7 @@ private:
     std::thread accept_thread_;
     mutable std::mutex conns_mutex_;
     std::vector<std::shared_ptr<envelope_connection>> active_conns_;
+    const control_plane_router* router_{nullptr};
 };
 
 } // namespace linep::v0_2

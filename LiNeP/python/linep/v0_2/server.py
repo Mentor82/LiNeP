@@ -22,6 +22,7 @@ from linep.v0_2.constants import (
     EmbeddingNormalization,
     EmbeddingDistanceMetric,
     ControlMessageType,
+    SessionBindingState,
 )
 from linep.v0_2.envelopes import (
     StreamIdentity,
@@ -34,11 +35,13 @@ from linep.v0_2.envelopes import (
     EmbeddingSpaceDescriptor,
     EmbeddingPayload,
     RuntimeErrorPayload,
+    SessionBindEnvelope,
     encode_event,
     decode_request,
     decode_control,
     encode_capabilities,
     decode_header,
+    decode_session_bind,
 )
 from linep.v0_2.control_plane import (
     UdpControlDatagram,
@@ -62,6 +65,8 @@ class MockServerConfig:
     cancel_after_accept: bool = False
     embedding_space_id: str = "nomic-embed-v1.5"
     embedding_dimensions: int = 768
+    require_lease: bool = False
+    router: Optional[ControlPlaneRouter] = None
 
 
 class LiNePMockServer:
@@ -147,6 +152,9 @@ class LiNePMockServer:
 
     def _client_handler(self, conn: socket.socket) -> None:
         conn.settimeout(None)
+        binding_state = SessionBindingState.UNBOUND
+        bound_bind: Optional[SessionBindEnvelope] = None
+
         try:
             while self._running:
                 hdr_bytes = bytearray()
@@ -174,7 +182,102 @@ class LiNePMockServer:
 
                 full_frame = bytes(hdr_bytes) + bytes(payload_bytes)
 
-                if hdr.envelope_type == int(EnvelopeType.REQUEST):
+                if hdr.envelope_type == int(EnvelopeType.SESSION_BIND):
+                    bind = decode_session_bind(full_frame)
+                    if bind is None:
+                        fail_evt = EventEnvelope(
+                            stream=StreamIdentity(0, 0, 0),
+                            event_seq=1,
+                            event_type=EventType.FAILED,
+                            outcome=TerminalOutcome.FAILED,
+                            error=RuntimeErrorPayload(
+                                category=ErrorCategory.UNAUTHORIZED,
+                                code=401,
+                                message="lease_invalid",
+                            ),
+                        )
+                        conn.sendall(encode_event(fail_evt))
+                        conn.close()
+                        return
+
+                    # Reject identity change on existing connection
+                    if binding_state != SessionBindingState.UNBOUND and bound_bind is not None:
+                        if bound_bind.identity != bind.identity:
+                            fail_evt = EventEnvelope(
+                                stream=StreamIdentity(0, 0, 0),
+                                event_seq=1,
+                                event_type=EventType.FAILED,
+                                outcome=TerminalOutcome.FAILED,
+                                error=RuntimeErrorPayload(
+                                    category=ErrorCategory.UNAUTHORIZED,
+                                    code=401,
+                                    message="identity_change_on_existing_connection",
+                                ),
+                            )
+                            conn.sendall(encode_event(fail_evt))
+                            conn.close()
+                            return
+
+                    if self.config.router is not None:
+                        if not self.config.router.validate_tcp_session_binding(
+                            bind.identity, bind.control_epoch, bind.lease_token
+                        ):
+                            fail_evt = EventEnvelope(
+                                stream=StreamIdentity(0, 0, 0),
+                                event_seq=1,
+                                event_type=EventType.FAILED,
+                                outcome=TerminalOutcome.FAILED,
+                                error=RuntimeErrorPayload(
+                                    category=ErrorCategory.UNAUTHORIZED,
+                                    code=401,
+                                    message="lease_invalid",
+                                ),
+                            )
+                            conn.sendall(encode_event(fail_evt))
+                            conn.close()
+                            return
+
+                    # Idempotent duplicate check: same lease/epoch while currently bound
+                    if binding_state == SessionBindingState.BOUND_CURRENT and bound_bind == bind:
+                        pass
+                    else:
+                        bound_bind = bind
+                        binding_state = SessionBindingState.BOUND_CURRENT
+
+                elif hdr.envelope_type == int(EnvelopeType.REQUEST):
+                    if (
+                        self.config.router is not None
+                        and binding_state == SessionBindingState.BOUND_CURRENT
+                        and bound_bind is not None
+                    ):
+                        if not self.config.router.validate_tcp_session_binding(
+                            bound_bind.identity, bound_bind.control_epoch, bound_bind.lease_token
+                        ):
+                            binding_state = SessionBindingState.BOUND_STALE
+
+                    if self.config.require_lease and binding_state != SessionBindingState.BOUND_CURRENT:
+                        msg = (
+                            "Connection is UNBOUND: valid SESSION_BIND required before REQUEST"
+                            if binding_state == SessionBindingState.UNBOUND
+                            else "stale_binding: re-bind required before new REQUEST"
+                        )
+                        fail_evt = EventEnvelope(
+                            stream=StreamIdentity(hdr.request_id, hdr.execution_id, hdr.output_id),
+                            event_seq=1,
+                            event_type=EventType.FAILED,
+                            outcome=TerminalOutcome.FAILED,
+                            error=RuntimeErrorPayload(
+                                category=ErrorCategory.UNAUTHORIZED,
+                                code=401,
+                                message=msg,
+                            ),
+                        )
+                        conn.sendall(encode_event(fail_evt))
+                        if binding_state == SessionBindingState.UNBOUND:
+                            conn.close()
+                            return
+                        continue
+
                     req = decode_request(full_frame)
                     if req is not None:
                         t = threading.Thread(target=self._execute_stream, args=(conn, req), daemon=True)

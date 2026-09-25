@@ -52,10 +52,20 @@ Use this checklist when implementing or reviewing a LiNeP V0.2 adapter.
 
 ## Dual Plane
 
-- [ ] UDP identity is bound to the TCP session/trunk
-- [ ] `control_epoch` checked
-- [ ] `lease_token` checked
+- [ ] UDP identity is bound to the TCP session/trunk via `SESSION_BIND` (envelope type 5, exact 36-byte payload)
+- [ ] Strict syntactic decode: `request_id = 0`, `execution_id = 0`, `output_id = 0`, `flags = 0`, exact payload length 36 (reject trailing/truncated bytes)
+- [ ] Syntactic decode kept separate from semantic authorization (`validate_tcp_session_binding`)
+- [ ] Connection state machine implemented (`UNBOUND` -> `BOUND_CURRENT` -> `BOUND_STALE`)
+- [ ] `REQUEST` rejected with 401 Unauthorized while `UNBOUND` or `BOUND_STALE`
+- [ ] `REQUEST` during `BOUND_STALE` keeps TCP connection OPEN to allow immediate in-band re-bind
+- [ ] Duplicate `SESSION_BIND` with same identity, lease, and epoch handled idempotently
+- [ ] Identity change on existing connection (`BOUND_CURRENT` or `BOUND_STALE`) rejected with 401 `identity_change_on_existing_connection` and socket closed
+- [ ] `control_epoch` checked against control-plane incarnation
+- [ ] `lease_token` checked against router active lease
+- [ ] Connection-level failures emit terminal event with reserved stream identity `(0, 0, 0)`
 - [ ] UDP heartbeat loss does not terminate healthy TCP execution
+- [ ] In-flight executions complete across lease rotation while new requests are blocked until re-bound
+- [ ] 64-bit `lease_token` treated as logical lease handle, not cryptographic bearer auth (LiNeP-SL provides cryptographic security)
 - [ ] new incarnation cannot resurrect old execution state
 
 ## Cancellation

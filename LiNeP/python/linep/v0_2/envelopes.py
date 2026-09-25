@@ -11,6 +11,7 @@ from linep.v0_2.constants import (
     LINEP_V02_VERSION_MAJOR,
     LINEP_V02_VERSION_MINOR,
     LINEP_V02_HEADER_SIZE,
+    LINEP_V02_SESSION_BIND_PAYLOAD_SIZE,
     LINEP_V02_MAX_EMBEDDING_DIMS,
     RuntimeProfile,
     EnvelopeType,
@@ -21,6 +22,7 @@ from linep.v0_2.constants import (
     EmbeddingNormalization,
     EmbeddingDistanceMetric,
 )
+from linep.v0_2.control_plane import NodeEndpointIdentity
 
 
 class BufferWriter:
@@ -142,6 +144,9 @@ class StreamIdentity:
     def is_valid(self) -> bool:
         return self.request_id > 0 and self.execution_id > 0
 
+    def is_connection_level(self) -> bool:
+        return self.request_id == 0 and self.execution_id == 0 and self.output_id == 0
+
 
 @dataclass
 class WireEnvelopeHeader:
@@ -234,7 +239,9 @@ class EventEnvelope:
     timestamp_us: int = 0
 
     def is_valid(self) -> bool:
-        if not self.stream.is_valid() or self.event_seq == 0:
+        if not (self.stream.is_valid() or self.stream.is_connection_level()):
+            return False
+        if not self.stream.is_connection_level() and self.event_seq == 0:
             return False
         if self.event_type == EventType.EMBEDDING_RESULT:
             if not self.embedding.space.embedding_space_id or self.embedding.space.dimensions == 0:
@@ -253,6 +260,16 @@ class ControlEnvelope:
 
     def is_valid(self) -> bool:
         return self.stream.is_valid()
+
+
+@dataclass
+class SessionBindEnvelope:
+    identity: NodeEndpointIdentity = field(default_factory=NodeEndpointIdentity)
+    control_epoch: int = 0
+    lease_token: int = 0
+
+    def is_valid(self) -> bool:
+        return self.identity.is_valid() and self.lease_token != 0
 
 
 @dataclass
@@ -737,5 +754,74 @@ def decode_capabilities(data: bytes) -> Optional[CapabilitiesEnvelope]:
             supported_embedding_spaces=spaces,
         )
         return CapabilitiesEnvelope(descriptor=desc)
+    except Exception:
+        return None
+
+
+def encode_session_bind(bind: SessionBindEnvelope) -> bytes:
+    """Encode SessionBindEnvelope into canonical little-endian wire frame."""
+    if not bind.is_valid():
+        raise ValueError("Invalid session_bind envelope: missing identity or zero lease token")
+
+    pw = BufferWriter()
+    pw.write_u64(bind.identity.node_id)
+    pw.write_u64(bind.identity.runtime_id)
+    pw.write_u32(bind.identity.endpoint_id)
+    pw.write_u64(bind.control_epoch)
+    pw.write_u64(bind.lease_token)
+    payload = pw.to_bytes()
+
+    if len(payload) != LINEP_V02_SESSION_BIND_PAYLOAD_SIZE:
+        raise ValueError("Invalid session_bind payload length")
+
+    hdr = WireEnvelopeHeader(
+        magic=LINEP_V02_MAGIC,
+        version_major=LINEP_V02_VERSION_MAJOR,
+        version_minor=LINEP_V02_VERSION_MINOR,
+        envelope_type=int(EnvelopeType.SESSION_BIND),
+        flags=0,
+        request_id=0,
+        execution_id=0,
+        output_id=0,
+        payload_len=len(payload),
+    )
+    return encode_header(hdr) + payload
+
+
+def decode_session_bind(data: bytes) -> Optional[SessionBindEnvelope]:
+    """Decode SessionBindEnvelope from canonical little-endian wire frame."""
+    hdr = decode_header(data)
+    if (
+        hdr is None
+        or hdr.magic != LINEP_V02_MAGIC
+        or hdr.version_major != LINEP_V02_VERSION_MAJOR
+        or hdr.envelope_type != int(EnvelopeType.SESSION_BIND)
+        or hdr.flags != 0
+        or hdr.request_id != 0
+        or hdr.execution_id != 0
+        or hdr.output_id != 0
+        or hdr.payload_len != LINEP_V02_SESSION_BIND_PAYLOAD_SIZE
+        or len(data) != (LINEP_V02_HEADER_SIZE + hdr.payload_len)
+    ):
+        return None
+
+    try:
+        r = BufferReader(data[LINEP_V02_HEADER_SIZE : LINEP_V02_HEADER_SIZE + hdr.payload_len])
+        node_id = r.read_u64()
+        runtime_id = r.read_u64()
+        endpoint_id = r.read_u32()
+        control_epoch = r.read_u64()
+        lease_token = r.read_u64()
+        if r.remaining() != 0:
+            return None
+
+        bind = SessionBindEnvelope(
+            identity=NodeEndpointIdentity(node_id=node_id, runtime_id=runtime_id, endpoint_id=endpoint_id),
+            control_epoch=control_epoch,
+            lease_token=lease_token,
+        )
+        if not bind.is_valid():
+            return None
+        return bind
     except Exception:
         return None

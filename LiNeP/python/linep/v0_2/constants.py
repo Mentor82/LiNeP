@@ -9,6 +9,7 @@ LINEP_V02_VERSION_MINOR: int = 2
 LINEP_V02_HEADER_SIZE: int = 32
 LINEP_V02_UDP_DATAGRAM_SIZE: int = 80
 LINEP_V02_MAX_PAYLOAD_SIZE: int = 16 * 1024 * 1024  # 16 MB
+LINEP_V02_SESSION_BIND_PAYLOAD_SIZE: int = 36         # 8+8+4+8+8 bytes
 LINEP_V02_MAX_EMBEDDING_DIMS: int = 65536
 
 class RuntimeProfile(IntEnum):
@@ -23,6 +24,12 @@ class EnvelopeType(IntEnum):
     EVENT = 2
     CONTROL = 3
     CAPABILITIES = 4
+    SESSION_BIND = 5
+
+class SessionBindingState(IntEnum):
+    UNBOUND = 0
+    BOUND_CURRENT = 1
+    BOUND_STALE = 2
 
 class EventType(IntEnum):
     UNKNOWN = 0

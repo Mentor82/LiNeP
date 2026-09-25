@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace linep::v0_2 {
@@ -53,6 +54,10 @@ struct stream_identity {
         return request_id != 0 && execution_id != 0;
     }
 
+    bool is_connection_level() const noexcept {
+        return request_id == 0 && execution_id == 0 && output_id == 0;
+    }
+
     bool operator==(const stream_identity& other) const noexcept {
         return request_id == other.request_id &&
                execution_id == other.execution_id &&
@@ -61,6 +66,34 @@ struct stream_identity {
 
     bool operator!=(const stream_identity& other) const noexcept {
         return !(*this == other);
+    }
+};
+
+struct node_endpoint_identity {
+    std::uint64_t node_id{0};
+    std::uint64_t runtime_id{0};
+    std::uint32_t endpoint_id{0};
+
+    bool is_valid() const noexcept {
+        return node_id != 0 && runtime_id != 0;
+    }
+
+    bool operator==(const node_endpoint_identity& other) const noexcept {
+        return node_id == other.node_id &&
+               runtime_id == other.runtime_id &&
+               endpoint_id == other.endpoint_id;
+    }
+    bool operator!=(const node_endpoint_identity& other) const noexcept {
+        return !(*this == other);
+    }
+};
+
+struct node_endpoint_hash {
+    std::size_t operator()(const node_endpoint_identity& id) const noexcept {
+        std::size_t h1 = std::hash<std::uint64_t>{}(id.node_id);
+        std::size_t h2 = std::hash<std::uint64_t>{}(id.runtime_id);
+        std::size_t h3 = std::hash<std::uint32_t>{}(id.endpoint_id);
+        return h1 ^ (h2 << 1) ^ (h3 << 2);
     }
 };
 

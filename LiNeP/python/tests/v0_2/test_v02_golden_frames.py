@@ -29,37 +29,48 @@ from linep.v0_2 import (
     EmbeddingPayload,
     RuntimeErrorPayload,
     UdpControlDatagram,
+    NodeEndpointIdentity,
+    SessionBindEnvelope,
     decode_request,
     decode_event,
     decode_control,
     decode_capabilities,
     decode_control_datagram,
+    decode_session_bind,
     encode_request,
     encode_event,
     encode_control,
     encode_capabilities,
     encode_control_datagram,
+    encode_session_bind,
 )
 
 
 def find_cpp_golden_tool() -> Optional[Path]:
-    repo_root = Path(__file__).resolve().parents[3]
+    roots = [
+        Path(__file__).resolve().parents[4],
+        Path(__file__).resolve().parents[3],
+    ]
     if os.name == "nt":
-        candidates = [
-            repo_root / "build" / "tools" / "v0_2" / "linep-v02-golden-frames.exe",
-            repo_root / "build_win" / "tools" / "v0_2" / "linep-v02-golden-frames.exe",
-            repo_root / "LiNeP" / "build" / "tools" / "v0_2" / "linep-v02-golden-frames.exe",
+        subpaths = [
+            "build-v02/tools/v0_2/linep-v02-golden-frames.exe",
+            "build/tools/v0_2/linep-v02-golden-frames.exe",
+            "build_win/tools/v0_2/linep-v02-golden-frames.exe",
+            "LiNeP/build/tools/v0_2/linep-v02-golden-frames.exe",
         ]
     else:
-        candidates = [
-            repo_root / "build_linux" / "tools" / "v0_2" / "linep-v02-golden-frames",
-            repo_root / "build" / "tools" / "v0_2" / "linep-v02-golden-frames",
-            repo_root / "LiNeP" / "build_linux" / "tools" / "v0_2" / "linep-v02-golden-frames",
-            repo_root / "LiNeP" / "build" / "tools" / "v0_2" / "linep-v02-golden-frames",
+        subpaths = [
+            "build-v02/tools/v0_2/linep-v02-golden-frames",
+            "build_linux/tools/v0_2/linep-v02-golden-frames",
+            "build/tools/v0_2/linep-v02-golden-frames",
+            "LiNeP/build_linux/tools/v0_2/linep-v02-golden-frames",
+            "LiNeP/build/tools/v0_2/linep-v02-golden-frames",
         ]
-    for c in candidates:
-        if c.exists() and os.access(c, os.X_OK if os.name != "nt" else os.F_OK):
-            return c
+    for r in roots:
+        for sp in subpaths:
+            c = r / sp
+            if c.exists() and os.access(c, os.X_OK if os.name != "nt" else os.F_OK):
+                return c
     return None
 
 
@@ -193,6 +204,17 @@ def test_python_decodes_cpp_generated_golden_frames():
         assert udp_hb.message_type == int(ControlMessageType.HEARTBEAT)
         assert udp_hb.load_pct == 45
         assert udp_hb.queue_depth == 3
+
+        # 14. Verify C++ Session Bind Frame (Issue #15)
+        bind_bytes = (p / "session_bind_cpp.bin").read_bytes()
+        assert len(bind_bytes) == 68
+        bind = decode_session_bind(bind_bytes)
+        assert bind is not None
+        assert bind.identity.node_id == 1001
+        assert bind.identity.runtime_id == 2001
+        assert bind.identity.endpoint_id == 1
+        assert bind.control_epoch == 1
+        assert bind.lease_token == 0xAABBCCDDEEFF0011
 
 
 def test_cpp_verifies_python_generated_golden_frames():
@@ -357,6 +379,14 @@ def test_cpp_verifies_python_generated_golden_frames():
         )
         udp_hb.set_trunk_ready(True)
         (p / "udp_heartbeat_go.bin").write_bytes(encode_control_datagram(udp_hb))
+
+        # 13. Session Bind Frame (Issue #15)
+        bind = SessionBindEnvelope(
+            identity=NodeEndpointIdentity(node_id=8001, runtime_id=9001, endpoint_id=1),
+            control_epoch=1,
+            lease_token=0x9988776655443322,
+        )
+        (p / "session_bind_go.bin").write_bytes(encode_session_bind(bind))
 
         # Execute C++ verifier against Python-generated frames!
         res = subprocess.run([str(cpp_tool), "verify", tmp_dir], capture_output=True, text=True)

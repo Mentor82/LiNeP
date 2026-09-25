@@ -1,4 +1,5 @@
 #include "linep/v0_2/session.hpp"
+#include "linep/v0_2/control_plane.hpp"
 
 namespace linep::v0_2 {
 
@@ -11,6 +12,21 @@ bool session_manager::submit_request(const request_envelope& req, runtime_error&
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
+
+    if (descriptor_.require_lease) {
+        if (binding_state_ == session_binding_state::unbound) {
+            out_err.category = error_category::unauthorized;
+            out_err.code = 401;
+            out_err.message = "Connection is UNBOUND: valid SESSION_BIND required before REQUEST";
+            return false;
+        }
+        if (binding_state_ == session_binding_state::bound_stale) {
+            out_err.category = error_category::unauthorized;
+            out_err.code = 401;
+            out_err.message = "Binding is STALE: control epoch or lease rotated, re-bind required before new REQUEST";
+            return false;
+        }
+    }
 
     // Check for collision with existing active stream
     if (active_streams_.find(req.stream) != active_streams_.end()) {
@@ -316,6 +332,64 @@ std::size_t session_manager::terminate_all_active_streams(terminal_outcome outco
         }
     }
     return terminated;
+}
+
+session_binding_state session_manager::binding_state() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return binding_state_;
+}
+
+session_bind_envelope session_manager::bound_session() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return bound_bind_;
+}
+
+void session_manager::mark_binding_stale() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (binding_state_ == session_binding_state::bound_current) {
+        binding_state_ = session_binding_state::bound_stale;
+    }
+}
+
+bool session_manager::process_session_bind(const session_bind_envelope& bind, runtime_error& out_err) {
+    return process_session_bind(bind, nullptr, out_err);
+}
+
+bool session_manager::process_session_bind(const session_bind_envelope& bind, const control_plane_router* router, runtime_error& out_err) {
+    if (!bind.is_valid()) {
+        out_err.category = error_category::bad_request;
+        out_err.code = 400;
+        out_err.message = "Invalid session_bind envelope: missing identity or zero lease token";
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Identity change on existing connection is forbidden (prevents connection reassignment)
+    if (binding_state_ != session_binding_state::unbound && bound_bind_.identity != bind.identity) {
+        out_err.category = error_category::unauthorized;
+        out_err.code = 401;
+        out_err.message = "identity_change_on_existing_connection";
+        return false;
+    }
+
+    if (router != nullptr) {
+        if (!router->validate_tcp_session_binding(bind.identity, bind.control_epoch, bind.lease_token)) {
+            out_err.category = error_category::unauthorized;
+            out_err.code = 401;
+            out_err.message = "lease_invalid";
+            return false;
+        }
+    }
+
+    // Idempotent duplicate bind: same lease token & epoch while already bound
+    if (binding_state_ == session_binding_state::bound_current && bound_bind_ == bind) {
+        return true;
+    }
+
+    bound_bind_ = bind;
+    binding_state_ = session_binding_state::bound_current;
+    return true;
 }
 
 } // namespace linep::v0_2

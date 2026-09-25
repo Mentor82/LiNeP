@@ -15,6 +15,7 @@ constexpr std::uint8_t LINEP_V02_VERSION_MAJOR = 0;
 constexpr std::uint8_t LINEP_V02_VERSION_MINOR = 2;
 constexpr std::size_t LINEP_V02_HEADER_SIZE = 32;
 constexpr std::size_t LINEP_V02_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024; // 16 MB max payload limit
+constexpr std::size_t LINEP_V02_SESSION_BIND_PAYLOAD_SIZE = 36; // 8+8+4+8+8 bytes canonical wire size
 
 enum class runtime_envelope_type : std::uint8_t {
     unknown = 0,
@@ -22,6 +23,7 @@ enum class runtime_envelope_type : std::uint8_t {
     event = 2,
     control = 3,
     capabilities = 4,
+    session_bind = 5,
 };
 
 enum class runtime_event_type : std::uint8_t {
@@ -115,7 +117,13 @@ struct event_envelope {
     std::uint64_t timestamp_us{0};
 
     bool is_valid() const noexcept {
-        if (!stream.is_valid() || event_type == runtime_event_type::unknown || event_seq == 0) {
+        if (!stream.is_valid() && !stream.is_connection_level()) {
+            return false;
+        }
+        if (event_type == runtime_event_type::unknown) {
+            return false;
+        }
+        if (!stream.is_connection_level() && event_seq == 0) {
             return false;
         }
         if (event_type == runtime_event_type::embedding_result && !embedding.is_valid()) {
@@ -147,6 +155,31 @@ struct capabilities_envelope {
     runtime_capabilities_descriptor descriptor;
 };
 
+// V0.2 Dual-Plane: binds a TCP data-plane session/trunk to the UDP control-plane identity/lease
+// Note: lease_token (64-bit) binds control-plane lease semantics and incarnation state;
+// cryptographic authentication and confidentiality are provided separately by LiNeP-SL.
+struct session_bind_envelope {
+    node_endpoint_identity identity{};
+    std::uint64_t control_epoch{0};
+    std::uint64_t lease_token{0};
+
+    bool is_valid() const noexcept {
+        return identity.node_id != 0 &&
+               identity.runtime_id != 0 &&
+               lease_token != 0;
+    }
+
+    bool operator==(const session_bind_envelope& other) const noexcept {
+        return identity == other.identity &&
+               control_epoch == other.control_epoch &&
+               lease_token == other.lease_token;
+    }
+
+    bool operator!=(const session_bind_envelope& other) const noexcept {
+        return !(*this == other);
+    }
+};
+
 // Canonical little-endian header encoding and decoding functions
 void encode_header(const wire_envelope_header& hdr, std::vector<std::uint8_t>& out_buf);
 bool decode_header(const std::uint8_t* data, std::size_t size, wire_envelope_header& out_hdr);
@@ -163,6 +196,9 @@ bool decode_control(const std::uint8_t* data, std::size_t size, control_envelope
 
 bool encode_capabilities(const capabilities_envelope& caps, std::vector<std::uint8_t>& out_buffer);
 bool decode_capabilities(const std::uint8_t* data, std::size_t size, capabilities_envelope& out_caps);
+
+bool encode_session_bind(const session_bind_envelope& bind, std::vector<std::uint8_t>& out_buffer);
+bool decode_session_bind(const std::uint8_t* data, std::size_t size, session_bind_envelope& out_bind);
 
 runtime_envelope_type peek_envelope_type(const std::uint8_t* data, std::size_t size) noexcept;
 

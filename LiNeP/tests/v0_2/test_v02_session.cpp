@@ -6,6 +6,7 @@
 #include "linep/v0_2/runtime_types.hpp"
 #include "linep/v0_2/session.hpp"
 #include "linep/v0_2/envelopes.hpp"
+#include "linep/v0_2/control_plane.hpp"
 
 #define LINEP_TEST_CHECK(cond) \
     do { \
@@ -345,6 +346,150 @@ void test_single_authoritative_terminal_outcome() {
     std::cout << "  -> Single Terminal Outcome Tests PASSED" << std::endl;
 }
 
+void test_session_binding_state_machine() {
+    std::cout << "[Test 8] Session Binding State Machine & Lease Rotation (Issue #15)..." << std::endl;
+
+    session_descriptor desc{};
+    desc.require_lease = true;
+    session_manager mgr(desc);
+
+    // Initial state must be UNBOUND
+    LINEP_TEST_CHECK(mgr.binding_state() == session_binding_state::unbound);
+
+    request_envelope req1{};
+    req1.stream = stream_identity{100, 200, 0};
+    req1.profile = runtime_profile::chat;
+    req1.model_id = "test-model";
+    req1.payload = "Test prompt";
+
+    runtime_error err{};
+    // Rule: REQUEST MUST NOT be accepted while UNBOUND
+    LINEP_TEST_CHECK(!mgr.submit_request(req1, err));
+    LINEP_TEST_CHECK(err.category == error_category::unauthorized);
+    LINEP_TEST_CHECK(err.code == 401);
+
+    // Process valid SESSION_BIND
+    session_bind_envelope bind1{};
+    bind1.identity = node_endpoint_identity{1, 2, 3};
+    bind1.control_epoch = 1;
+    bind1.lease_token = 0xAABBCCDDEEFF0011ULL;
+
+    LINEP_TEST_CHECK(mgr.process_session_bind(bind1, err));
+    LINEP_TEST_CHECK(mgr.binding_state() == session_binding_state::bound_current);
+
+    // REQUEST now succeeds while BOUND_CURRENT
+    LINEP_TEST_CHECK(mgr.submit_request(req1, err));
+    LINEP_TEST_CHECK(mgr.has_stream(req1.stream));
+
+    // Case: duplicate_bind_same_lease (must be idempotent and succeed)
+    LINEP_TEST_CHECK(mgr.process_session_bind(bind1, err));
+    LINEP_TEST_CHECK(mgr.binding_state() == session_binding_state::bound_current);
+
+    // Simulate UDP lease rotation / new epoch
+    mgr.mark_binding_stale();
+    LINEP_TEST_CHECK(mgr.binding_state() == session_binding_state::bound_stale);
+
+    // In-flight stream 1 MUST be allowed to finish during STALE
+    event_envelope delta{};
+    delta.stream = req1.stream;
+    delta.event_seq = 1;
+    delta.event_type = runtime_event_type::content_delta;
+    delta.payload = "In-flight token during rotation";
+    LINEP_TEST_CHECK(mgr.dispatch_event(delta, err));
+
+    event_envelope term{};
+    term.stream = req1.stream;
+    term.event_seq = 2;
+    term.event_type = runtime_event_type::completed;
+    term.outcome = terminal_outcome::completed;
+    LINEP_TEST_CHECK(mgr.dispatch_event(term, err));
+
+    // Case: request_during_stale_binding (new REQUEST MUST be rejected)
+    request_envelope req2{};
+    req2.stream = stream_identity{101, 201, 0};
+    req2.profile = runtime_profile::chat;
+    req2.model_id = "test-model";
+    req2.payload = "New prompt while stale";
+
+    LINEP_TEST_CHECK(!mgr.submit_request(req2, err));
+    LINEP_TEST_CHECK(err.category == error_category::unauthorized);
+    LINEP_TEST_CHECK(err.code == 401);
+
+    // Re-bind with new rotated lease / epoch transitions back to BOUND_CURRENT
+    session_bind_envelope bind2 = bind1;
+    bind2.control_epoch = 2;
+    bind2.lease_token = 0x1122334455667788ULL;
+
+    LINEP_TEST_CHECK(mgr.process_session_bind(bind2, err));
+    LINEP_TEST_CHECK(mgr.binding_state() == session_binding_state::bound_current);
+
+    // Now req2 succeeds
+    LINEP_TEST_CHECK(mgr.submit_request(req2, err));
+    LINEP_TEST_CHECK(mgr.has_stream(req2.stream));
+
+    // Test with control_plane_router validation
+    control_plane_router router;
+    udp_control_datagram hello{};
+    hello.magic = LINEP_V02_UDP_MAGIC;
+    hello.message_type = static_cast<std::uint8_t>(control_message_type::node_hello);
+    hello.node_id = 99;
+    hello.runtime_id = 88;
+    hello.endpoint_id = 1;
+    hello.control_epoch = 1;
+    hello.tcp_port = 8080;
+    hello.set_trunk_ready(true);
+    LINEP_TEST_CHECK(router.ingest_datagram(hello, 1000));
+
+    udp_control_datagram invite{};
+    LINEP_TEST_CHECK(router.issue_invite(node_endpoint_identity{99, 88, 1}, 0xFEEDFACEULL, invite));
+
+    udp_control_datagram ack{};
+    ack.magic = LINEP_V02_UDP_MAGIC;
+    ack.message_type = static_cast<std::uint8_t>(control_message_type::lease_ack);
+    ack.node_id = 99;
+    ack.runtime_id = 88;
+    ack.endpoint_id = 1;
+    ack.control_epoch = 1;
+    ack.control_seq = 2;
+    ack.tcp_port = 8080;
+    ack.set_trunk_ready(true);
+    ack.lease_token = 0xFEEDFACEULL;
+    LINEP_TEST_CHECK(router.ingest_datagram(ack, 2000));
+
+    // Valid against router
+    session_bind_envelope r_bind{};
+    r_bind.identity = node_endpoint_identity{99, 88, 1};
+    r_bind.control_epoch = 1;
+    r_bind.lease_token = 0xFEEDFACEULL;
+
+    session_manager r_mgr(desc);
+    LINEP_TEST_CHECK(r_mgr.process_session_bind(r_bind, &router, err));
+    LINEP_TEST_CHECK(r_mgr.binding_state() == session_binding_state::bound_current);
+
+    // Invalid lease token against router -> rejected with lease_invalid (401)
+    session_bind_envelope bad_token = r_bind;
+    bad_token.lease_token = 0xDEADBEEFULL;
+    session_manager bad_mgr(desc);
+    LINEP_TEST_CHECK(!bad_mgr.process_session_bind(bad_token, &router, err));
+    LINEP_TEST_CHECK(err.code == 401);
+    LINEP_TEST_CHECK(err.message == "lease_invalid");
+
+    // Wrong epoch against router -> rejected
+    session_bind_envelope bad_epoch = r_bind;
+    bad_epoch.control_epoch = 99;
+    LINEP_TEST_CHECK(!bad_mgr.process_session_bind(bad_epoch, &router, err));
+    LINEP_TEST_CHECK(err.code == 401);
+
+    // Identity change on existing connection -> REJECTED (identity_change_on_existing_connection)
+    session_bind_envelope change_id = r_bind;
+    change_id.identity.node_id = 9999;
+    LINEP_TEST_CHECK(!r_mgr.process_session_bind(change_id, &router, err));
+    LINEP_TEST_CHECK(err.code == 401);
+    LINEP_TEST_CHECK(err.message == "identity_change_on_existing_connection");
+
+    std::cout << "  -> Session Binding State Machine Tests PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "=== LiNeP V0.2 Persistent Session & Multiplexing Test Suite ===" << std::endl;
     test_concurrent_multiplexing();
@@ -354,6 +499,7 @@ int main() {
     test_targeted_cancellation();
     test_bounded_buffer_protection();
     test_single_authoritative_terminal_outcome();
+    test_session_binding_state_machine();
     std::cout << "ALL V0.2 PHASE B SESSION MULTIPLEXING TESTS PASSED 100%!" << std::endl;
     return 0;
 }

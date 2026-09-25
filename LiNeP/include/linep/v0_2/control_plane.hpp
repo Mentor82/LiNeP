@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "linep/v0_2/runtime_types.hpp"
 
 namespace linep::v0_2 {
 
@@ -80,30 +81,6 @@ struct udp_control_datagram {
 #pragma pack(pop)
 
 static_assert(sizeof(udp_control_datagram) == LINEP_V02_UDP_DATAGRAM_SIZE, "udp_control_datagram must be exactly 80 bytes");
-
-struct node_endpoint_identity {
-    std::uint64_t node_id{0};
-    std::uint64_t runtime_id{0};
-    std::uint32_t endpoint_id{0};
-
-    bool operator==(const node_endpoint_identity& other) const noexcept {
-        return node_id == other.node_id &&
-               runtime_id == other.runtime_id &&
-               endpoint_id == other.endpoint_id;
-    }
-    bool operator!=(const node_endpoint_identity& other) const noexcept {
-        return !(*this == other);
-    }
-};
-
-struct node_endpoint_hash {
-    std::size_t operator()(const node_endpoint_identity& id) const noexcept {
-        std::size_t h1 = std::hash<std::uint64_t>{}(id.node_id);
-        std::size_t h2 = std::hash<std::uint64_t>{}(id.runtime_id);
-        std::size_t h3 = std::hash<std::uint32_t>{}(id.endpoint_id);
-        return h1 ^ (h2 << 1) ^ (h3 << 2);
-    }
-};
 
 struct control_plane_node_state {
     node_endpoint_identity identity;

@@ -178,6 +178,9 @@ runtime_envelope_type peek_envelope_type(const std::uint8_t* data, std::size_t s
     if (hdr.magic != LINEP_V02_MAGIC || hdr.version_major != LINEP_V02_VERSION_MAJOR) {
         return runtime_envelope_type::unknown;
     }
+    if (hdr.envelope_type < 1 || hdr.envelope_type > 5) {
+        return runtime_envelope_type::unknown;
+    }
     return static_cast<runtime_envelope_type>(hdr.envelope_type);
 }
 
@@ -639,6 +642,81 @@ bool decode_capabilities(const std::uint8_t* data, std::size_t size, capabilitie
     }
 
     return true;
+}
+
+bool encode_session_bind(const session_bind_envelope& bind, std::vector<std::uint8_t>& out_buffer) {
+    if (!bind.is_valid()) {
+        return false;
+    }
+
+    std::vector<std::uint8_t> payload_buf;
+    payload_buf.reserve(LINEP_V02_SESSION_BIND_PAYLOAD_SIZE);
+
+    // Canonical little-endian wire format:
+    // node_id (u64) · runtime_id (u64) · endpoint_id (u32) · control_epoch (u64) · lease_token (u64)
+    write_u64(payload_buf, bind.identity.node_id);
+    write_u64(payload_buf, bind.identity.runtime_id);
+    write_u32(payload_buf, bind.identity.endpoint_id);
+    write_u64(payload_buf, bind.control_epoch);
+    write_u64(payload_buf, bind.lease_token);
+
+    wire_envelope_header hdr{};
+    hdr.magic = LINEP_V02_MAGIC;
+    hdr.version_major = LINEP_V02_VERSION_MAJOR;
+    hdr.version_minor = LINEP_V02_VERSION_MINOR;
+    hdr.envelope_type = static_cast<std::uint8_t>(runtime_envelope_type::session_bind);
+    hdr.flags = 0;
+    hdr.request_id = 0;
+    hdr.execution_id = 0;
+    hdr.output_id = 0;
+    hdr.payload_len = static_cast<std::uint32_t>(payload_buf.size());
+
+    out_buffer.clear();
+    out_buffer.reserve(LINEP_V02_HEADER_SIZE + payload_buf.size());
+    encode_header(hdr, out_buffer);
+    out_buffer.insert(out_buffer.end(), payload_buf.begin(), payload_buf.end());
+    return true;
+}
+
+bool decode_session_bind(const std::uint8_t* data, std::size_t size, session_bind_envelope& out_bind) {
+    wire_envelope_header hdr{};
+    if (!decode_header(data, size, hdr)) {
+        return false;
+    }
+
+    if (hdr.magic != LINEP_V02_MAGIC ||
+        hdr.version_major != LINEP_V02_VERSION_MAJOR ||
+        hdr.envelope_type != static_cast<std::uint8_t>(runtime_envelope_type::session_bind) ||
+        hdr.flags != 0) {
+        return false;
+    }
+
+    // Connection-level frame rule: stream IDs must be 0
+    if (hdr.request_id != 0 || hdr.execution_id != 0 || hdr.output_id != 0) {
+        return false;
+    }
+
+    if (hdr.payload_len != LINEP_V02_SESSION_BIND_PAYLOAD_SIZE) {
+        return false;
+    }
+
+    // Exact framing check: reject truncated or trailing garbage bytes
+    if (size != (LINEP_V02_HEADER_SIZE + hdr.payload_len)) {
+        return false;
+    }
+
+    buffer_reader r(data + LINEP_V02_HEADER_SIZE, hdr.payload_len);
+    if (!r.read_u64(out_bind.identity.node_id)) return false;
+    if (!r.read_u64(out_bind.identity.runtime_id)) return false;
+    if (!r.read_u32(out_bind.identity.endpoint_id)) return false;
+    if (!r.read_u64(out_bind.control_epoch)) return false;
+    if (!r.read_u64(out_bind.lease_token)) return false;
+
+    if (r.remaining() != 0) {
+        return false; // Strict canonical framing: reject trailing garbage
+    }
+
+    return out_bind.is_valid();
 }
 
 } // namespace linep::v0_2

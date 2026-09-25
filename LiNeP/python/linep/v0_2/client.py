@@ -23,11 +23,13 @@ from linep.v0_2.envelopes import (
     EventEnvelope,
     ControlEnvelope,
     CapabilitiesEnvelope,
+    SessionBindEnvelope,
     encode_request,
     decode_event,
     encode_control,
     decode_capabilities,
     encode_capabilities,
+    encode_session_bind,
     decode_header,
 )
 
@@ -66,6 +68,11 @@ class LiNePClient:
 
     def is_connected(self) -> bool:
         return self._sock is not None
+
+    def send_session_bind(self, bind: SessionBindEnvelope) -> None:
+        """Send SessionBindEnvelope frame over TCP session."""
+        self.connect()
+        self._send_all(encode_session_bind(bind))
 
     def _send_all(self, data: bytes) -> None:
         if self._sock is None:

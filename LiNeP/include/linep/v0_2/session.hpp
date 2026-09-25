@@ -23,6 +23,14 @@ struct stream_identity_hash {
     }
 };
 
+class control_plane_router;
+
+enum class session_binding_state : std::uint8_t {
+    unbound = 0,
+    bound_current = 1,
+    bound_stale = 2,
+};
+
 struct session_limits {
     std::size_t max_inflight_streams{64};
     std::size_t max_buffered_bytes_per_stream{1U << 20}; // 1 MB
@@ -31,6 +39,7 @@ struct session_limits {
 struct session_descriptor {
     std::uint64_t session_id{0};
     session_limits limits{};
+    bool require_lease{false};
 };
 
 struct active_stream_state {
@@ -86,6 +95,15 @@ public:
     bool is_stream_terminal(const stream_identity& id) const;
     bool is_cancel_requested(const stream_identity& id) const;
 
+    // Dual-plane TCP session binding state & transitions
+    session_binding_state binding_state() const;
+    bool require_lease() const noexcept { return descriptor_.require_lease; }
+    void set_require_lease(bool require) noexcept { descriptor_.require_lease = require; }
+    bool process_session_bind(const session_bind_envelope& bind, runtime_error& out_err);
+    bool process_session_bind(const session_bind_envelope& bind, const control_plane_router* router, runtime_error& out_err);
+    void mark_binding_stale();
+    session_bind_envelope bound_session() const;
+
     // Fail-closed termination of all in-flight streams on connection disconnect / error
     std::size_t terminate_all_active_streams(terminal_outcome outcome = terminal_outcome::unknown, const runtime_error& err = {});
 
@@ -93,6 +111,8 @@ private:
     session_descriptor descriptor_;
     mutable std::mutex mutex_;
     std::unordered_map<stream_identity, active_stream_state, stream_identity_hash> active_streams_;
+    session_binding_state binding_state_{session_binding_state::unbound};
+    session_bind_envelope bound_bind_{};
 };
 
 } // namespace linep::v0_2

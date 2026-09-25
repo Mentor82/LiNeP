@@ -1,4 +1,5 @@
-﻿#include "linep/v0_2/mock_runtime.hpp"
+#include "linep/v0_2/mock_runtime.hpp"
+#include "linep/v0_2/control_plane.hpp"
 #include <chrono>
 #include <cmath>
 #include <iostream>
@@ -75,6 +76,7 @@ void mock_runtime_server::accept_loop() {
 void mock_runtime_server::client_loop(std::shared_ptr<envelope_connection> conn) {
     session_descriptor desc{};
     desc.limits.max_buffered_bytes_per_stream = config_.max_buffered_bytes_per_stream;
+    desc.require_lease = config_.require_lease;
     session_manager session(desc);
 
     std::vector<std::thread> workers;
@@ -97,16 +99,59 @@ void mock_runtime_server::client_loop(std::shared_ptr<envelope_connection> conn)
             break;
         }
 
-        if (hdr.envelope_type == static_cast<std::uint8_t>(runtime_envelope_type::request)) {
+        if (hdr.envelope_type == static_cast<std::uint8_t>(runtime_envelope_type::session_bind)) {
+            session_bind_envelope bind{};
+            if (!decode_session_bind(raw.data(), raw.size(), bind)) {
+                // Connection-level terminal EVENT (request_id=0, execution_id=0, output_id=0)
+                event_envelope fail_evt{};
+                fail_evt.stream = stream_identity{0, 0, 0};
+                fail_evt.event_seq = 1;
+                fail_evt.event_type = runtime_event_type::failed;
+                fail_evt.outcome = terminal_outcome::failed;
+                fail_evt.error.category = error_category::unauthorized;
+                fail_evt.error.code = 401;
+                fail_evt.error.message = "lease_invalid";
+                conn->send_event(fail_evt);
+                conn->close();
+                break;
+            }
+            runtime_error err{};
+            if (!session.process_session_bind(bind, router_, err)) {
+                event_envelope fail_evt{};
+                fail_evt.stream = stream_identity{0, 0, 0};
+                fail_evt.event_seq = 1;
+                fail_evt.event_type = runtime_event_type::failed;
+                fail_evt.outcome = terminal_outcome::failed;
+                fail_evt.error.category = err.category != error_category::none ? err.category : error_category::unauthorized;
+                fail_evt.error.code = err.code != 0 ? err.code : 401;
+                fail_evt.error.message = err.message.empty() ? "lease_invalid" : err.message;
+                conn->send_event(fail_evt);
+                conn->close();
+                break;
+            }
+        } else if (hdr.envelope_type == static_cast<std::uint8_t>(runtime_envelope_type::request)) {
             request_envelope req{};
             if (decode_request(raw.data(), raw.size(), req)) {
+                if (router_ != nullptr && session.binding_state() == session_binding_state::bound_current) {
+                    auto bound = session.bound_session();
+                    if (!router_->validate_tcp_session_binding(bound.identity, bound.control_epoch, bound.lease_token)) {
+                        session.mark_binding_stale();
+                    }
+                }
                 runtime_error err{};
                 if (session.submit_request(req, err)) {
                     workers.emplace_back(&mock_runtime_server::execute_stream, this, conn, std::ref(session), req);
                 } else {
-                    event_envelope fail_evt{req.stream, 1, runtime_event_type::failed, "Request rejected", terminal_outcome::failed};
-                    fail_evt.error.code = 400;
+                    event_envelope fail_evt{req.stream, 1, runtime_event_type::failed, err.message.empty() ? "Request rejected" : err.message, terminal_outcome::failed};
+                    fail_evt.error = err;
+                    if (fail_evt.error.code == 0) {
+                        fail_evt.error.code = 400;
+                    }
                     conn->send_event(fail_evt);
+                    if (config_.require_lease && session.binding_state() == session_binding_state::unbound) {
+                        conn->close();
+                        break;
+                    }
                 }
             }
         } else if (hdr.envelope_type == static_cast<std::uint8_t>(runtime_envelope_type::control)) {

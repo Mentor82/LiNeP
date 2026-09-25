@@ -280,6 +280,18 @@ int do_generate(const std::string& dir) {
     encode_control_datagram(udp_hb, udp_hb_buf);
     write_file(dir + "/udp_heartbeat_cpp.bin", udp_hb_buf);
 
+    // 14. TCP Data Plane: Session Bind Frame (Issue #15)
+    session_bind_envelope bind{};
+    bind.identity.node_id = 1001;
+    bind.identity.runtime_id = 2001;
+    bind.identity.endpoint_id = 1;
+    bind.control_epoch = 1;
+    bind.lease_token = 0xAABBCCDDEEFF0011ULL;
+    std::vector<std::uint8_t> bind_buf;
+    if (!encode_session_bind(bind, bind_buf) || !write_file(dir + "/session_bind_cpp.bin", bind_buf)) {
+        return 1;
+    }
+
     std::cout << "[C++ Golden Tool] Successfully generated all Reference Frames." << std::endl;
     return 0;
 }
@@ -457,6 +469,21 @@ int do_verify(const std::string& dir) {
     }
     std::cout << "  -> udp_heartbeat_go.bin: PASS" << std::endl;
 
+    // 13. Session Bind Frame (Issue #15)
+    if (!read_file(dir + "/session_bind_go.bin", buf)) return 1;
+    session_bind_envelope bind_go{};
+    if (!decode_session_bind(buf.data(), buf.size(), bind_go)) {
+        std::cerr << "C++ FAILED to decode Go session bind frame!" << std::endl;
+        return 1;
+    }
+    if (bind_go.identity.node_id != 8001 || bind_go.identity.runtime_id != 9001 ||
+        bind_go.identity.endpoint_id != 1 || bind_go.control_epoch != 1 ||
+        bind_go.lease_token != 0x9988776655443322ULL) {
+        std::cerr << "C++ session bind validation mismatch on Go frame!" << std::endl;
+        return 1;
+    }
+    std::cout << "  -> session_bind_go.bin: PASS" << std::endl;
+
     std::cout << "[C++ Golden Tool] ALL GO-GENERATED FRAMES (TCP & UDP) DECODED AND VERIFIED BY C++ CORE 100%!" << std::endl;
     return 0;
 }
@@ -593,7 +620,18 @@ int do_verify_cpp(const std::string& dir) {
     }
     std::cout << "  -> udp_heartbeat_cpp.bin: PASS" << std::endl;
 
-    std::cout << "[C++ Golden Tool] ALL 13 C++ REFERENCE FRAMES VERIFIED 100%!" << std::endl;
+    // 14. Session Bind Frame (Issue #15)
+    if (!read_file(dir + "/session_bind_cpp.bin", buf)) return 1;
+    session_bind_envelope bind{};
+    if (!decode_session_bind(buf.data(), buf.size(), bind) || bind.identity.node_id != 1001 ||
+        bind.identity.runtime_id != 2001 || bind.identity.endpoint_id != 1 ||
+        bind.control_epoch != 1 || bind.lease_token != 0xAABBCCDDEEFF0011ULL) {
+        std::cerr << "C++ verification failed on session_bind_cpp.bin!" << std::endl;
+        return 1;
+    }
+    std::cout << "  -> session_bind_cpp.bin: PASS" << std::endl;
+
+    std::cout << "[C++ Golden Tool] ALL 14 C++ REFERENCE FRAMES VERIFIED 100%!" << std::endl;
     return 0;
 }
 

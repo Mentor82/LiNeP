@@ -127,6 +127,15 @@ bool envelope_connection::send_capabilities(const capabilities_envelope& caps) {
     return send_bytes_locked(buf.data(), buf.size());
 }
 
+bool envelope_connection::send_session_bind(const session_bind_envelope& bind) {
+    std::vector<std::uint8_t> buf;
+    if (!encode_session_bind(bind, buf)) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(send_mutex_);
+    return send_bytes_locked(buf.data(), buf.size());
+}
+
 bool envelope_connection::send_frame_raw(const std::uint8_t* data, std::size_t len) {
     std::lock_guard<std::mutex> lock(send_mutex_);
     return send_bytes_locked(data, len);

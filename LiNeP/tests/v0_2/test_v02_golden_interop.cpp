@@ -160,6 +160,26 @@ void test_golden_frames_roundtrip() {
     LINEP_TEST_CHECK(decode_control_datagram(read_buf.data(), read_buf.size(), decoded_ack));
     LINEP_TEST_CHECK(decoded_ack.lease_token == 0xAABBCCDDEEFF0011ULL);
 
+    // 4. TCP Data Plane Session Bind Frame (Issue #15)
+    session_bind_envelope bind_env{};
+    bind_env.identity.node_id = 1001;
+    bind_env.identity.runtime_id = 2001;
+    bind_env.identity.endpoint_id = 1;
+    bind_env.control_epoch = 1;
+    bind_env.lease_token = 0xAABBCCDDEEFF0011ULL;
+
+    std::vector<std::uint8_t> bind_buf;
+    LINEP_TEST_CHECK(encode_session_bind(bind_env, bind_buf));
+    LINEP_TEST_CHECK(bind_buf.size() == 68); // 32 byte header + 36 byte canonical payload
+    LINEP_TEST_CHECK(write_file((temp_dir / "session_bind_cpp.bin").string(), bind_buf));
+
+    LINEP_TEST_CHECK(read_file((temp_dir / "session_bind_cpp.bin").string(), read_buf));
+    session_bind_envelope decoded_bind{};
+    LINEP_TEST_CHECK(decode_session_bind(read_buf.data(), read_buf.size(), decoded_bind));
+    LINEP_TEST_CHECK(decoded_bind.identity == bind_env.identity);
+    LINEP_TEST_CHECK(decoded_bind.control_epoch == 1);
+    LINEP_TEST_CHECK(decoded_bind.lease_token == 0xAABBCCDDEEFF0011ULL);
+
     fs::remove_all(temp_dir);
     std::cout << "  -> Golden Frames Generation & Verification PASSED" << std::endl;
 }

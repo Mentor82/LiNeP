@@ -25,6 +25,9 @@ from linep.v0_2 import (
     EmbeddingSpaceDescriptor,
     EmbeddingPayload,
     RuntimeErrorPayload,
+    SessionBindEnvelope,
+    NodeEndpointIdentity,
+    LINEP_V02_SESSION_BIND_PAYLOAD_SIZE,
     encode_header,
     decode_header,
     peek_envelope_type,
@@ -36,6 +39,8 @@ from linep.v0_2 import (
     decode_control,
     encode_capabilities,
     decode_capabilities,
+    encode_session_bind,
+    decode_session_bind,
 )
 
 
@@ -283,3 +288,80 @@ def test_request_envelope_with_generation_options():
     )
     with pytest.raises(ValueError, match="Duplicate"):
         encode_request(dup_req)
+
+
+def test_session_bind_envelope():
+    bind = SessionBindEnvelope(
+        identity=NodeEndpointIdentity(node_id=0x1122334455667788, runtime_id=0x8877665544332211, endpoint_id=42),
+        control_epoch=7,
+        lease_token=0xAABBCCDDEEFF0011,
+    )
+    assert bind.is_valid()
+
+    raw = encode_session_bind(bind)
+    assert len(raw) == LINEP_V02_HEADER_SIZE + LINEP_V02_SESSION_BIND_PAYLOAD_SIZE
+    assert peek_envelope_type(raw) == EnvelopeType.SESSION_BIND
+
+    decoded = decode_session_bind(raw)
+    assert decoded is not None
+    assert decoded.identity == bind.identity
+    assert decoded.control_epoch == 7
+    assert decoded.lease_token == 0xAABBCCDDEEFF0011
+
+    # Zero token invalid
+    zero_tok = SessionBindEnvelope(identity=bind.identity, control_epoch=1, lease_token=0)
+    assert not zero_tok.is_valid()
+    with pytest.raises(ValueError):
+        encode_session_bind(zero_tok)
+
+    # Tampered header checks:
+    # a) Non-zero request_id
+    bad_req_id = bytearray(raw)
+    bad_req_id[8] = 0x01
+    assert decode_session_bind(bytes(bad_req_id)) is None
+
+    # b) Non-zero execution_id
+    bad_exec_id = bytearray(raw)
+    bad_exec_id[16] = 0x01
+    assert decode_session_bind(bytes(bad_exec_id)) is None
+
+    # c) Non-zero output_id
+    bad_out_id = bytearray(raw)
+    bad_out_id[24] = 0x01
+    assert decode_session_bind(bytes(bad_out_id)) is None
+
+    # d) Non-zero flags
+    bad_flags = bytearray(raw)
+    bad_flags[6] = 0x01
+    assert decode_session_bind(bytes(bad_flags)) is None
+
+    # e) Wrong payload_len
+    bad_len = bytearray(raw)
+    bad_len[28] = 37
+    assert decode_session_bind(bytes(bad_len)) is None
+
+    # f) Trailing garbage bytes (exact size 68 bytes required)
+    trailing_raw = raw + b"\x00"
+    assert decode_session_bind(trailing_raw) is None
+
+    # Connection-level event (0, 0, 0)
+    conn_evt = EventEnvelope(
+        stream=StreamIdentity(0, 0, 0),
+        event_seq=1,
+        event_type=EventType.FAILED,
+        outcome=TerminalOutcome.FAILED,
+        error=RuntimeErrorPayload(
+            category=ErrorCategory.UNAUTHORIZED,
+            code=401,
+            message="lease_invalid",
+        ),
+    )
+    assert conn_evt.stream.is_connection_level()
+    assert conn_evt.is_valid()
+
+    evt_raw = encode_event(conn_evt)
+    dec_evt = decode_event(evt_raw)
+    assert dec_evt is not None
+    assert dec_evt.stream.is_connection_level()
+    assert dec_evt.error.code == 401
+    assert dec_evt.error.message == "lease_invalid"

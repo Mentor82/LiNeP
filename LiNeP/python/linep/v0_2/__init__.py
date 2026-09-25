@@ -29,6 +29,8 @@ from linep.v0_2.constants import (
     NodeAvailability,
     NodeHealth,
     NodeLifecycle,
+    SessionBindingState,
+    LINEP_V02_SESSION_BIND_PAYLOAD_SIZE,
 )
 from linep.v0_2.envelopes import (
     StreamIdentity,
@@ -42,6 +44,7 @@ from linep.v0_2.envelopes import (
     EmbeddingSpaceDescriptor,
     EmbeddingPayload,
     RuntimeErrorPayload,
+    SessionBindEnvelope,
     encode_header,
     decode_header,
     peek_envelope_type,
@@ -53,6 +56,8 @@ from linep.v0_2.envelopes import (
     decode_control,
     encode_capabilities,
     decode_capabilities,
+    encode_session_bind,
+    decode_session_bind,
 )
 from linep.v0_2.control_plane import (
     UdpControlDatagram,
@@ -92,6 +97,8 @@ __all__ = [
     "NodeAvailability",
     "NodeHealth",
     "NodeLifecycle",
+    "SessionBindingState",
+    "LINEP_V02_SESSION_BIND_PAYLOAD_SIZE",
     # Envelopes
     "StreamIdentity",
     "WireEnvelopeHeader",
@@ -104,6 +111,7 @@ __all__ = [
     "EmbeddingSpaceDescriptor",
     "EmbeddingPayload",
     "RuntimeErrorPayload",
+    "SessionBindEnvelope",
     "encode_header",
     "decode_header",
     "peek_envelope_type",
@@ -115,6 +123,8 @@ __all__ = [
     "decode_control",
     "encode_capabilities",
     "decode_capabilities",
+    "encode_session_bind",
+    "decode_session_bind",
     # Control Plane
     "UdpControlDatagram",
     "NodeEndpointIdentity",

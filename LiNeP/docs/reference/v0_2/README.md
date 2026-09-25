@@ -66,12 +66,50 @@ The reference data plane uses persistent TCP sessions with multiplexed logical r
 
 Top-level envelope families:
 
-- `RUNTIME_REQUEST`
-- `RUNTIME_EVENT`
-- `RUNTIME_CONTROL`
-- `RUNTIME_CAPABILITIES`
+- `RUNTIME_REQUEST` (1)
+- `RUNTIME_EVENT` (2)
+- `RUNTIME_CONTROL` (3)
+- `RUNTIME_CAPABILITIES` (4)
+- `SESSION_BIND` (5)
 
 `event_seq` describes logical runtime event ordering. It is not a TCP packet sequence, UDP `control_seq`, or transport fragment sequence.
+
+### Dual-Plane Session Handshake & Connection State Machine
+
+A persistent TCP data-plane connection binds to the UDP control-plane identity and active lease via the `SESSION_BIND` envelope (envelope type `5`, payload size exactly 36 bytes canonical little-endian: `node_id [8B] · runtime_id [8B] · endpoint_id [4B] · control_epoch [8B] · lease_token [8B]`). Stream IDs in the 32-byte header MUST be `(0, 0, 0)`.
+
+```text
+TCP CONNECT
+    │
+    ▼
+UNBOUND  ──[CAPABILITIES query/response allowed]
+    │
+    │ SESSION_BIND
+    ▼
+BOUND_CURRENT
+    ├── REQUEST (accepted & multiplexed)
+    ├── duplicate SESSION_BIND (idempotent no-op)
+    │
+    │ UDP lease rotation / epoch increment
+    ▼
+BOUND_STALE
+    ├── in-flight executions finish
+    ├── new REQUEST rejected (401 Unauthorized)
+    │
+    │ SESSION_BIND (new lease/epoch)
+    ▼
+BOUND_CURRENT
+```
+
+Key invariants:
+- **`REQUEST` MUST NOT be accepted while UNBOUND or BOUND_STALE**: Any `REQUEST` envelope received before a valid `SESSION_BIND` or during `BOUND_STALE` is rejected with 401 Unauthorized.
+- **Connection Persistence on Stale Requests**: While an `UNBOUND` request closes the connection, a `REQUEST` received during `BOUND_STALE` is rejected with 401 (`stale_binding`), but the **TCP connection MUST remain open**. This allows the client to immediately issue `SESSION_BIND(epoch+1, lease+1)` on the existing connection without reconnect overhead.
+- **Connection-Reassignment Prevention**: An established connection is bound to a single node endpoint identity `(node_id, runtime_id, endpoint_id)`. Any `SESSION_BIND` on an existing connection (`BOUND_CURRENT` or `BOUND_STALE`) specifying a different identity MUST be rejected with a terminal connection-level event `(0, 0, 0)` and code 401 (`identity_change_on_existing_connection`), followed by immediate socket closure.
+- **Connection-Level Events**: The stream identity tuple `(0, 0, 0)` (`request_id = 0, execution_id = 0, output_id = 0`) is **normatively reserved** for connection-level events (such as lease/binding failures). It MUST NOT be used for normal runtime task execution streams.
+- **Separation of Decode and Semantic Authorization**:
+  - `decode_session_bind()` performs purely syntactic validation (magic, versions, flags == 0, null stream IDs, exact 36-byte payload size).
+  - Semantic lease validity is performed via `validate_tcp_session_binding()` against the UDP control plane router state.
+- **Lease Token Semantics vs. Cryptographic Protection**: The 64-bit `lease_token` is an opaque handle and short-term lease identifier for logical dual-plane binding. It is **explicitly not a cryptographically strong bearer authentication secret**. Cryptographic authenticity, integrity, anti-replay, and confidential transport protection are provided exclusively by the LiNeP-SL security layer profiles.
 
 ## Control Plane
 
