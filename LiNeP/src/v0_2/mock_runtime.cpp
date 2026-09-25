@@ -108,9 +108,9 @@ void mock_runtime_server::client_loop(std::shared_ptr<envelope_connection> conn)
                 fail_evt.event_seq = 1;
                 fail_evt.event_type = runtime_event_type::failed;
                 fail_evt.outcome = terminal_outcome::failed;
-                fail_evt.error.category = error_category::unauthorized;
-                fail_evt.error.code = 401;
-                fail_evt.error.message = "lease_invalid";
+                fail_evt.error.category = error_category::bad_request;
+                fail_evt.error.code = 400;
+                fail_evt.error.message = "invalid_session_bind";
                 conn->send_event(fail_evt);
                 conn->close();
                 break;

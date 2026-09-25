@@ -21,6 +21,8 @@ from linep.v0_2 import (
     RequestEnvelope,
     EventEnvelope,
     SessionBindEnvelope,
+    encode_session_bind,
+    decode_session_bind,
     decode_event,
     LiNePMockServer,
     MockServerConfig,
@@ -343,6 +345,23 @@ def test_tcp_server_session_bind_lease_enforcement():
             assert evt.stream.is_connection_level() is True
             assert evt.error.code == 401
             assert evt.error.message == "lease_invalid"
+
+        # B2. Connection with SYNTACTICALLY MALFORMED SESSION_BIND (dirty flags): server emits 400 invalid_session_bind and disconnects
+        with LiNePClient(port=server.tcp_port) as client_malformed:
+            good_bind = SessionBindEnvelope(
+                identity=node_id,
+                control_epoch=1,
+                lease_token=lease_token,
+            )
+            malformed_bytes = bytearray(encode_session_bind(good_bind))
+            malformed_bytes[7] = 0x01  # dirty flags (byte 7) -> syntactic decode fails!
+            client_malformed._send_all(bytes(malformed_bytes))
+            raw_evt = client_malformed._recv_envelope()
+            evt = decode_event(raw_evt)
+            assert evt is not None
+            assert evt.stream.is_connection_level() is True
+            assert evt.error.code == 400
+            assert evt.error.message == "invalid_session_bind"
 
         # C. Connection with VALID SESSION_BIND + IDEMPOTENT DUPLICATE: succeeds and processes requests
         with LiNePClient(port=server.tcp_port) as client_valid:

@@ -233,6 +233,33 @@ int main() {
             LINEP_TEST_CHECK(term_evt.error.message == "lease_invalid");
         }
 
+        // 4.2b Malformed / Syntactically broken SESSION_BIND -> 400 invalid_session_bind & closed
+        {
+            auto conn = linep::v0_2::envelope_connection::connect("127.0.0.1", lease_port);
+            LINEP_TEST_CHECK(conn != nullptr);
+
+            linep::v0_2::session_bind_envelope valid_bind{};
+            valid_bind.identity = linep::v0_2::node_endpoint_identity{7001, 8001, 1};
+            valid_bind.control_epoch = 1;
+            valid_bind.lease_token = 0xC0FFEE1234ULL;
+            std::vector<std::uint8_t> malformed_buf;
+            linep::v0_2::encode_session_bind(valid_bind, malformed_buf);
+            malformed_buf[7] = 0x01; // dirty flags (byte 7) -> decode_session_bind fails!
+            LINEP_TEST_CHECK(conn->send_frame_raw(malformed_buf.data(), malformed_buf.size()));
+
+            std::vector<std::uint8_t> raw;
+            LINEP_TEST_CHECK(conn->receive_envelope_raw(raw));
+            linep::v0_2::event_envelope term_evt{};
+            LINEP_TEST_CHECK(linep::v0_2::decode_event(raw.data(), raw.size(), term_evt));
+            LINEP_TEST_CHECK(term_evt.stream.is_connection_level());
+            LINEP_TEST_CHECK(term_evt.error.category == linep::v0_2::error_category::bad_request);
+            LINEP_TEST_CHECK(term_evt.error.code == 400);
+            LINEP_TEST_CHECK(term_evt.error.message == "invalid_session_bind");
+
+            // Connection must be closed
+            LINEP_TEST_CHECK(!conn->receive_envelope_raw(raw));
+        }
+
         // 4.3 Valid Bind + Duplicate Bind (idempotent) + Successful REQUEST
         {
             auto conn = linep::v0_2::envelope_connection::connect("127.0.0.1", lease_port);

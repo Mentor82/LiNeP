@@ -191,9 +191,9 @@ class LiNePMockServer:
                             event_type=EventType.FAILED,
                             outcome=TerminalOutcome.FAILED,
                             error=RuntimeErrorPayload(
-                                category=ErrorCategory.UNAUTHORIZED,
-                                code=401,
-                                message="lease_invalid",
+                                category=ErrorCategory.BAD_REQUEST,
+                                code=400,
+                                message="invalid_session_bind",
                             ),
                         )
                         conn.sendall(encode_event(fail_evt))
