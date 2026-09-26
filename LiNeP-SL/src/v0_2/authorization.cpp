@@ -1,5 +1,6 @@
 #include <linep_sl/v0_2/authorization.hpp>
 #include <algorithm>
+#include <cmath>
 
 namespace linep::sl::v0_2 {
 
@@ -8,7 +9,12 @@ bool resource_identifier::is_valid() const noexcept {
 }
 
 bool resource_identifier::matches(const resource_identifier& target) const noexcept {
-    if (kind != target.kind && kind != resource_kind::system) {
+    // Explicit superuser grant: {system, "*"} grants universal administrative access across all resources.
+    // Documented normatively in SECURITY_CONTRACT.md.
+    if (kind == resource_kind::system && name == "*") {
+        return true;
+    }
+    if (kind != target.kind) {
         return false;
     }
     if (name == "*" || name == target.name) {
@@ -18,11 +24,11 @@ bool resource_identifier::matches(const resource_identifier& target) const noexc
 }
 
 void policy_authorizer::add_subject_policy(const subject_policy& policy) {
-    subject_policies_[policy.subject_id] = policy;
+    subject_policies_[subject_policy_key{policy.trust_domain_id, policy.subject_id}] = policy;
 }
 
 void policy_authorizer::add_role_policy(const role_policy& policy) {
-    role_policies_[policy.role_name] = policy;
+    role_policies_[role_policy_key{policy.trust_domain_id, policy.role_name}] = policy;
 }
 
 void policy_authorizer::clear_policies() noexcept {
@@ -86,14 +92,14 @@ authorization_decision policy_authorizer::authorize(const authorization_request&
         required_cap = required_cap | capability_flags::reasoning;
     }
 
-    // Aggregate capabilities and allowed resources across subject and roles
+    // Aggregate capabilities and allowed resources across subject and roles within caller's trust domain
     capability_flags effective_caps = capability_flags::none;
     std::vector<resource_identifier> effective_resources;
     execution_constraints effective_constraints{};
     bool policy_found = false;
 
-    auto sub_it = subject_policies_.find(req.subject_id);
-    if (sub_it != subject_policies_.end() && sub_it->second.trust_domain_id == req.trust_domain_id) {
+    auto sub_it = subject_policies_.find(subject_policy_key{req.trust_domain_id, req.subject_id});
+    if (sub_it != subject_policies_.end()) {
         policy_found = true;
         effective_caps = effective_caps | sub_it->second.capabilities;
         effective_resources.insert(
@@ -104,7 +110,7 @@ authorization_decision policy_authorizer::authorize(const authorization_request&
     }
 
     for (const auto& role_name : req.roles) {
-        auto role_it = role_policies_.find(role_name);
+        auto role_it = role_policies_.find(role_policy_key{req.trust_domain_id, role_name});
         if (role_it != role_policies_.end()) {
             policy_found = true;
             effective_caps = effective_caps | role_it->second.capabilities;
@@ -156,6 +162,11 @@ authorization_decision policy_authorizer::authorize(const authorization_request&
         return {authorization_outcome::deny, "resource_not_permitted", effective_caps, effective_constraints};
     }
 
+    // Hardening: Reject non-finite temperature values (NaN / Inf)
+    if (!std::isfinite(req.requested_temperature)) {
+        return {authorization_outcome::deny, "temperature_non_finite", effective_caps, effective_constraints};
+    }
+
     // Verify execution constraints
     if (effective_constraints.max_allowed_tokens > 0 &&
         req.requested_tokens > effective_constraints.max_allowed_tokens) {
@@ -191,17 +202,22 @@ bool policy_authorizer::validate_against_advertised_capabilities(
 
     if (req.action == security_action::execute) {
         if (req.resource.kind == resource_kind::model) {
-            bool model_supported = false;
-            for (const auto& m : advertised_caps.supported_models) {
-                if (m == req.resource.name) {
-                    model_supported = true;
-                    break;
+            // Normative rule (Hardening #6): If the runtime advertises a non-empty list of supported_models,
+            // the requested model must be explicitly supported. An empty list denotes a dynamic/wildcard backend
+            // (e.g. Ollama adapter supporting all locally available models).
+            if (!advertised_caps.supported_models.empty()) {
+                bool model_supported = false;
+                for (const auto& m : advertised_caps.supported_models) {
+                    if (m == req.resource.name) {
+                        model_supported = true;
+                        break;
+                    }
                 }
-            }
-            if (!model_supported) {
-                out_decision = {authorization_outcome::deny, "model_not_supported_by_runtime",
-                                out_decision.granted_capabilities, out_decision.effective_constraints};
-                return false;
+                if (!model_supported) {
+                    out_decision = {authorization_outcome::deny, "model_not_supported_by_runtime",
+                                    out_decision.granted_capabilities, out_decision.effective_constraints};
+                    return false;
+                }
             }
         }
 

@@ -37,7 +37,9 @@ enum class audit_event_type_v02 : std::uint8_t {
 };
 
 // Privacy-safe, tamper-evident audit record: zero raw secrets or confidential user payloads!
+// Includes monotonic audit_seq and cryptographic hash chaining (prev_record_digest)
 struct audit_record_v02 {
+    std::uint64_t audit_seq{0};
     std::uint64_t timestamp_us{0};
     audit_event_type_v02 event_type{audit_event_type_v02::authorization_denied};
     std::uint64_t session_id{0};
@@ -51,7 +53,9 @@ struct audit_record_v02 {
     std::string policy_id;
     std::uint32_t policy_revision{0};
     std::uint32_t federation_revision{0};
-    std::vector<std::uint8_t> payload_digest; // SHA-256 content digest only
+    std::vector<std::uint8_t> payload_digest;     // SHA-256 content digest only
+    std::vector<std::uint8_t> prev_record_digest; // Hash chaining: SHA-256 of previous audit record
+    std::vector<std::uint8_t> record_digest;      // Canonical SHA-256 digest of this record
 };
 
 class iaudit_sink_v02 {
@@ -106,10 +110,10 @@ public:
         std::uint32_t initial_policy_revision = 1,
         std::uint32_t initial_federation_revision = 1);
 
-    std::uint32_t local_trust_domain_id() const noexcept { return local_trust_domain_id_; }
-    const std::string& policy_id() const noexcept { return policy_id_; }
-    std::uint32_t policy_revision() const noexcept { return policy_revision_; }
-    std::uint32_t federation_revision() const noexcept { return federation_revision_; }
+    std::uint32_t local_trust_domain_id() const noexcept;
+    std::string policy_id() const;
+    std::uint32_t policy_revision() const noexcept;
+    std::uint32_t federation_revision() const noexcept;
 
     void set_trust_boundary_profile(trust_boundary_profile profile) noexcept;
     trust_boundary_profile current_profile() const noexcept;
@@ -119,18 +123,20 @@ public:
     void remove_federated_domain(std::uint32_t domain_id);
     bool is_federated_domain(std::uint32_t domain_id) const noexcept;
 
-    // Policy and federation lifecycle updates
-    void update_policy_revision(std::uint32_t new_revision, std::uint64_t now_us = 0);
-    void update_federation_revision(std::uint32_t new_revision, std::uint64_t now_us = 0);
+    // Monotonic policy and federation lifecycle updates (rejects backwards revisions)
+    bool update_policy_revision(std::uint32_t new_revision, std::uint64_t now_us = 0);
+    bool update_federation_revision(std::uint32_t new_revision, std::uint64_t now_us = 0);
 
     // Attestation and audit configuration
     void set_attestation_verifier(std::shared_ptr<attestation_verifier> verifier) noexcept;
     void add_audit_sink(std::shared_ptr<iaudit_sink_v02> sink);
 
     // Evaluate federation boundary admission for incoming peer or request
+    // Hardening: Enforces minimum security level per boundary profile and fails closed if verifier missing
     bool evaluate_federation_admission(
         std::uint32_t remote_trust_domain_id,
         std::uint64_t remote_subject_id,
+        security_level level,
         const attestation_evidence* evidence,
         std::uint64_t now_us,
         std::string& out_reason) noexcept;
@@ -156,6 +162,8 @@ private:
     trust_boundary_profile profile_{trust_boundary_profile::intranet_cluster};
 
     mutable std::mutex mutex_;
+    std::uint64_t audit_seq_counter_{0};
+    std::vector<std::uint8_t> last_audit_digest_;
     std::unordered_set<std::uint32_t> federated_domains_;
     std::shared_ptr<attestation_verifier> attestation_verifier_;
     std::vector<std::shared_ptr<iaudit_sink_v02>> audit_sinks_;

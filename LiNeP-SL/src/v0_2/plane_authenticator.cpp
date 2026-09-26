@@ -476,18 +476,20 @@ verification_status verify_control(
 
 verification_status validate_transport_session_binding(
     const session_record& security_session,
-    message_direction direction,
+    session_participant_role bound_role,
     const linep::v0_2::session_bind_envelope& transport_binding,
     std::uint64_t now_us) noexcept {
-    if (direction != message_direction::initiator_to_responder &&
-        direction != message_direction::responder_to_initiator) {
-        return verification_status::direction_mismatch;
+    if (bound_role != session_participant_role::initiator &&
+        bound_role != session_participant_role::responder) {
+        return verification_status::binding_invalid;
     }
 
-    if (security_session.state != session_state::active) {
-        return verification_status::session_inactive;
+    if (now_us == 0) {
+        return verification_status::session_inactive; // Fail-closed: timestamp required
     }
-    if (now_us != 0 && !security_session.is_active_at(now_us)) {
+
+    if (security_session.state != session_state::active ||
+        !security_session.is_active_at(now_us)) {
         return verification_status::session_inactive;
     }
 
@@ -495,13 +497,13 @@ verification_status validate_transport_session_binding(
         return verification_status::binding_invalid;
     }
 
-    const auto& expected_peer = (direction == message_direction::initiator_to_responder)
+    const auto& expected_peer = (bound_role == session_participant_role::initiator)
         ? security_session.initiator
         : security_session.responder;
-    const auto expected_epoch = (direction == message_direction::initiator_to_responder)
+    const auto expected_epoch = (bound_role == session_participant_role::initiator)
         ? security_session.initiator_control_epoch
         : security_session.responder_control_epoch;
-    const auto expected_lease = (direction == message_direction::initiator_to_responder)
+    const auto expected_lease = (bound_role == session_participant_role::initiator)
         ? security_session.initiator_lease_token
         : security_session.responder_lease_token;
 

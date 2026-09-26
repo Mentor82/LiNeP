@@ -103,18 +103,51 @@ struct authorization_decision {
 };
 
 struct subject_policy {
-    std::uint64_t subject_id{0};
     std::uint32_t trust_domain_id{0};
+    std::uint64_t subject_id{0};
     capability_flags capabilities{capability_flags::none};
     std::vector<resource_identifier> allowed_resources;
     execution_constraints constraints;
 };
 
 struct role_policy {
+    std::uint32_t trust_domain_id{0};
     std::string role_name;
     capability_flags capabilities{capability_flags::none};
     std::vector<resource_identifier> allowed_resources;
     execution_constraints constraints;
+};
+
+struct subject_policy_key {
+    std::uint32_t trust_domain_id{0};
+    std::uint64_t subject_id{0};
+
+    bool operator==(const subject_policy_key& o) const noexcept {
+        return trust_domain_id == o.trust_domain_id && subject_id == o.subject_id;
+    }
+};
+
+struct subject_policy_key_hash {
+    std::size_t operator()(const subject_policy_key& k) const noexcept {
+        return (std::hash<std::uint32_t>{}(k.trust_domain_id) * 31) ^
+               std::hash<std::uint64_t>{}(k.subject_id);
+    }
+};
+
+struct role_policy_key {
+    std::uint32_t trust_domain_id{0};
+    std::string role_name;
+
+    bool operator==(const role_policy_key& o) const noexcept {
+        return trust_domain_id == o.trust_domain_id && role_name == o.role_name;
+    }
+};
+
+struct role_policy_key_hash {
+    std::size_t operator()(const role_policy_key& k) const noexcept {
+        return (std::hash<std::uint32_t>{}(k.trust_domain_id) * 31) ^
+               std::hash<std::string>{}(k.role_name);
+    }
 };
 
 class policy_authorizer {
@@ -135,8 +168,8 @@ public:
         authorization_decision& out_decision) const noexcept;
 
 private:
-    std::unordered_map<std::uint64_t, subject_policy> subject_policies_;
-    std::unordered_map<std::string, role_policy> role_policies_;
+    std::unordered_map<subject_policy_key, subject_policy, subject_policy_key_hash> subject_policies_;
+    std::unordered_map<role_policy_key, role_policy, role_policy_key_hash> role_policies_;
 };
 
 } // namespace linep::sl::v0_2

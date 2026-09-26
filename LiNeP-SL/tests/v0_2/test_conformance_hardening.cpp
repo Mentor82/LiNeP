@@ -6,10 +6,20 @@
 #include <linep_sl/v0_2/security_contract.hpp>
 #include <linep_sl/v0_2/session.hpp>
 
-#include <cassert>
+#include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <vector>
+
+#define LINEP_SL_TEST_CHECK(cond) \
+    do { \
+        if (!(cond)) { \
+            std::cerr << "TEST FAILED: " #cond " at " << __FILE__ << ":" << __LINE__ << std::endl; \
+            std::abort(); \
+        } \
+    } while (0)
 
 using namespace linep::sl::v0_2;
 
@@ -62,6 +72,14 @@ std::vector<std::uint8_t> make_conformance_key() {
     };
 }
 
+std::string bytes_to_hex(const std::vector<std::uint8_t>& bytes) {
+    std::ostringstream oss;
+    for (auto b : bytes) {
+        oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(b);
+    }
+    return oss.str();
+}
+
 } // namespace
 
 void test_cross_layer_full_pipeline() {
@@ -71,16 +89,21 @@ void test_cross_layer_full_pipeline() {
     auto key = make_conformance_key();
     std::uint64_t now_us = 2000000;
 
-    // 1. Core TCP SESSION_BIND validation (Issue #15 & #16)
+    // 1. Core TCP SESSION_BIND validation (Issue #15, #16, #17)
     linep::v0_2::session_bind_envelope bind_env;
     bind_env.identity = session.initiator.endpoint;
     bind_env.control_epoch = session.initiator_control_epoch;
     bind_env.lease_token = session.initiator_lease_token;
-    assert(bind_env.is_valid());
+    LINEP_SL_TEST_CHECK(bind_env.is_valid());
 
-    assert(validate_transport_session_binding(
-        session, message_direction::initiator_to_responder,
+    LINEP_SL_TEST_CHECK(validate_transport_session_binding(
+        session, session_participant_role::initiator,
         bind_env, now_us) == verification_status::ok);
+
+    // Fail-closed on now_us == 0
+    LINEP_SL_TEST_CHECK(validate_transport_session_binding(
+        session, session_participant_role::initiator,
+        bind_env, 0) == verification_status::session_inactive);
 
     // 2. Policy Authorizer setup (Phase D / SL3)
     policy_authorizer authorizer;
@@ -106,8 +129,8 @@ void test_cross_layer_full_pipeline() {
     auth_req.streaming_requested = true;
 
     authorization_decision auth_dec;
-    assert(authorizer.validate_against_advertised_capabilities(auth_req, rt_caps, auth_dec));
-    assert(auth_dec.is_allowed());
+    LINEP_SL_TEST_CHECK(authorizer.validate_against_advertised_capabilities(auth_req, rt_caps, auth_dec));
+    LINEP_SL_TEST_CHECK(auth_dec.is_allowed());
 
     // 4. Governance Engine & Audit Sink setup (Phase E / SL4)
     governance_engine gov(1, "linep-gov-v02", 1, 1);
@@ -126,12 +149,12 @@ void test_cross_layer_full_pipeline() {
     linep::v0_2::encode_request(req_env, req_raw);
 
     std::vector<std::uint8_t> req_tag;
-    assert(sign_request(
+    LINEP_SL_TEST_CHECK(sign_request(
         session, key, message_direction::initiator_to_responder,
         security_level::sl3_authorized, security_action::execute,
         req_env, req_raw, req_tag));
 
-    assert(verify_request(
+    LINEP_SL_TEST_CHECK(verify_request(
         session, key, message_direction::initiator_to_responder,
         security_level::sl3_authorized, security_action::execute,
         req_env, req_raw, req_tag, now_us) == verification_status::ok);
@@ -160,19 +183,19 @@ void test_cross_layer_full_pipeline() {
         linep::v0_2::encode_event(evt, evt_raw);
 
         std::vector<std::uint8_t> evt_tag;
-        assert(sign_event(
+        LINEP_SL_TEST_CHECK(sign_event(
             session, key, message_direction::responder_to_initiator,
             security_level::sl3_authorized, security_action::emit_output,
             evt, evt_raw, 0, false, evt_tag));
 
-        assert(verify_event(
+        LINEP_SL_TEST_CHECK(verify_event(
             session, key, message_direction::responder_to_initiator,
             security_level::sl3_authorized, security_action::emit_output,
             evt, evt_raw, 0, false, evt_tag,
             stream_tracker, now_us) == verification_status::ok);
     }
 
-    assert(audit_sink->size() == 1);
+    LINEP_SL_TEST_CHECK(audit_sink->size() == 1);
     std::cout << "  -> Cross-Layer Full Pipeline PASSED" << std::endl;
 }
 
@@ -194,34 +217,222 @@ void test_golden_vectors_and_canonical_invariants() {
     cp_bind.lease_token = 0xC0FFEE;
     cp_bind.lease_bound = true;
 
-    assert(cp_bind.is_valid());
+    LINEP_SL_TEST_CHECK(cp_bind.is_valid());
 
     std::vector<std::uint8_t> canonical_bytes;
-    assert(encode_authenticator_input(cp_bind, canonical_bytes));
+    LINEP_SL_TEST_CHECK(encode_authenticator_input(cp_bind, canonical_bytes));
     // Verify domain separator 'LNS2'
-    assert(canonical_bytes.size() > 4);
-    assert(canonical_bytes[0] == 'L' && canonical_bytes[1] == 'N' &&
-           canonical_bytes[2] == 'S' && canonical_bytes[3] == '2');
+    LINEP_SL_TEST_CHECK(canonical_bytes.size() > 4);
+    LINEP_SL_TEST_CHECK(canonical_bytes[0] == 'L' && canonical_bytes[1] == 'N' &&
+                        canonical_bytes[2] == 'S' && canonical_bytes[3] == '2');
 
     // Tampered canonical input fails verification
     auto key = make_conformance_key();
     auto auth = create_authenticator(crypto_suite::hmac_sha256_128);
-    assert(auth != nullptr);
+    LINEP_SL_TEST_CHECK(auth != nullptr);
 
     std::vector<std::uint8_t> sig;
-    assert(auth->sign(canonical_bytes, key, sig));
-    assert(auth->verify(canonical_bytes, key, sig));
+    LINEP_SL_TEST_CHECK(auth->sign(canonical_bytes, key, sig));
+    LINEP_SL_TEST_CHECK(auth->verify(canonical_bytes, key, sig));
 
     // 1-bit corruption in canonical input fails verification
     std::vector<std::uint8_t> corrupted_bytes = canonical_bytes;
     corrupted_bytes[10] ^= 0x01;
-    assert(!auth->verify(corrupted_bytes, key, sig));
+    LINEP_SL_TEST_CHECK(!auth->verify(corrupted_bytes, key, sig));
 
     std::cout << "  -> Canonical Golden Vectors PASSED" << std::endl;
 }
 
+void test_cross_language_concrete_golden_vectors() {
+    std::cout << "[Test 3] Concrete Cross-Language Golden Vectors..." << std::endl;
+
+    // Fixed session parameters
+    session_record session = create_conformance_session(12345, security_level::sl2_identity, crypto_suite::hmac_sha256_128);
+    auto key = make_conformance_key();
+
+    // Deterministic Control Datagram
+    linep::v0_2::udp_control_datagram dgram;
+    dgram.magic = linep::v0_2::LINEP_V02_UDP_MAGIC;
+    dgram.version_major = 0;
+    dgram.version_minor = 2;
+    dgram.message_type = static_cast<std::uint8_t>(linep::v0_2::control_message_type::node_hello);
+    dgram.flags = 0x01;
+    dgram.node_id = 10;
+    dgram.runtime_id = 100;
+    dgram.endpoint_id = 1;
+    dgram.control_epoch = 1;
+    dgram.control_seq = 100;
+    dgram.lease_token = 0xAA11BB22CC33DD44ULL;
+    dgram.tcp_port = 9000;
+
+    std::vector<std::uint8_t> tag;
+    LINEP_SL_TEST_CHECK(sign_control_datagram(
+        session, key, message_direction::initiator_to_responder,
+        security_level::sl2_identity, security_action::advertise,
+        dgram, tag));
+
+    LINEP_SL_TEST_CHECK(tag.size() == 16); // HMAC-SHA256-128 is 16 bytes
+    std::string tag_hex = bytes_to_hex(tag);
+    LINEP_SL_TEST_CHECK(!tag_hex.empty());
+
+    // Deterministic Negotiation Transcript
+    negotiation_offer init_offer;
+    init_offer.minimum_level = security_level::sl1_authenticated;
+    init_offer.maximum_level = security_level::sl1_authenticated;
+    init_offer.supported_suites = {crypto_suite::hmac_sha256_128};
+    init_offer.endpoint = {1, 10, 100};
+    init_offer.control_epoch = 1;
+    init_offer.lease_token = 0x11223344;
+    init_offer.nonce.fill(0xAA);
+
+    negotiation_offer resp_offer = init_offer;
+    resp_offer.endpoint = {2, 20, 200};
+    resp_offer.nonce.fill(0xBB);
+
+    negotiation_result res;
+    res.status = negotiation_status::accepted;
+    res.required_level = security_level::sl1_authenticated;
+    res.negotiated_level = security_level::sl1_authenticated;
+    res.suite = crypto_suite::hmac_sha256_128;
+
+    std::vector<std::uint8_t> transcript;
+    LINEP_SL_TEST_CHECK(encode_negotiation_transcript(init_offer, resp_offer, res, transcript));
+    // Golden prefix must be LNS2NEG
+    LINEP_SL_TEST_CHECK(transcript.size() >= 7);
+    LINEP_SL_TEST_CHECK(std::string(transcript.begin(), transcript.begin() + 7) == "LNS2NEG");
+
+    std::cout << "  -> Cross-Language Concrete Golden Vectors PASSED (tag=" << tag_hex << ")" << std::endl;
+}
+
+void test_active_stream_policy_revision_update() {
+    std::cout << "[Test 4] Active-Stream Dynamic Policy Revision Monotonic Updates..." << std::endl;
+
+    governance_engine gov(1, "policy-conformance", 1, 1);
+    auto sink = std::make_shared<in_memory_audit_sink_v02>();
+    gov.add_audit_sink(sink);
+
+    auto session = create_conformance_session();
+    auto key = make_conformance_key();
+    std::uint64_t now_us = 2000000;
+    monotonic_stream_tracker tracker;
+
+    // Event 1 during revision 1
+    linep::v0_2::event_envelope evt1;
+    evt1.stream = {10, 20, 0};
+    evt1.event_seq = 1;
+    evt1.payload = "msg 1";
+    std::vector<std::uint8_t> raw1;
+    linep::v0_2::encode_event(evt1, raw1);
+    std::vector<std::uint8_t> tag1;
+    LINEP_SL_TEST_CHECK(sign_event(
+        session, key, message_direction::responder_to_initiator,
+        security_level::sl2_identity, security_action::emit_output,
+        evt1, raw1, 0, false, tag1));
+    LINEP_SL_TEST_CHECK(verify_event(
+        session, key, message_direction::responder_to_initiator,
+        security_level::sl2_identity, security_action::emit_output,
+        evt1, raw1, 0, false, tag1, tracker, now_us) == verification_status::ok);
+
+    // Monotonically bump policy revision mid-stream from 1 to 2
+    LINEP_SL_TEST_CHECK(gov.update_policy_revision(2, now_us + 100));
+    LINEP_SL_TEST_CHECK(gov.policy_revision() == 2);
+
+    // Monotonic enforcement: regression or duplicate rejected
+    LINEP_SL_TEST_CHECK(!gov.update_policy_revision(2, now_us + 200));
+    LINEP_SL_TEST_CHECK(!gov.update_policy_revision(1, now_us + 300));
+    LINEP_SL_TEST_CHECK(gov.policy_revision() == 2);
+
+    // Event 2 during revision 2 succeeds
+    linep::v0_2::event_envelope evt2;
+    evt2.stream = {10, 20, 0};
+    evt2.event_seq = 2;
+    evt2.payload = "msg 2";
+    std::vector<std::uint8_t> raw2;
+    linep::v0_2::encode_event(evt2, raw2);
+    std::vector<std::uint8_t> tag2;
+    LINEP_SL_TEST_CHECK(sign_event(
+        session, key, message_direction::responder_to_initiator,
+        security_level::sl2_identity, security_action::emit_output,
+        evt2, raw2, 0, false, tag2));
+    LINEP_SL_TEST_CHECK(verify_event(
+        session, key, message_direction::responder_to_initiator,
+        security_level::sl2_identity, security_action::emit_output,
+        evt2, raw2, 0, false, tag2, tracker, now_us + 500) == verification_status::ok);
+
+    std::cout << "  -> Active-Stream Policy Revision Update PASSED" << std::endl;
+}
+
+void test_malformed_fuzzed_inputs() {
+    std::cout << "[Test 5] Malformed & Fuzzed Inputs Robustness..." << std::endl;
+
+    auto session = create_conformance_session();
+    auto key = make_conformance_key();
+    sliding_replay_window win;
+    std::uint64_t now_us = 2000000;
+
+    // 1. Truncated or empty tag
+    linep::v0_2::udp_control_datagram dgram;
+    dgram.magic = linep::v0_2::LINEP_V02_UDP_MAGIC;
+    dgram.node_id = 1;
+    dgram.runtime_id = 1;
+    dgram.endpoint_id = 1;
+    dgram.control_epoch = 1;
+    dgram.control_seq = 1;
+    std::vector<std::uint8_t> empty_tag;
+    LINEP_SL_TEST_CHECK(verify_control_datagram(
+        session, key, message_direction::initiator_to_responder,
+        security_level::sl2_identity, security_action::advertise,
+        dgram, empty_tag, win, now_us) == verification_status::signature_invalid);
+
+    // 1b. Structurally invalid datagram (control_epoch == 0) -> binding_invalid
+    auto bad_epoch_dgram = dgram;
+    bad_epoch_dgram.control_epoch = 0;
+    LINEP_SL_TEST_CHECK(verify_control_datagram(
+        session, key, message_direction::initiator_to_responder,
+        security_level::sl2_identity, security_action::advertise,
+        bad_epoch_dgram, empty_tag, win, now_us) == verification_status::binding_invalid);
+
+    // 2. Out-of-range security action enum
+    std::vector<std::uint8_t> tag;
+    LINEP_SL_TEST_CHECK(!sign_control_datagram(
+        session, key, message_direction::initiator_to_responder,
+        security_level::sl2_identity, static_cast<security_action>(255),
+        dgram, tag));
+
+    // 3. Out-of-range message direction
+    LINEP_SL_TEST_CHECK(!sign_control_datagram(
+        session, key, static_cast<message_direction>(255),
+        security_level::sl2_identity, security_action::advertise,
+        dgram, tag));
+
+    // 4. Malformed session bind envelope (node_id = 0)
+    linep::v0_2::session_bind_envelope bad_bind;
+    bad_bind.identity = {0, 100, 1};
+    bad_bind.control_epoch = 1;
+    bad_bind.lease_token = 12345;
+    LINEP_SL_TEST_CHECK(validate_transport_session_binding(
+        session, session_participant_role::initiator,
+        bad_bind, now_us) == verification_status::binding_invalid);
+
+    // 5. Zero timestamp fails closed
+    linep::v0_2::session_bind_envelope valid_bind;
+    valid_bind.identity = session.initiator.endpoint;
+    valid_bind.control_epoch = session.initiator_control_epoch;
+    valid_bind.lease_token = session.initiator_lease_token;
+    LINEP_SL_TEST_CHECK(validate_transport_session_binding(
+        session, session_participant_role::initiator,
+        valid_bind, 0) == verification_status::session_inactive);
+
+    // 6. Unknown bound role fails closed
+    LINEP_SL_TEST_CHECK(validate_transport_session_binding(
+        session, static_cast<session_participant_role>(0),
+        valid_bind, now_us) == verification_status::binding_invalid);
+
+    std::cout << "  -> Malformed & Fuzzed Inputs Robustness PASSED" << std::endl;
+}
+
 void test_active_stream_revocation_fail_closed() {
-    std::cout << "[Test 3] Active-Stream Revocation & Fail-Closed Invariants..." << std::endl;
+    std::cout << "[Test 6] Active-Stream Revocation & Fail-Closed Invariants..." << std::endl;
 
     auto session = create_conformance_session();
     auto key = make_conformance_key();
@@ -237,13 +448,13 @@ void test_active_stream_revocation_fail_closed() {
     std::vector<std::uint8_t> raw1;
     linep::v0_2::encode_event(evt1, raw1);
     std::vector<std::uint8_t> tag1;
-    assert(sign_event(
+    LINEP_SL_TEST_CHECK(sign_event(
         session, key, message_direction::responder_to_initiator,
         security_level::sl2_identity, security_action::emit_output,
         evt1, raw1, 0, false, tag1));
 
     // Seq 1 succeeds
-    assert(verify_event(
+    LINEP_SL_TEST_CHECK(verify_event(
         session, key, message_direction::responder_to_initiator,
         security_level::sl2_identity, security_action::emit_output,
         evt1, raw1, 0, false, tag1, tracker, now_us) == verification_status::ok);
@@ -259,7 +470,7 @@ void test_active_stream_revocation_fail_closed() {
     std::vector<std::uint8_t> raw2;
     linep::v0_2::encode_event(evt2, raw2);
     std::vector<std::uint8_t> tag2;
-    assert(sign_event(
+    LINEP_SL_TEST_CHECK(sign_event(
         session, key, message_direction::responder_to_initiator,
         security_level::sl2_identity, security_action::emit_output,
         evt2, raw2, 0, false, tag2));
@@ -269,7 +480,7 @@ void test_active_stream_revocation_fail_closed() {
         session, key, message_direction::responder_to_initiator,
         security_level::sl2_identity, security_action::emit_output,
         evt2, raw2, 0, false, tag2, tracker, now_us);
-    assert(status == verification_status::session_inactive);
+    LINEP_SL_TEST_CHECK(status == verification_status::session_inactive);
 
     std::cout << "  -> Active-Stream Revocation Fail-Closed PASSED" << std::endl;
 }
@@ -278,6 +489,9 @@ int main() {
     std::cout << "=== LiNeP-SL V0.2 Phase F Conformance & Hardening Test Suite ===" << std::endl;
     test_cross_layer_full_pipeline();
     test_golden_vectors_and_canonical_invariants();
+    test_cross_language_concrete_golden_vectors();
+    test_active_stream_policy_revision_update();
+    test_malformed_fuzzed_inputs();
     test_active_stream_revocation_fail_closed();
     std::cout << "ALL PHASE F CONFORMANCE & HARDENING TESTS PASSED 100%!" << std::endl;
     return 0;

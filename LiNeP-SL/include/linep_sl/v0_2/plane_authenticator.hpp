@@ -29,6 +29,12 @@ enum class verification_status : std::uint8_t {
     endpoint_mismatch = 11,
 };
 
+enum class session_participant_role : std::uint8_t {
+    unknown = 0,
+    initiator = 1,
+    responder = 2,
+};
+
 // High-level helper functions for UDP Control Plane message protection
 bool sign_control_datagram(
     const session_record& session,
@@ -119,11 +125,13 @@ verification_status verify_control(
     const std::vector<std::uint8_t>& tag,
     std::uint64_t now_us) noexcept;
 
-// Issue #16: Bind authenticated LiNeP-SL security session to TCP SESSION_BIND identity and lease
+// Issue #16 & #17: Bind authenticated LiNeP-SL security session to TCP SESSION_BIND identity and lease
+// Note: Transport binding is validated against the specified participant role on the TCP connection,
+// allowing bidirectional traffic over that bound connection once validated.
 verification_status validate_transport_session_binding(
     const session_record& security_session,
-    message_direction direction,
+    session_participant_role bound_role,
     const linep::v0_2::session_bind_envelope& transport_binding,
-    std::uint64_t now_us = 0) noexcept;
+    std::uint64_t now_us) noexcept;
 
 } // namespace linep::sl::v0_2

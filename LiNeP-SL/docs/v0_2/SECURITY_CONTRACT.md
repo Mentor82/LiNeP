@@ -123,17 +123,22 @@ Lifecycle states are `pending`, `active`, `expired`, `revoked`, and `closed`.
 Phase B manages contract state only; key derivation, proof verification,
 authenticator generation, and replay windows remain Phase C work.
 
-## TCP Data Plane Session Binding (Issue #16)
+## TCP Data Plane Session Binding (Issues #16 & #17)
 
-For protected Data Plane operation, the authenticated LiNeP-SL endpoint incarnation MUST match the active LiNeP V0.2 `SESSION_BIND` of the underlying TCP connection. Endpoint identity, `control_epoch`, and `lease_token` mismatches MUST fail closed.
+For protected Data Plane operation, the authenticated LiNeP-SL endpoint incarnation for the bound connection participant role (`initiator` or `responder`) MUST match the active LiNeP V0.2 `SESSION_BIND` of the underlying TCP connection. Endpoint identity, `control_epoch`, and `lease_token` mismatches MUST fail closed.
 
 Formally:
 
 ```text
-SL_authenticated_endpoint == TCP_bound_endpoint
-SL_control_epoch          == TCP_bound_control_epoch
-SL_lease_token            == TCP_bound_lease_token
+SL_authenticated_endpoint(bound_role) == TCP_bound_endpoint
+SL_control_epoch(bound_role)          == TCP_bound_control_epoch
+SL_lease_token(bound_role)            == TCP_bound_lease_token
 ```
 
-A mismatch in any field MUST fail closed. An old SL session MUST NOT be used to authenticate a newly bound endpoint incarnation unless its security contract explicitly validates the new binding.
+A mismatch in any field MUST fail closed. Once validated for the bound role, bidirectional traffic (`initiator_to_responder` and `responder_to_initiator`) may proceed over that connection. An old SL session MUST NOT be used to authenticate a newly bound endpoint incarnation unless its security contract explicitly validates the new binding.
+
+## Superuser Wildcard Grant (`{system, "*"}`)
+
+In `linep::sl::v0_2`, resource matching strictly enforces matching resource kinds (`model`, `embedding_space`, `tool`, `runtime`). The sole exception is the explicit administrative superuser grant `{resource_kind::system, "*"}`: a policy granting `{system, "*"}` is recognized normatively as a universal grant permitted across all resource kinds for trusted cluster administrative principals.
+
 
