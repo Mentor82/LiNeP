@@ -100,5 +100,16 @@ set_target_properties(test_sl_v02_conformance_hardening PROPERTIES
 )
 add_test(NAME test_sl_v02_conformance_hardening COMMAND test_sl_v02_conformance_hardening)
 
+add_executable(benchmark_sl_v02_profiles
+    test_benchmark_profiles.cpp
+)
+target_link_libraries(benchmark_sl_v02_profiles PRIVATE linep_sl_v02)
+set_target_properties(benchmark_sl_v02_profiles PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME benchmark_sl_v02_profiles COMMAND benchmark_sl_v02_profiles)
+
+
 
 

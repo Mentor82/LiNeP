@@ -1,0 +1,48 @@
+{
+  "contract_version": "0.2",
+  "domain_separators": {
+    "canonical_binding": "LNS2",
+    "negotiation_transcript": "LNS2NEG"
+  },
+  "vectors": [
+    {
+      "name": "control_plane_hello_sl2",
+      "plane": "control",
+      "direction": "initiator_to_responder",
+      "negotiated_level": "sl2_identity",
+      "required_level": "sl2_identity",
+      "action": "advertise",
+      "suite": "hmac_sha256_128",
+      "session_id": 12345,
+      "security_epoch": 1,
+      "key_id": 101,
+      "trust_domain_id": 1,
+      "subject_id": 501,
+      "endpoint": {
+        "node_id": 10,
+        "runtime_id": 100,
+        "endpoint_id": 1
+      },
+      "control_epoch": 1,
+      "control_seq": 100,
+      "lease_token": "0xAA11BB22CC33DD44",
+      "key_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "hmac_sha256_128_tag_hex": "bb4364bf0cdf4043f7d6a0df67cb9910"
+    },
+    {
+      "name": "negotiation_transcript_sl1",
+      "prefix": "LNS2NEG",
+      "initiator_endpoint": {"node_id": 1, "runtime_id": 10, "endpoint_id": 100},
+      "responder_endpoint": {"node_id": 2, "runtime_id": 20, "endpoint_id": 200},
+      "negotiated_level": "sl1_authenticated",
+      "required_level": "sl1_authenticated",
+      "suite": "hmac_sha256_128",
+      "status": "accepted"
+    },
+    {
+      "name": "audit_record_genesis_chain",
+      "genesis_prev_record_digest_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "hash_algorithm": "SHA-256"
+    }
+  ]
+}
