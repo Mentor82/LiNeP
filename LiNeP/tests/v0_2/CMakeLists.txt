@@ -25,3 +25,4 @@ linep_v02_add_test(test_v02_lifecycle_cancel_backpressure   test_v02_lifecycle_c
 linep_v02_add_test(test_v02_conformance                    test_v02_conformance.cpp)
 linep_v02_add_test(test_v02_udp_control_plane              test_v02_udp_control_plane.cpp)
 linep_v02_add_test(test_v02_golden_interop                 test_v02_golden_interop.cpp)
+linep_v02_add_test(test_v02_lease                          test_v02_lease.cpp)

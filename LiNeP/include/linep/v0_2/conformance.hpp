@@ -8,6 +8,7 @@
 #include "linep/v0_2/runtime_types.hpp"
 #include "linep/v0_2/envelopes.hpp"
 #include "linep/v0_2/transport.hpp"
+#include "linep/v0_2/lease.hpp"
 
 namespace linep::v0_2 {
 
@@ -42,12 +43,22 @@ struct conformance_report {
 class conformance_runner {
 public:
     explicit conformance_runner(std::string host, std::uint16_t port);
+    ~conformance_runner();
+
+    // UDP control plane (lease issuer) of the endpoint. When set, every suite
+    // connection is bound with SESSION_BIND and run_all() adds the dual-plane suites.
+    void set_control_endpoint(std::string host, std::uint16_t port);
+    bool has_control_endpoint() const noexcept { return control_port_ != 0; }
 
     // Run all standardized LiNeP V0.2 conformance test suites
     conformance_report run_all();
 
     // Run conformance for a specific profile (generate, chat, embed)
     conformance_report run_profile(runtime_profile profile);
+
+    // Run only the dual-plane SESSION_BIND suites (needs a control endpoint and an
+    // endpoint that requires leases)
+    conformance_report run_dual_plane();
 
     // Standardized test suites:
     test_result test_capabilities_handshake();
@@ -60,11 +71,25 @@ public:
     test_result test_content_snapshot_mode();
     test_result test_multi_output_streams();
 
+    // Dual-plane SESSION_BIND suites (lease-enforcing endpoint):
+    test_result test_dual_plane_bind_before_lease_ack();
+    test_result test_dual_plane_duplicate_bind();
+    test_result test_dual_plane_unbound_request();
+    test_result test_dual_plane_stale_rebind();
+    test_result test_dual_plane_identity_change();
+    test_result test_dual_plane_malformed_bind();
+
 private:
     std::unique_ptr<envelope_connection> create_connection();
+    std::unique_ptr<lease_client> make_lease_client() const;
+    bool ensure_lease(std::string& out_error);
+    void run_dual_plane_suites(conformance_report& rep);
 
     std::string host_;
     std::uint16_t port_;
+    std::string control_host_;
+    std::uint16_t control_port_{0};
+    std::unique_ptr<lease_client> lease_;
 };
 
 } // namespace linep::v0_2
