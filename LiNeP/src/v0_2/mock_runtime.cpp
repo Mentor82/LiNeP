@@ -208,7 +208,9 @@ void mock_runtime_server::execute_stream(std::shared_ptr<envelope_connection> co
 
 void mock_runtime_server::execute_single_output(std::shared_ptr<envelope_connection> conn, session_manager& session, const request_envelope& req, output_id_t output_id) {
     stream_identity stream_id = req.stream;
-    stream_id.output_id = output_id;
+    // Outputs are numbered from the requested output_id, so a single-output
+    // stream keeps the identity the session registered (and cancels match).
+    stream_id.output_id = req.stream.output_id + output_id;
 
     std::uint64_t seq = 1;
     runtime_error err{};
@@ -228,7 +230,7 @@ void mock_runtime_server::execute_single_output(std::shared_ptr<envelope_connect
         std::size_t batch_size = (config_.batch_embed_count > 0) ? config_.batch_embed_count : 1;
         for (std::size_t b = 0; b < batch_size; ++b) {
             stream_identity batch_stream = stream_id;
-            batch_stream.output_id = static_cast<output_id_t>(b);
+            batch_stream.output_id = static_cast<output_id_t>(stream_id.output_id + b);
 
             event_envelope emb_evt{batch_stream, seq++, runtime_event_type::embedding_result};
             emb_evt.embedding.space.embedding_space_id = config_.embedding_space_id;
