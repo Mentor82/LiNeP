@@ -208,7 +208,9 @@ void mock_runtime_server::execute_stream(std::shared_ptr<envelope_connection> co
 
 void mock_runtime_server::execute_single_output(std::shared_ptr<envelope_connection> conn, session_manager& session, const request_envelope& req, output_id_t output_id) {
     stream_identity stream_id = req.stream;
-    stream_id.output_id = output_id;
+    // Outputs are numbered from the requested output_id, so a single-output
+    // stream keeps the identity the session registered (and cancels match).
+    stream_id.output_id = req.stream.output_id + output_id;
 
     std::uint64_t seq = 1;
     runtime_error err{};
