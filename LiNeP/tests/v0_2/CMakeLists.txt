@@ -26,3 +26,4 @@ linep_v02_add_test(test_v02_conformance                    test_v02_conformance.
 linep_v02_add_test(test_v02_udp_control_plane              test_v02_udp_control_plane.cpp)
 linep_v02_add_test(test_v02_golden_interop                 test_v02_golden_interop.cpp)
 linep_v02_add_test(test_v02_lease                          test_v02_lease.cpp)
+linep_v02_add_test(test_v02_mock_output_id                 test_v02_mock_output_id.cpp)
