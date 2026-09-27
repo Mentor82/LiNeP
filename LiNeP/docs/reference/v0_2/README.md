@@ -111,6 +111,28 @@ Key invariants:
   - Semantic lease validity is performed via `validate_tcp_session_binding()` against the UDP control plane router state.
 - **Lease Token Semantics vs. Cryptographic Protection**: The 64-bit `lease_token` is an opaque handle and short-term lease identifier for logical dual-plane binding. It is **explicitly not a cryptographically strong bearer authentication secret**. Cryptographic authenticity, integrity, anti-replay, and confidential transport protection are provided exclusively by the LiNeP-SL security layer profiles.
 
+### Client handshake (`lease_client`)
+
+`include/linep/v0_2/lease.hpp` implements the client (node role) side so trunk clients do not re-implement it:
+
+```cpp
+lease_client_config cfg{};
+cfg.control_host = "192.168.178.160"; // lease issuer UDP control port (IPv4)
+cfg.control_port = 9001;
+cfg.trunk_port   = 9000;              // advertised in NODE_HELLO / LEASE_ACK
+lease_client lease(cfg);              // random identity, wall-clock control epoch
+lease.acquire();                      // NODE_HELLO -> INVITE -> LEASE_ACK (+ delivery probe)
+lease.start_keepalive();              // HEARTBEATs keep the lease from expiring
+auto conn = connect_bound("192.168.178.160", 9000, lease); // TCP + SESSION_BIND
+// on a stream EVENT with is_stale_binding_event(evt): lease.renew(); lease.bind(*conn); retry
+```
+
+- `NODE_HELLO` is retransmitted every `retransmit_ms` until an INVITE arrives.
+- `LEASE_ACK` has no reply. The client probes with a same-epoch `NODE_HELLO`: a re-sent INVITE means the ACK was lost and it is re-sent, silence means the lease is active.
+- `renew()` opens a new incarnation (higher `control_epoch`) with a fresh lease; existing connections re-bind in-band with `bind()`.
+
+`lease_issuer` is the matching scheduler side (UDP listener around `control_plane_router`); `linep-v02-mock-runtime --udp-port P --require-lease` uses it, and `linep-v02-conformance --control host:P` exercises it (`dual_plane` profile).
+
 ## Control Plane
 
 The reference control plane uses an 80-byte UDP control datagram with strict semantic validation. The normative lifecycle is:
@@ -125,7 +147,7 @@ UNKNOWN → SEEN → INVITED → ACTIVE
 Key invariants:
 
 - only `NODE_HELLO` may introduce an unknown node;
-- `INVITE` is scheduler→node and can only be issued from `SEEN`;
+- `INVITE` is scheduler→node and can only be issued from `SEEN`; a same-epoch `NODE_HELLO` of an `INVITED` node gets the same INVITE (same lease) again, so a lost INVITE or LEASE_ACK is recovered by retransmitting `NODE_HELLO`;
 - `LEASE_ACK` requires the invited state, matching non-zero lease token, and a ready TCP trunk;
 - inbound node→scheduler `INVITE` and `PING` are rejected;
 - stale/lower epochs are rejected;

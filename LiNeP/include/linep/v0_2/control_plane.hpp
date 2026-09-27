@@ -122,6 +122,9 @@ public:
     // Issue an INVITE with a lease token to a SEEN node
     bool issue_invite(const node_endpoint_identity& id, std::uint64_t lease_token, udp_control_datagram& out_invite_dgram);
 
+    // Re-send the INVITE of a node that is still INVITED in control_epoch (lost INVITE or LEASE_ACK); same lease
+    bool reissue_invite(const node_endpoint_identity& id, std::uint64_t control_epoch, udp_control_datagram& out_invite_dgram);
+
     // Ingest incoming UDP control datagram with normative message-type dispatch & privileges
     bool ingest_datagram(const udp_control_datagram& dgram, std::uint64_t current_time_us);
 

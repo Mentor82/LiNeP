@@ -23,7 +23,7 @@ bool session_manager::submit_request(const request_envelope& req, runtime_error&
         if (binding_state_ == session_binding_state::bound_stale) {
             out_err.category = error_category::unauthorized;
             out_err.code = 401;
-            out_err.message = "Binding is STALE: control epoch or lease rotated, re-bind required before new REQUEST";
+            out_err.message = "stale_binding: control epoch or lease rotated, re-bind required before new REQUEST";
             return false;
         }
     }

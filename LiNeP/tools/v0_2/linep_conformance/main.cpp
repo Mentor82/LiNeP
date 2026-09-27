@@ -13,7 +13,10 @@ static void print_usage(const char* prog) {
               << "Usage: " << prog << " [OPTIONS]\n\n"
               << "Options:\n"
               << "  --endpoint <host:port>    Target LiNeP endpoint (default: 127.0.0.1:11435)\n"
-              << "  --profile <name>          Profile to verify: generate, chat, embed, all (default: all)\n"
+              << "  --control <host:port>     UDP control plane (lease issuer) of the endpoint; every suite\n"
+              << "                            binds with SESSION_BIND and 'all' adds the dual-plane suites\n"
+              << "  --profile <name>          Profile to verify: generate, chat, embed, dual_plane, all (default: all)\n"
+              << "                            dual_plane needs --control and an endpoint that requires leases\n"
               << "  --json                    Output report in JSON format\n"
               << "  --output-report <file>    Write report to specified file path\n"
               << "  --help, -h                Show this help message\n";
@@ -106,6 +109,7 @@ int main(int argc, char* argv[]) {
     std::string profile_str = "all";
     bool json_output = false;
     std::string report_file;
+    std::string control;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -114,6 +118,8 @@ int main(int argc, char* argv[]) {
             return 0;
         } else if (arg == "--endpoint" && i + 1 < argc) {
             endpoint = argv[++i];
+        } else if (arg == "--control" && i + 1 < argc) {
+            control = argv[++i];
         } else if (arg == "--profile" && i + 1 < argc) {
             profile_str = argv[++i];
         } else if (arg == "--json") {
@@ -135,6 +141,15 @@ int main(int argc, char* argv[]) {
     }
 
     conformance_runner runner(host, port);
+    if (!control.empty()) {
+        std::string control_host;
+        std::uint16_t control_port = 0;
+        if (!parse_endpoint(control, control_host, control_port) || control.find(':') == std::string::npos) {
+            std::cerr << "Invalid control endpoint format: " << control << " (expected host:port)\n";
+            return 1;
+        }
+        runner.set_control_endpoint(control_host, control_port);
+    }
     conformance_report rep{};
 
     if (profile_str == "all") {
@@ -145,8 +160,14 @@ int main(int argc, char* argv[]) {
         rep = runner.run_profile(runtime_profile::chat);
     } else if (profile_str == "embed") {
         rep = runner.run_profile(runtime_profile::embed);
+    } else if (profile_str == "dual_plane") {
+        if (!runner.has_control_endpoint()) {
+            std::cerr << "--profile dual_plane needs --control <host:port>\n";
+            return 1;
+        }
+        rep = runner.run_dual_plane();
     } else {
-        std::cerr << "Unknown profile: " << profile_str << " (expected: generate, chat, embed, all)\n";
+        std::cerr << "Unknown profile: " << profile_str << " (expected: generate, chat, embed, dual_plane, all)\n";
         return 1;
     }
 

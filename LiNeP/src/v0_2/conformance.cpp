@@ -9,8 +9,40 @@ conformance_runner::conformance_runner(std::string host, std::uint16_t port)
     : host_(std::move(host)), port_(port) {
 }
 
+conformance_runner::~conformance_runner() = default;
+
+void conformance_runner::set_control_endpoint(std::string host, std::uint16_t port) {
+    control_host_ = std::move(host);
+    control_port_ = port;
+    lease_.reset();
+}
+
+std::unique_ptr<lease_client> conformance_runner::make_lease_client() const {
+    lease_client_config cfg{};
+    cfg.control_host = control_host_;
+    cfg.control_port = control_port_;
+    cfg.trunk_port = port_;
+    return std::make_unique<lease_client>(cfg);
+}
+
+bool conformance_runner::ensure_lease(std::string& out_error) {
+    if (lease_ && lease_->is_active()) {
+        return true;
+    }
+    lease_ = make_lease_client();
+    return lease_->acquire(&out_error);
+}
+
 std::unique_ptr<envelope_connection> conformance_runner::create_connection() {
-    return envelope_connection::connect(host_, port_);
+    if (!has_control_endpoint()) {
+        return envelope_connection::connect(host_, port_);
+    }
+    std::string err;
+    if (!ensure_lease(err)) {
+        std::cerr << "[conformance] lease acquisition failed: " << err << std::endl;
+        return nullptr;
+    }
+    return connect_bound(host_, port_, *lease_);
 }
 
 conformance_report conformance_runner::run_all() {
@@ -61,7 +93,50 @@ conformance_report conformance_runner::run_all() {
     p_emb.conformant = (r_caps.passed && r_emb.passed && r_fail.passed);
     rep.profiles.push_back(p_emb);
 
+    if (has_control_endpoint()) {
+        run_dual_plane_suites(rep);
+    }
+
     return rep;
+}
+
+conformance_report conformance_runner::run_dual_plane() {
+    conformance_report rep{};
+    rep.target_endpoint = host_ + ":" + std::to_string(port_);
+    run_dual_plane_suites(rep);
+    return rep;
+}
+
+void conformance_runner::run_dual_plane_suites(conformance_report& rep) {
+    profile_conformance_status p_dual{};
+    p_dual.profile = runtime_profile::unspecified;
+    p_dual.profile_name = "PROFILE_DUAL_PLANE";
+    p_dual.conformant = true;
+
+    auto run_test = [&](test_result res) {
+        rep.total_tests++;
+        if (res.passed) {
+            rep.passed_tests++;
+            p_dual.passed_suites.push_back(res.test_name);
+        } else {
+            rep.failed_tests++;
+            p_dual.failed_suites.push_back(res.test_name);
+            p_dual.conformant = false;
+        }
+        rep.results.push_back(res);
+    };
+
+    if (!has_control_endpoint()) {
+        run_test(test_result{"DUAL_PLANE_CONTROL_ENDPOINT", false, "No UDP control endpoint configured", 0});
+    } else {
+        run_test(test_dual_plane_bind_before_lease_ack());
+        run_test(test_dual_plane_duplicate_bind());
+        run_test(test_dual_plane_unbound_request());
+        run_test(test_dual_plane_stale_rebind());
+        run_test(test_dual_plane_identity_change());
+        run_test(test_dual_plane_malformed_bind());
+    }
+    rep.profiles.push_back(p_dual);
 }
 
 conformance_report conformance_runner::run_profile(runtime_profile profile) {
@@ -70,7 +145,8 @@ conformance_report conformance_runner::run_profile(runtime_profile profile) {
     filtered.target_endpoint = full.target_endpoint;
 
     for (const auto& p : full.profiles) {
-        if (p.profile == profile) {
+        // The dual-plane profile gates every profile once a control endpoint is set
+        if (p.profile == profile || p.profile_name == "PROFILE_DUAL_PLANE") {
             filtered.profiles.push_back(p);
         }
     }
@@ -541,6 +617,299 @@ test_result conformance_runner::test_multi_output_streams() {
     res.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
     res.passed = true;
     res.details = "Multi-output streaming verified (" + std::to_string(events) + " events received)";
+    return res;
+}
+
+// ── Dual-plane SESSION_BIND suites ──────────────────────────────────────────
+
+namespace {
+
+std::uint64_t elapsed_ms(std::chrono::steady_clock::time_point t0) {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count());
+}
+
+bool next_event(envelope_connection& conn, event_envelope& out_evt) {
+    std::vector<std::uint8_t> raw;
+    if (!conn.receive_envelope_raw(raw)) {
+        return false;
+    }
+    out_evt = event_envelope{};
+    return decode_event(raw.data(), raw.size(), out_evt);
+}
+
+// The peer closes the connection without sending further frames
+bool expect_closed(envelope_connection& conn) {
+    std::vector<std::uint8_t> raw;
+    for (int i = 0; i < 64; ++i) {
+        if (!conn.receive_envelope_raw(raw)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Send a REQUEST and read its stream up to the terminal event
+bool run_request(envelope_connection& conn, const stream_identity& id, event_envelope& out_terminal, std::string& out_error) {
+    request_envelope req{id, runtime_profile::chat, "linep-conformance-model-v02", "Dual-plane request"};
+    if (!conn.send_request(req)) {
+        out_error = "Failed to send request";
+        return false;
+    }
+    event_envelope evt{};
+    while (next_event(conn, evt)) {
+        if (evt.stream.is_connection_level() && evt.is_terminal()) {
+            out_error = "Connection-level " + std::to_string(evt.error.code) + " " + evt.error.message;
+            return false;
+        }
+        if (evt.stream == id && evt.is_terminal()) {
+            out_terminal = evt;
+            return true;
+        }
+    }
+    out_error = "Connection closed before a terminal event";
+    return false;
+}
+
+std::string describe(const event_envelope& evt) {
+    return std::string(evt.stream.is_connection_level() ? "connection-level " : "stream ") +
+           std::to_string(evt.error.code) + " '" + evt.error.message + "'";
+}
+
+bool is_connection_failure(const event_envelope& evt, std::uint32_t code, const std::string& message) {
+    return evt.stream.is_connection_level() &&
+           evt.event_type == runtime_event_type::failed &&
+           evt.error.code == code &&
+           evt.error.message == message;
+}
+
+} // anonymous namespace
+
+test_result conformance_runner::test_dual_plane_bind_before_lease_ack() {
+    auto t0 = std::chrono::steady_clock::now();
+    test_result res{"DUAL_PLANE_BIND_BEFORE_LEASE_ACK", false, "", 0};
+
+    auto early = make_lease_client();
+    std::string err;
+    if (!early->request_invite(&err)) {
+        res.details = err;
+        return res;
+    }
+    auto conn = envelope_connection::connect(host_, port_);
+    if (!conn || !early->bind(*conn)) {
+        res.details = "Failed to connect or send SESSION_BIND";
+        return res;
+    }
+
+    event_envelope evt{};
+    if (!next_event(*conn, evt) || !is_connection_failure(evt, 401, "lease_invalid")) {
+        res.details = "Expected connection-level 401 lease_invalid for an INVITED (un-ACKed) lease";
+        return res;
+    }
+    if (!expect_closed(*conn)) {
+        res.details = "Connection stayed open after lease_invalid";
+        return res;
+    }
+
+    res.duration_ms = elapsed_ms(t0);
+    res.passed = true;
+    res.details = "Bind before LEASE_ACK rejected with 401 lease_invalid and closed";
+    return res;
+}
+
+test_result conformance_runner::test_dual_plane_duplicate_bind() {
+    auto t0 = std::chrono::steady_clock::now();
+    test_result res{"DUAL_PLANE_DUPLICATE_BIND", false, "", 0};
+
+    std::string err;
+    if (!ensure_lease(err)) {
+        res.details = err;
+        return res;
+    }
+    auto conn = connect_bound(host_, port_, *lease_);
+    if (!conn || !lease_->bind(*conn)) {
+        res.details = "Failed to connect or send duplicate SESSION_BIND";
+        return res;
+    }
+
+    event_envelope term{};
+    if (!run_request(*conn, stream_identity{201, 2001, 0}, term, err)) {
+        res.details = "Duplicate bind was not a no-op: " + err;
+        return res;
+    }
+    if (term.outcome != terminal_outcome::completed) {
+        res.details = "Request after duplicate bind did not complete: " + describe(term);
+        return res;
+    }
+
+    res.duration_ms = elapsed_ms(t0);
+    res.passed = true;
+    res.details = "Duplicate SESSION_BIND is an idempotent no-op";
+    return res;
+}
+
+test_result conformance_runner::test_dual_plane_unbound_request() {
+    auto t0 = std::chrono::steady_clock::now();
+    test_result res{"DUAL_PLANE_UNBOUND_REQUEST", false, "", 0};
+
+    auto conn = envelope_connection::connect(host_, port_);
+    if (!conn) {
+        res.details = "Failed to connect";
+        return res;
+    }
+    stream_identity id{202, 2002, 0};
+    request_envelope req{id, runtime_profile::chat, "linep-conformance-model-v02", "Unbound request"};
+    if (!conn->send_request(req)) {
+        res.details = "Failed to send request";
+        return res;
+    }
+
+    event_envelope evt{};
+    if (!next_event(*conn, evt)) {
+        res.details = "Connection closed without a 401 event";
+        return res;
+    }
+    if (evt.stream != id || evt.event_type != runtime_event_type::failed || evt.error.code != 401) {
+        res.details = "Expected stream 401 for an UNBOUND REQUEST, got " + describe(evt) +
+                      " (does the endpoint require leases?)";
+        return res;
+    }
+    if (!expect_closed(*conn)) {
+        res.details = "Connection stayed open after an UNBOUND REQUEST";
+        return res;
+    }
+
+    res.duration_ms = elapsed_ms(t0);
+    res.passed = true;
+    res.details = "UNBOUND REQUEST rejected with 401 and closed";
+    return res;
+}
+
+test_result conformance_runner::test_dual_plane_stale_rebind() {
+    auto t0 = std::chrono::steady_clock::now();
+    test_result res{"DUAL_PLANE_STALE_REBIND", false, "", 0};
+
+    // Own identity: the epoch change must not disturb the shared lease
+    auto lease = make_lease_client();
+    std::string err;
+    if (!lease->acquire(&err)) {
+        res.details = err;
+        return res;
+    }
+    auto conn = connect_bound(host_, port_, *lease);
+    if (!conn) {
+        res.details = "Failed to connect and bind";
+        return res;
+    }
+
+    event_envelope term{};
+    if (!run_request(*conn, stream_identity{203, 2003, 0}, term, err) || term.outcome != terminal_outcome::completed) {
+        res.details = "Bound request did not complete: " + (err.empty() ? describe(term) : err);
+        return res;
+    }
+
+    // New incarnation: the existing binding turns stale
+    if (!lease->renew(&err)) {
+        res.details = err;
+        return res;
+    }
+    stream_identity stale_id{204, 2004, 0};
+    if (!run_request(*conn, stale_id, term, err)) {
+        res.details = "Stale REQUEST: " + err;
+        return res;
+    }
+    if (!is_stale_binding_event(term)) {
+        res.details = "Expected stream 401 stale_binding after an epoch change, got " + describe(term);
+        return res;
+    }
+
+    // In-band re-bind on the same connection
+    if (!lease->bind(*conn)) {
+        res.details = "Connection closed after stale_binding (must stay open)";
+        return res;
+    }
+    if (!run_request(*conn, stream_identity{205, 2005, 0}, term, err) || term.outcome != terminal_outcome::completed) {
+        res.details = "Request after in-band re-bind did not complete: " + (err.empty() ? describe(term) : err);
+        return res;
+    }
+
+    res.duration_ms = elapsed_ms(t0);
+    res.passed = true;
+    res.details = "Epoch change -> 401 stale_binding on an open connection, in-band re-bind served";
+    return res;
+}
+
+test_result conformance_runner::test_dual_plane_identity_change() {
+    auto t0 = std::chrono::steady_clock::now();
+    test_result res{"DUAL_PLANE_IDENTITY_CHANGE", false, "", 0};
+
+    std::string err;
+    if (!ensure_lease(err)) {
+        res.details = err;
+        return res;
+    }
+    auto other = make_lease_client();
+    if (!other->acquire(&err)) {
+        res.details = err;
+        return res;
+    }
+    auto conn = connect_bound(host_, port_, *lease_);
+    if (!conn || !other->bind(*conn)) {
+        res.details = "Failed to connect or send the second SESSION_BIND";
+        return res;
+    }
+
+    event_envelope evt{};
+    if (!next_event(*conn, evt) || !is_connection_failure(evt, 401, "identity_change_on_existing_connection")) {
+        res.details = "Expected connection-level 401 identity_change_on_existing_connection";
+        return res;
+    }
+    if (!expect_closed(*conn)) {
+        res.details = "Connection stayed open after an identity change";
+        return res;
+    }
+
+    res.duration_ms = elapsed_ms(t0);
+    res.passed = true;
+    res.details = "Identity change on a bound connection rejected with 401 and closed";
+    return res;
+}
+
+test_result conformance_runner::test_dual_plane_malformed_bind() {
+    auto t0 = std::chrono::steady_clock::now();
+    test_result res{"DUAL_PLANE_MALFORMED_BIND", false, "", 0};
+
+    std::string err;
+    if (!ensure_lease(err)) {
+        res.details = err;
+        return res;
+    }
+    std::vector<std::uint8_t> frame;
+    if (!encode_session_bind(lease_->current_bind(), frame)) {
+        res.details = "Failed to encode SESSION_BIND";
+        return res;
+    }
+    frame[7] = 0x01; // reserved header flags must be zero
+
+    auto conn = envelope_connection::connect(host_, port_);
+    if (!conn || !conn->send_frame_raw(frame.data(), frame.size())) {
+        res.details = "Failed to connect or send malformed SESSION_BIND";
+        return res;
+    }
+
+    event_envelope evt{};
+    if (!next_event(*conn, evt) || !is_connection_failure(evt, 400, "invalid_session_bind")) {
+        res.details = "Expected connection-level 400 invalid_session_bind";
+        return res;
+    }
+    if (!expect_closed(*conn)) {
+        res.details = "Connection stayed open after a malformed SESSION_BIND";
+        return res;
+    }
+
+    res.duration_ms = elapsed_ms(t0);
+    res.passed = true;
+    res.details = "Malformed SESSION_BIND rejected with 400 and closed";
     return res;
 }
 

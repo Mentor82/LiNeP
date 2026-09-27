@@ -201,6 +201,31 @@ bool control_plane_router::issue_invite(const node_endpoint_identity& id, std::u
     return true;
 }
 
+bool control_plane_router::reissue_invite(const node_endpoint_identity& id, std::uint64_t control_epoch, udp_control_datagram& out_invite_dgram) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = nodes_.find(id);
+    if (it == nodes_.end()) {
+        return false;
+    }
+
+    auto& node = it->second;
+    if (node.state != control_node_lifecycle::invited ||
+        node.active_lease_token == 0 ||
+        node.last_control_epoch != control_epoch) {
+        return false;
+    }
+
+    out_invite_dgram = {};
+    out_invite_dgram.node_id = id.node_id;
+    out_invite_dgram.runtime_id = id.runtime_id;
+    out_invite_dgram.endpoint_id = id.endpoint_id;
+    out_invite_dgram.control_epoch = node.last_control_epoch;
+    out_invite_dgram.control_seq = ++node.last_outbound_seq;
+    out_invite_dgram.message_type = static_cast<std::uint8_t>(control_message_type::invite);
+    out_invite_dgram.lease_token = node.active_lease_token;
+    return true;
+}
+
 bool control_plane_router::ingest_datagram(const udp_control_datagram& dgram, std::uint64_t current_time_us) {
     if (dgram.node_id == 0) {
         return false;
