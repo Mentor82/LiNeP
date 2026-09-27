@@ -79,6 +79,9 @@ int main() {
         }
         LINEP_TEST_CHECK(cancelled);
         LINEP_TEST_CHECK(events < cfg.default_tokens); // stopped early, not run to completion
+        // Close the client first: on Linux, stop() cannot interrupt a server
+        // thread blocked in recv() on a connection that is still open.
+        conn->close();
         server.stop();
         std::cout << "[PASS] generate: requested output_id kept, CANCEL takes effect" << std::endl;
     }
@@ -106,6 +109,9 @@ int main() {
         }
         LINEP_TEST_CHECK(vectors == 1);
         LINEP_TEST_CHECK(events.back().event_type == runtime_event_type::completed);
+        // Close the client first: on Linux, stop() cannot interrupt a server
+        // thread blocked in recv() on a connection that is still open.
+        conn->close();
         server.stop();
         std::cout << "[PASS] embed: vector under the requested output_id" << std::endl;
     }
@@ -134,6 +140,9 @@ int main() {
         }
         LINEP_TEST_CHECK((outputs == std::set<output_id_t>{2, 3, 4}));
         LINEP_TEST_CHECK(events.back().stream == id);
+        // Close the client first: on Linux, stop() cannot interrupt a server
+        // thread blocked in recv() on a connection that is still open.
+        conn->close();
         server.stop();
         std::cout << "[PASS] embed batch: outputs 2, 3, 4 for requested output_id 2" << std::endl;
     }
