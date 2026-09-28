@@ -391,6 +391,12 @@ bool session_manager::process_session_bind(const session_bind_envelope& bind, co
     }
 
     if (bind.sl1_requested) {
+        if (bind.auth_ext.auth_seq != 1) {
+            out_err.category = error_category::unauthorized;
+            out_err.code = 401;
+            out_err.message = "auth_replay: bind auth_seq must be 1";
+            return false;
+        }
         if (descriptor_.sl1_keys.empty()) {
             out_err.category = error_category::unauthorized;
             out_err.code = 401;
@@ -412,12 +418,6 @@ bool session_manager::process_session_bind(const session_bind_envelope& bind, co
                 out_err.message = "unknown_key: key_id outside rotation window";
                 return false;
             }
-        }
-        if (bind.auth_ext.auth_seq != 1) {
-            out_err.category = error_category::unauthorized;
-            out_err.code = 401;
-            out_err.message = "auth_invalid: bind auth_seq must be 1";
-            return false;
         }
     }
 

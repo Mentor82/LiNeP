@@ -529,8 +529,30 @@ void test_sl1_session_state_machine() {
     LINEP_TEST_CHECK(!mgr.process_session_bind(sl1_bind, err));
     LINEP_TEST_CHECK(err.code == 401);
 
+    // Rule: SL1 bind with auth_seq != 1 must be rejected (401 auth_replay) (Issue #26)
+    session_bind_envelope replay_bind = sl1_bind;
+    replay_bind.auth_ext.auth_seq = 42;
+    LINEP_TEST_CHECK(!mgr.process_session_bind(replay_bind, err));
+    LINEP_TEST_CHECK(err.category == error_category::unauthorized);
+    LINEP_TEST_CHECK(err.code == 401);
+    LINEP_TEST_CHECK(err.message.find("auth_replay") != std::string::npos);
+
+    session_bind_envelope zero_seq_bind = sl1_bind;
+    zero_seq_bind.auth_ext.auth_seq = 0;
+    LINEP_TEST_CHECK(!mgr.process_session_bind(zero_seq_bind, err));
+    LINEP_TEST_CHECK(err.category == error_category::unauthorized);
+    LINEP_TEST_CHECK(err.code == 401);
+    LINEP_TEST_CHECK(err.message.find("auth_replay") != std::string::npos);
+
     // Add key and re-bind (Client -> Server: auth_seq = 1 on bind)
     LINEP_TEST_CHECK(mgr.add_sl1_key(1, secret_key_1));
+
+    // Even with keys present, auth_seq != 1 must be rejected as auth_replay
+    LINEP_TEST_CHECK(!mgr.process_session_bind(replay_bind, err));
+    LINEP_TEST_CHECK(err.category == error_category::unauthorized);
+    LINEP_TEST_CHECK(err.code == 401);
+    LINEP_TEST_CHECK(err.message.find("auth_replay") != std::string::npos);
+
     LINEP_TEST_CHECK(mgr.process_session_bind(sl1_bind, err));
     LINEP_TEST_CHECK(mgr.is_sl1_active());
 

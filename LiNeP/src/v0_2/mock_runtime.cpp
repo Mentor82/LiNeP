@@ -140,6 +140,19 @@ void mock_runtime_server::client_loop(std::shared_ptr<envelope_connection> conn)
 
             // If bind requested SL1, verify MAC and key before binding
             if (bind.sl1_requested) {
+                if (bind.auth_ext.auth_seq != 1) {
+                    event_envelope fail_evt{};
+                    fail_evt.stream = stream_identity{0, 0, 0};
+                    fail_evt.event_seq = 1;
+                    fail_evt.event_type = runtime_event_type::failed;
+                    fail_evt.outcome = terminal_outcome::failed;
+                    fail_evt.error.category = error_category::unauthorized;
+                    fail_evt.error.code = 401;
+                    fail_evt.error.message = "auth_replay";
+                    conn->send_event(fail_evt);
+                    conn->close();
+                    break;
+                }
                 std::vector<std::uint8_t> key;
                 if (!session.get_sl1_key(bind.auth_ext.key_id, key)) {
                     event_envelope fail_evt{};
@@ -150,19 +163,6 @@ void mock_runtime_server::client_loop(std::shared_ptr<envelope_connection> conn)
                     fail_evt.error.category = error_category::unauthorized;
                     fail_evt.error.code = 401;
                     fail_evt.error.message = "unknown_key";
-                    conn->send_event(fail_evt);
-                    conn->close();
-                    break;
-                }
-                if (bind.auth_ext.auth_seq != 1) {
-                    event_envelope fail_evt{};
-                    fail_evt.stream = stream_identity{0, 0, 0};
-                    fail_evt.event_seq = 1;
-                    fail_evt.event_type = runtime_event_type::failed;
-                    fail_evt.outcome = terminal_outcome::failed;
-                    fail_evt.error.category = error_category::unauthorized;
-                    fail_evt.error.code = 401;
-                    fail_evt.error.message = "auth_replay";
                     conn->send_event(fail_evt);
                     conn->close();
                     break;

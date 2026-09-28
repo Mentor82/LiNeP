@@ -219,6 +219,14 @@ All authentication errors are classified under HTTP status 401 (`error_category:
 - `auth_unexpected`: Authenticated envelope received on non-SL1 connection.
 - `auth_seq_exhausted`: Sequence counter reached $2^{32}-1$, re-bind required.
 
+### Normative Verification Precedence
+
+When validating an inbound SL1-authenticated envelope (including `SESSION_BIND`), endpoints evaluate checks in the following normative order:
+1. **Authentication Requirement**: Verify `FLAG_AUTHENTICATED` is present on active SL1 sessions (`auth_required`).
+2. **Sequence Monotonicity**: Verify sequence number ($S_{new} = S_{last} + 1$; for `SESSION_BIND`, $S = 1$) (`auth_replay`).
+3. **Key Validity**: Verify `key_id` is configured and within active rotation window (`unknown_key`).
+4. **Integrity / MAC**: Verify HMAC against header and payload (`auth_invalid`).
+
 ### Transport Scope & Follow-Up Tracking
 
 - **UDP Control Plane**: Optional signed UDP control datagrams are designated for a future specification increment (**Future / Später**).

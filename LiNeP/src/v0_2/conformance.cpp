@@ -1215,7 +1215,8 @@ test_result conformance_runner::test_sl1_missing_auth_rejection() {
 
     event_envelope evt{};
     if (decode_event(raw.data(), raw.size(), evt)) {
-        if (evt.stream.is_connection_level() && evt.error.code == 401 && evt.error.message == "auth_required") {
+        if (evt.stream.is_connection_level() && evt.error.code == 401 &&
+            (evt.error.message == "auth_required" || evt.error.message.rfind("auth_required", 0) == 0)) {
             res.passed = true;
             res.duration_ms = elapsed_ms(t0);
             res.details = "Unauthenticated bind rejected with 401 auth_required and socket closed";
@@ -1331,7 +1332,8 @@ test_result conformance_runner::test_sl1_replay_rejection() {
 
     event_envelope evt{};
     if (decode_event(raw.data(), raw.size(), evt)) {
-        if (evt.stream.is_connection_level() && evt.error.code == 401 && evt.error.message == "auth_replay") {
+        if (evt.stream.is_connection_level() && evt.error.code == 401 &&
+            (evt.error.message == "auth_replay" || evt.error.message.rfind("auth_replay", 0) == 0)) {
             res.passed = true;
             res.duration_ms = elapsed_ms(t0);
             res.details = "Replayed sequence rejected with 401 auth_replay";
