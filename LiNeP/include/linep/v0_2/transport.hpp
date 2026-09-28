@@ -50,6 +50,8 @@ public:
     // Connection state & lifecycle
     bool is_connected() const noexcept;
     void close() noexcept;
+    void set_recv_timeout(std::uint32_t ms) noexcept;
+    bool timed_out() const noexcept;
 
 private:
     friend class stream_send_scheduler;
@@ -58,6 +60,7 @@ private:
     bool recv_all_bytes(std::uint8_t* buf, std::size_t len);
 
     std::uintptr_t sock_{~static_cast<std::uintptr_t>(0u)};
+    bool timed_out_{false};
     mutable std::mutex send_mutex_;
 
     bool sl1_active_{false};

@@ -50,6 +50,9 @@ The `mock_runtime_server` provides deterministic reproduction of edge cases:
 - `--disconnect-before-terminal`: Tests client behavior under abrupt TCP teardown.
 - `--require-sl1`: Enforces strict SL1 authenticated framing on all incoming data connections.
 - `--sl1-key <hex>`: Configures 256-bit pre-shared symmetric key (hex-encoded, $\ge 32$ bytes).
-- `--sl1-key-file <file>`: Reads 256-bit pre-shared symmetric key from file (hex or raw binary, $\ge 32$ bytes).
+- `--sl1-key-file <file>`: Reads 256-bit pre-shared symmetric key from file ($\ge 32$ bytes).
+- `--sl1-key-format <auto|hex|bin>`: Selects key file parsing mode (`auto`, `hex`, or `bin`).
 - `--sl1-key-id <id>`: Configures the active `key_id` (default: 1).
+- `--sl1-required`: Gates `SL1_MISSING_AUTH_REJECTION` on endpoints that strictly enforce SL1. On SL1-optional endpoints, omitting this flag runs the 4 applicable SL1 suites.
+- Control plane interaction: When `--control` is supplied, SL1 suites acquire a valid lease token via `ensure_lease()` prior to `SESSION_BIND`, supporting lease-enforcing (`require_lease = true`) endpoints.
 

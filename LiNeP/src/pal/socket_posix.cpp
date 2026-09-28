@@ -125,6 +125,13 @@ int tcp_recv_all(Socket& s, uint8_t* buf, int len) noexcept {
     return got;
 }
 
+void tcp_set_recv_timeout(Socket& s, uint32_t ms) noexcept {
+    timeval tv{};
+    tv.tv_sec  = static_cast<time_t>(ms / 1000u);
+    tv.tv_usec = static_cast<suseconds_t>((ms % 1000u) * 1000u);
+    setsockopt(s.fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+}
+
 void socket_close(Socket& s) noexcept {
     if (s.valid()) {
         ::close(s.fd);

@@ -4,6 +4,7 @@
 #include "linep/v0_2/mock_runtime.hpp"
 #include "linep/v0_2/conformance.hpp"
 #include "linep/v0_2/control_plane.hpp"
+#include "linep/v0_2/lease.hpp"
 
 #define LINEP_TEST_CHECK(expr) \
     do { \
@@ -438,6 +439,7 @@ int main() {
 
         linep::v0_2::conformance_runner sl1_runner("127.0.0.1", sl1_port);
         sl1_runner.set_sl1_credentials(101, sl1_key);
+        sl1_runner.set_sl1_required(true);
 
         auto sl1_rep = sl1_runner.run_sl1();
         for (const auto& r : sl1_rep.results) {
@@ -451,6 +453,79 @@ int main() {
 
         sl1_server.stop();
         std::cout << "  -> SL1 Authentication & PROFILE_SL1 Conformance tests PASSED (Mutual Handshake, Streaming, Rejection & Replay)" << std::endl;
+    }
+
+    // [Edge Test 6] Testing SL1 on SL1-optional endpoint (Issue #25)
+    std::cout << "[Edge Test 6] Testing SL1 on SL1-optional endpoint (Issue #25)..." << std::endl;
+    {
+        std::vector<std::uint8_t> sl1_key(32, 0x5A);
+
+        linep::v0_2::mock_runtime_config sl1_opt_cfg = cfg;
+        sl1_opt_cfg.require_sl1 = false; // SL1 optional!
+        sl1_opt_cfg.sl1_key_id = 101;
+        sl1_opt_cfg.sl1_key = sl1_key;
+
+        linep::v0_2::mock_runtime_server sl1_opt_server(sl1_opt_cfg);
+        LINEP_TEST_CHECK(sl1_opt_server.start(0));
+        std::uint16_t sl1_opt_port = sl1_opt_server.get_bound_port();
+
+        linep::v0_2::conformance_runner sl1_opt_runner("127.0.0.1", sl1_opt_port);
+        sl1_opt_runner.set_sl1_credentials(101, sl1_key);
+        // By default sl1_required is false -> run_sl1 skips missing_auth_rejection
+        auto rep = sl1_opt_runner.run_sl1();
+        for (const auto& r : rep.results) {
+            std::cout << "  [" << (r.passed ? "PASS" : "FAIL") << "] " << r.test_name << " -> " << r.details << std::endl;
+        }
+        LINEP_TEST_CHECK(rep.is_all_passed());
+        LINEP_TEST_CHECK(rep.total_tests == 4);
+        LINEP_TEST_CHECK(rep.profiles.size() == 1);
+        LINEP_TEST_CHECK(rep.profiles[0].conformant);
+
+        // Calling test_sl1_missing_auth_rejection directly against an SL1-optional endpoint
+        // must time out boundedly (<= 1000ms) and report failure without hanging!
+        auto rej = sl1_opt_runner.test_sl1_missing_auth_rejection();
+        LINEP_TEST_CHECK(!rej.passed);
+
+        sl1_opt_server.stop();
+        std::cout << "  -> SL1 on SL1-optional endpoint PASSED (4 suites conformant, missing auth times out boundedly)" << std::endl;
+    }
+
+    // [Edge Test 7] Testing SL1 Profile on Lease-Enforcing endpoint (Issue #25)
+    std::cout << "[Edge Test 7] Testing SL1 Profile on Lease-Enforcing endpoint (Issue #25)..." << std::endl;
+    {
+        std::vector<std::uint8_t> sl1_key(32, 0x5A);
+
+        linep::v0_2::lease_issuer issuer;
+        LINEP_TEST_CHECK(issuer.start(0));
+        std::uint16_t udp_port = issuer.get_bound_port();
+
+        linep::v0_2::mock_runtime_config lease_sl1_cfg = cfg;
+        lease_sl1_cfg.require_lease = true; // Lease required!
+        lease_sl1_cfg.require_sl1 = false;  // SL1 optional
+        lease_sl1_cfg.sl1_key_id = 101;
+        lease_sl1_cfg.sl1_key = sl1_key;
+
+        linep::v0_2::mock_runtime_server lease_sl1_server(lease_sl1_cfg);
+        lease_sl1_server.set_control_plane_router(&issuer.router());
+        LINEP_TEST_CHECK(lease_sl1_server.start(0));
+        std::uint16_t tcp_port = lease_sl1_server.get_bound_port();
+
+        linep::v0_2::conformance_runner runner("127.0.0.1", tcp_port);
+        runner.set_control_endpoint("127.0.0.1", udp_port);
+        runner.set_sl1_credentials(101, sl1_key);
+
+        auto rep = runner.run_sl1();
+        for (const auto& r : rep.results) {
+            std::cout << "  [" << (r.passed ? "PASS" : "FAIL") << "] " << r.test_name << " -> " << r.details << std::endl;
+        }
+        LINEP_TEST_CHECK(rep.is_all_passed());
+        LINEP_TEST_CHECK(rep.total_tests == 4);
+        LINEP_TEST_CHECK(rep.profiles.size() == 1);
+        LINEP_TEST_CHECK(rep.profiles[0].conformant);
+
+        lease_sl1_server.stop();
+        issuer.stop();
+        std::cout << "  -> SL1 Profile on Lease-Enforcing endpoint PASSED (Lease acquired automatically, 0xC0FFEE not rejected)" << std::endl;
     }
 
     mock_server.stop();

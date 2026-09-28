@@ -52,6 +52,7 @@ std::unique_ptr<envelope_connection> envelope_connection::connect(const std::str
     }
     auto conn = std::make_unique<envelope_connection>();
     conn->sock_ = static_cast<std::uintptr_t>(s.fd);
+    conn->set_recv_timeout(timeout_ms);
     return conn;
 }
 
@@ -65,6 +66,17 @@ void envelope_connection::close() noexcept {
         pal::socket_close(s);
         sock_ = ~static_cast<std::uintptr_t>(0u);
     }
+}
+
+void envelope_connection::set_recv_timeout(std::uint32_t ms) noexcept {
+    if (is_connected()) {
+        pal::Socket s{static_cast<pal::RawSocket>(sock_)};
+        pal::tcp_set_recv_timeout(s, ms);
+    }
+}
+
+bool envelope_connection::timed_out() const noexcept {
+    return timed_out_;
 }
 
 bool envelope_connection::send_bytes_locked(const std::uint8_t* data, std::size_t len) {
@@ -86,9 +98,25 @@ bool envelope_connection::recv_all_bytes(std::uint8_t* buf, std::size_t len) {
     if (!is_connected() || !buf || len == 0) {
         return false;
     }
+    timed_out_ = false;
     pal::Socket s{static_cast<pal::RawSocket>(sock_)};
     int recvd = pal::tcp_recv_all(s, buf, static_cast<int>(len));
-    return recvd == static_cast<int>(len);
+    if (recvd != static_cast<int>(len)) {
+        if (recvd < 0) {
+#ifdef _WIN32
+            int err = WSAGetLastError();
+            if (err == WSAETIMEDOUT) {
+                timed_out_ = true;
+            }
+#else
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) {
+                timed_out_ = true;
+            }
+#endif
+        }
+        return false;
+    }
+    return true;
 }
 
 bool envelope_connection::send_request(const request_envelope& req) {

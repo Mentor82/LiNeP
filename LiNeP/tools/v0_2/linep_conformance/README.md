@@ -50,3 +50,23 @@ linep-v02-conformance --endpoint 127.0.0.1:11435 --control 127.0.0.1:11436 --pro
 `DUAL_PLANE_UNBOUND_REQUEST` and `DUAL_PLANE_STALE_REBIND` require lease
 enforcement; against an endpoint without it they fail by design. Without
 `--control` the runner behaves as before (no binding).
+
+## SL1 MAC Authentication
+
+Endpoints supporting SL1 authenticate frames with HMAC-SHA256 (`FLAG_AUTHENTICATED` / `auth_seq`).
+Configure credentials with `--sl1-key <hex>` or `--sl1-key-file <file>`:
+
+```text
+linep-v02-conformance --endpoint 127.0.0.1:11435 --sl1-key-file /etc/linep/sl1.key --profile sl1
+linep-v02-conformance --endpoint 127.0.0.1:11435 --control 127.0.0.1:11436 --sl1-key-file /etc/linep/sl1.key --profile all
+```
+
+Options:
+- `--sl1-key <hex>`: Hex-encoded shared key (>= 32 bytes / 64 hex characters).
+- `--sl1-key-file <file>`: Path to shared secret key file.
+- `--sl1-key-format <auto|hex|bin>`: Key file interpretation (default: `auto`). In `auto` mode, hex is parsed first; if non-hex characters are found, it falls back to raw binary and alerts if config syntax (`=`) is present. Use `hex` to enforce strict hex parsing.
+- `--sl1-key-id <id>`: Numeric key ID (default: 1).
+- `--sl1-required`: Assert that the endpoint requires SL1 and rejects unauthenticated binds. When omitted, endpoints that support SL1 optionally (accepting both signed and unsigned connections) run the applicable SL1 suites without asserting rejection of unsigned binds.
+
+### Combining `--control` and `--sl1-key`
+When `--control` is supplied alongside SL1 credentials, the SL1 suites acquire a valid control plane lease via `NODE_HELLO -> INVITE -> LEASE_ACK` prior to `SESSION_BIND`, ensuring compatibility with lease-enforcing runtimes.

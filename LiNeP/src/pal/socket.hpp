@@ -45,6 +45,7 @@ Socket tcp_accept (Socket& server)                      noexcept;
 // Returns bytes sent/recv, <=0 on error / connection closed.
 int    tcp_send_all(Socket& s, const uint8_t* buf, int len) noexcept;
 int    tcp_recv_all(Socket& s,       uint8_t* buf, int len) noexcept;
+void   tcp_set_recv_timeout(Socket& s, uint32_t ms)         noexcept;
 
 // ── Shared ────────────────────────────────────────────────────────────────────
 void socket_close(Socket& s) noexcept;

@@ -46,6 +46,23 @@ bool conformance_runner::ensure_lease(std::string& out_error) {
     return lease_->acquire(&out_error);
 }
 
+bool conformance_runner::prepare_session_bind(session_bind_envelope& out_bind, std::string& out_error) {
+    if (has_control_endpoint()) {
+        if (!ensure_lease(out_error)) {
+            return false;
+        }
+    }
+    if (lease_ && lease_->has_lease()) {
+        out_bind = lease_->current_bind();
+    } else {
+        out_bind = session_bind_envelope{};
+        out_bind.identity = node_endpoint_identity{1001, 2001, 1};
+        out_bind.control_epoch = 1;
+        out_bind.lease_token = 0xC0FFEE1234ULL;
+    }
+    return true;
+}
+
 std::unique_ptr<envelope_connection> conformance_runner::create_connection() {
     if (has_control_endpoint()) {
         std::string err;
@@ -206,7 +223,9 @@ void conformance_runner::run_sl1_suites(conformance_report& rep) {
     } else {
         run_test(test_sl1_mutual_handshake());
         run_test(test_sl1_authenticated_streaming());
-        run_test(test_sl1_missing_auth_rejection());
+        if (sl1_required_) {
+            run_test(test_sl1_missing_auth_rejection());
+        }
         run_test(test_sl1_wrong_key_rejection());
         run_test(test_sl1_replay_rejection());
     }
@@ -996,14 +1015,13 @@ test_result conformance_runner::test_sl1_mutual_handshake() {
         res.details = "Failed to connect to " + host_ + ":" + std::to_string(port_);
         return res;
     }
+    conn->set_recv_timeout(5000);
 
     session_bind_envelope bind{};
-    if (lease_ && lease_->has_lease()) {
-        bind = lease_->current_bind();
-    } else {
-        bind.identity = node_endpoint_identity{1001, 2001, 1};
-        bind.control_epoch = 1;
-        bind.lease_token = 0xC0FFEE1234ULL;
+    std::string err;
+    if (!prepare_session_bind(bind, err)) {
+        res.details = "Lease preparation failed: " + err;
+        return res;
     }
     bind.sl1_requested = true;
     bind.key_id = sl1_key_id_;
@@ -1016,7 +1034,8 @@ test_result conformance_runner::test_sl1_mutual_handshake() {
 
     std::vector<std::uint8_t> raw;
     if (!conn->receive_envelope_raw(raw)) {
-        res.details = "No confirmation frame received from server";
+        res.details = conn->timed_out() ? "Timed out waiting for confirmation frame from server"
+                                        : "No confirmation frame received from server";
         return res;
     }
 
@@ -1043,7 +1062,6 @@ test_result conformance_runner::test_sl1_mutual_handshake() {
     }
 
     wire_auth_extension ext{};
-    std::string err;
     if (!verify_envelope_buffer(raw.data(), raw.size(), bind, message_direction::responder_to_initiator,
                                 sl1_key_.data(), sl1_key_.size(), ext, &err)) {
         res.details = "Server confirmation MAC verification failed: " + err;
@@ -1070,14 +1088,13 @@ test_result conformance_runner::test_sl1_authenticated_streaming() {
         res.details = "Failed to connect to " + host_ + ":" + std::to_string(port_);
         return res;
     }
+    conn->set_recv_timeout(5000);
 
     session_bind_envelope bind{};
-    if (lease_ && lease_->has_lease()) {
-        bind = lease_->current_bind();
-    } else {
-        bind.identity = node_endpoint_identity{1001, 2001, 1};
-        bind.control_epoch = 1;
-        bind.lease_token = 0xC0FFEE1234ULL;
+    std::string err;
+    if (!prepare_session_bind(bind, err)) {
+        res.details = "Lease preparation failed: " + err;
+        return res;
     }
     bind.sl1_requested = true;
     bind.key_id = sl1_key_id_;
@@ -1090,7 +1107,8 @@ test_result conformance_runner::test_sl1_authenticated_streaming() {
 
     std::vector<std::uint8_t> raw;
     if (!conn->receive_envelope_raw(raw)) {
-        res.details = "Server did not confirm SESSION_BIND";
+        res.details = conn->timed_out() ? "Timed out waiting for SESSION_BIND confirmation"
+                                        : "Server did not confirm SESSION_BIND";
         return res;
     }
 
@@ -1118,7 +1136,6 @@ test_result conformance_runner::test_sl1_authenticated_streaming() {
         }
 
         wire_auth_extension ext{};
-        std::string err;
         if (!verify_envelope_buffer(raw.data(), raw.size(), bind, message_direction::responder_to_initiator,
                                     sl1_key_.data(), sl1_key_.size(), ext, &err)) {
             res.details = "Event MAC verification failed: " + err;
@@ -1146,7 +1163,11 @@ test_result conformance_runner::test_sl1_authenticated_streaming() {
     }
 
     if (!saw_completed) {
-        res.details = "Stream ended without completed terminal event (received " + std::to_string(events_received) + " events)";
+        if (conn->timed_out()) {
+            res.details = "Stream timed out waiting for events (received " + std::to_string(events_received) + " events)";
+        } else {
+            res.details = "Stream ended without completed terminal event (received " + std::to_string(events_received) + " events)";
+        }
         return res;
     }
 
@@ -1165,14 +1186,13 @@ test_result conformance_runner::test_sl1_missing_auth_rejection() {
         res.details = "Failed to connect to " + host_ + ":" + std::to_string(port_);
         return res;
     }
+    conn->set_recv_timeout(1000);
 
     session_bind_envelope bind{};
-    if (lease_ && lease_->has_lease()) {
-        bind = lease_->current_bind();
-    } else {
-        bind.identity = node_endpoint_identity{1001, 2001, 1};
-        bind.control_epoch = 1;
-        bind.lease_token = 0xC0FFEE1234ULL;
+    std::string err;
+    if (!prepare_session_bind(bind, err)) {
+        res.details = "Lease preparation failed: " + err;
+        return res;
     }
     bind.sl1_requested = false;
 
@@ -1183,6 +1203,10 @@ test_result conformance_runner::test_sl1_missing_auth_rejection() {
 
     std::vector<std::uint8_t> raw;
     if (!conn->receive_envelope_raw(raw)) {
+        if (conn->timed_out()) {
+            res.details = "Connection timed out waiting for rejection; endpoint did not reject unsigned bind (does the endpoint require SL1? Use --sl1-required to assert)";
+            return res;
+        }
         res.passed = true;
         res.duration_ms = elapsed_ms(t0);
         res.details = "Unauthenticated connection closed immediately by server";
@@ -1212,16 +1236,15 @@ test_result conformance_runner::test_sl1_wrong_key_rejection() {
         res.details = "Failed to connect to " + host_ + ":" + std::to_string(port_);
         return res;
     }
+    conn->set_recv_timeout(1000);
 
     std::vector<std::uint8_t> bad_key(sl1_key_.size(), 0xEE);
 
     session_bind_envelope bind{};
-    if (lease_ && lease_->has_lease()) {
-        bind = lease_->current_bind();
-    } else {
-        bind.identity = node_endpoint_identity{1001, 2001, 1};
-        bind.control_epoch = 1;
-        bind.lease_token = 0xC0FFEE1234ULL;
+    std::string err;
+    if (!prepare_session_bind(bind, err)) {
+        res.details = "Lease preparation failed: " + err;
+        return res;
     }
     bind.sl1_requested = true;
     bind.key_id = sl1_key_id_;
@@ -1234,6 +1257,10 @@ test_result conformance_runner::test_sl1_wrong_key_rejection() {
 
     std::vector<std::uint8_t> raw;
     if (!conn->receive_envelope_raw(raw)) {
+        if (conn->timed_out()) {
+            res.details = "Connection timed out waiting for rejection; endpoint did not reject invalid key";
+            return res;
+        }
         res.passed = true;
         res.duration_ms = elapsed_ms(t0);
         res.details = "Connection with invalid MAC closed immediately by server";
@@ -1263,14 +1290,13 @@ test_result conformance_runner::test_sl1_replay_rejection() {
         res.details = "Failed to connect to " + host_ + ":" + std::to_string(port_);
         return res;
     }
+    conn->set_recv_timeout(1000);
 
     session_bind_envelope bind{};
-    if (lease_ && lease_->has_lease()) {
-        bind = lease_->current_bind();
-    } else {
-        bind.identity = node_endpoint_identity{1001, 2001, 1};
-        bind.control_epoch = 1;
-        bind.lease_token = 0xC0FFEE1234ULL;
+    std::string err;
+    if (!prepare_session_bind(bind, err)) {
+        res.details = "Lease preparation failed: " + err;
+        return res;
     }
     bind.sl1_requested = true;
     bind.key_id = sl1_key_id_;
@@ -1293,6 +1319,10 @@ test_result conformance_runner::test_sl1_replay_rejection() {
 
     std::vector<std::uint8_t> raw;
     if (!conn->receive_envelope_raw(raw)) {
+        if (conn->timed_out()) {
+            res.details = "Connection timed out waiting for rejection; endpoint did not reject replayed auth_seq";
+            return res;
+        }
         res.passed = true;
         res.duration_ms = elapsed_ms(t0);
         res.details = "Replay sequence closed immediately by server";

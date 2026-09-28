@@ -143,6 +143,12 @@ int tcp_recv_all(Socket& s, uint8_t* buf, int len) noexcept {
     return got;
 }
 
+void tcp_set_recv_timeout(Socket& s, uint32_t ms) noexcept {
+    DWORD tv = static_cast<DWORD>(ms);
+    setsockopt(to_sock(s.fd), SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<const char*>(&tv), sizeof(tv));
+}
+
 void socket_close(Socket& s) noexcept {
     if (s.valid()) {
         closesocket(to_sock(s.fd));

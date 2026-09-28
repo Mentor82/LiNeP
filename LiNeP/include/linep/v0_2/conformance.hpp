@@ -83,6 +83,10 @@ public:
     void set_sl1_credentials(std::uint16_t key_id, std::vector<std::uint8_t> key);
     bool has_sl1() const noexcept { return !sl1_key_.empty(); }
 
+    // Enforce that the endpoint rejects unauthenticated connections (required for SL1_MISSING_AUTH_REJECTION)
+    void set_sl1_required(bool required = true) noexcept { sl1_required_ = required; }
+    bool is_sl1_required() const noexcept { return sl1_required_; }
+
     // Run only the PROFILE_SL1 test suites
     conformance_report run_sl1();
 
@@ -97,6 +101,7 @@ private:
     std::unique_ptr<envelope_connection> create_connection();
     std::unique_ptr<lease_client> make_lease_client() const;
     bool ensure_lease(std::string& out_error);
+    bool prepare_session_bind(session_bind_envelope& out_bind, std::string& out_error);
     void run_dual_plane_suites(conformance_report& rep);
     void run_sl1_suites(conformance_report& rep);
 
@@ -107,6 +112,7 @@ private:
     std::unique_ptr<lease_client> lease_;
     std::uint16_t sl1_key_id_{1};
     std::vector<std::uint8_t> sl1_key_;
+    bool sl1_required_{false};
 };
 
 } // namespace linep::v0_2

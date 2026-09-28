@@ -31,24 +31,62 @@ static bool parse_hex_key(const std::string& hex, std::vector<std::uint8_t>& out
     return true;
 }
 
-static bool read_key_file(const std::string& path, std::vector<std::uint8_t>& out) {
-    std::ifstream ifs(path);
-    if (!ifs.is_open()) return false;
-    std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
-    content.erase(std::remove_if(content.begin(), content.end(), [](unsigned char c) { return std::isspace(c); }), content.end());
-    if (parse_hex_key(content, out) && out.size() >= 32) {
-        return true;
+enum class key_format {
+    auto_detect,
+    hex,
+    bin
+};
+
+static bool read_key_file(const std::string& path, key_format fmt, std::vector<std::uint8_t>& out, std::string& out_error) {
+    std::ifstream ifs(path, std::ios::binary);
+    if (!ifs.is_open()) {
+        out_error = "Could not open file: " + path;
+        return false;
     }
-    std::ifstream bifs(path, std::ios::binary | std::ios::ate);
-    if (bifs.is_open()) {
-        auto sz = bifs.tellg();
-        if (sz >= 32) {
-            bifs.seekg(0, std::ios::beg);
-            out.resize(sz);
-            bifs.read(reinterpret_cast<char*>(out.data()), sz);
+    std::string raw_content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    if (raw_content.empty()) {
+        out_error = "Key file is empty: " + path;
+        return false;
+    }
+
+    if (fmt == key_format::hex || fmt == key_format::auto_detect) {
+        std::string hex_str = raw_content;
+        hex_str.erase(std::remove_if(hex_str.begin(), hex_str.end(), [](unsigned char c) { return std::isspace(c); }), hex_str.end());
+        if (parse_hex_key(hex_str, out)) {
+            if (out.size() < 32) {
+                out_error = "Hex key is too short (" + std::to_string(out.size()) + " bytes, minimum 32 bytes / 64 hex characters required)";
+                return false;
+            }
             return true;
         }
+        if (fmt == key_format::hex) {
+            out_error = "File does not contain valid hex digits (expected >= 64 hex characters)";
+            return false;
+        }
     }
+
+    if (fmt == key_format::bin || fmt == key_format::auto_detect) {
+        if (raw_content.size() < 32) {
+            out_error = "Key file is too short (" + std::to_string(raw_content.size()) + " bytes, minimum 32 bytes required)";
+            return false;
+        }
+        if (fmt == key_format::auto_detect) {
+            bool has_config_chars = (raw_content.find('=') != std::string::npos ||
+                                     raw_content.find(':') != std::string::npos);
+            if (has_config_chars) {
+                std::cerr << "[conformance] Warning: --sl1-key-file contains '=' or ':' but is not valid hex; "
+                          << "using " << raw_content.size() << " raw binary bytes as key. "
+                          << "(If this is a config file, extract the hex key, or use --sl1-key-format hex)\n";
+            } else {
+                std::cerr << "[conformance] Note: --sl1-key-file is not valid hex; using "
+                          << raw_content.size() << " raw binary bytes as key.\n";
+            }
+        }
+        out.assign(raw_content.begin(), raw_content.end());
+        return true;
+    }
+
+    out_error = "Unsupported key format";
     return false;
 }
 
@@ -60,8 +98,10 @@ static void print_usage(const char* prog) {
               << "  --control <host:port>     UDP control plane (lease issuer) of the endpoint; every suite\n"
               << "                            binds with SESSION_BIND and 'all' adds the dual-plane suites\n"
               << "  --sl1-key <hex>           Hex-encoded SL1 shared secret key (>= 32 bytes / 64 hex digits)\n"
-              << "  --sl1-key-file <file>     Read SL1 shared secret key from file (hex or binary, >= 32 bytes)\n"
+              << "  --sl1-key-file <file>     Read SL1 shared secret key from file (>= 32 bytes)\n"
+              << "  --sl1-key-format <fmt>    SL1 key file format: auto, hex, bin (default: auto)\n"
               << "  --sl1-key-id <id>         SL1 key ID (default: 1)\n"
+              << "  --sl1-required            Assert that target endpoint enforces SL1 (requires unsigned binds to be rejected)\n"
               << "  --profile <name>          Profile to verify: generate, chat, embed, dual_plane, sl1, all (default: all)\n"
               << "                            dual_plane needs --control and an endpoint that requires leases\n"
               << "                            sl1 needs --sl1-key or --sl1-key-file\n"
@@ -161,6 +201,9 @@ int main(int argc, char* argv[]) {
     std::string control;
     std::vector<std::uint8_t> sl1_key;
     std::uint16_t sl1_key_id = 1;
+    std::string sl1_key_file;
+    key_format sl1_key_fmt = key_format::auto_detect;
+    bool sl1_required = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -178,13 +221,23 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
         } else if (arg == "--sl1-key-file" && i + 1 < argc) {
-            std::string path = argv[++i];
-            if (!read_key_file(path, sl1_key) || sl1_key.size() < 32) {
-                std::cerr << "Error: --sl1-key-file must contain a valid hex string or raw key of at least 32 bytes\n";
+            sl1_key_file = argv[++i];
+        } else if (arg == "--sl1-key-format" && i + 1 < argc) {
+            std::string fmt_str = argv[++i];
+            if (fmt_str == "auto") {
+                sl1_key_fmt = key_format::auto_detect;
+            } else if (fmt_str == "hex") {
+                sl1_key_fmt = key_format::hex;
+            } else if (fmt_str == "bin") {
+                sl1_key_fmt = key_format::bin;
+            } else {
+                std::cerr << "Error: Unknown --sl1-key-format: " << fmt_str << " (expected: auto, hex, bin)\n";
                 return 1;
             }
         } else if (arg == "--sl1-key-id" && i + 1 < argc) {
             sl1_key_id = static_cast<std::uint16_t>(std::stoul(argv[++i]));
+        } else if (arg == "--sl1-required") {
+            sl1_required = true;
         } else if (arg == "--profile" && i + 1 < argc) {
             profile_str = argv[++i];
         } else if (arg == "--json") {
@@ -194,6 +247,14 @@ int main(int argc, char* argv[]) {
         } else {
             std::cerr << "Unknown argument: " << arg << "\n";
             print_usage(argv[0]);
+            return 1;
+        }
+    }
+
+    if (!sl1_key_file.empty()) {
+        std::string err;
+        if (!read_key_file(sl1_key_file, sl1_key_fmt, sl1_key, err)) {
+            std::cerr << "Error: --sl1-key-file failed: " << err << "\n";
             return 1;
         }
     }
@@ -217,6 +278,9 @@ int main(int argc, char* argv[]) {
     }
     if (!sl1_key.empty()) {
         runner.set_sl1_credentials(sl1_key_id, sl1_key);
+    }
+    if (sl1_required) {
+        runner.set_sl1_required(true);
     }
     conformance_report rep{};
 
