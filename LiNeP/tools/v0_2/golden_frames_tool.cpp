@@ -548,6 +548,96 @@ int do_verify(const std::string& dir) {
     }
     std::cout << "  -> session_bind_go.bin: PASS" << std::endl;
 
+    // 14. Verify SL1 Session Bind Frame (Go -> C++)
+    if (read_file(dir + "/session_bind_sl1_go.bin", buf)) {
+        session_bind_envelope sl1_bind_in{};
+        if (!decode_session_bind(buf.data(), buf.size(), sl1_bind_in) || !sl1_bind_in.sl1_requested || sl1_bind_in.key_id != 1) {
+            std::cerr << "C++ verification failed on session_bind_sl1_go.bin decode!" << std::endl;
+            return 1;
+        }
+        wire_auth_extension sl1_ext{};
+        std::string err;
+        if (!verify_envelope_buffer(buf.data(), buf.size(), sl1_bind_in, message_direction::initiator_to_responder,
+                                    GOLDEN_SL1_KEY_PRIMARY.data(), GOLDEN_SL1_KEY_PRIMARY.size(), sl1_ext, &err) ||
+            sl1_ext.auth_seq != 1) {
+            std::cerr << "C++ verification failed on session_bind_sl1_go.bin MAC: " << err << std::endl;
+            return 1;
+        }
+        std::cout << "  -> session_bind_sl1_go.bin: PASS" << std::endl;
+    }
+
+    // 15. Verify SL1 Confirmation Frame (Go -> C++)
+    if (read_file(dir + "/session_bind_sl1_confirm_go.bin", buf)) {
+        session_bind_envelope sl1_conf_in{};
+        if (!decode_session_bind(buf.data(), buf.size(), sl1_conf_in) || !sl1_conf_in.sl1_requested || sl1_conf_in.key_id != 1) {
+            std::cerr << "C++ verification failed on session_bind_sl1_confirm_go.bin decode!" << std::endl;
+            return 1;
+        }
+        wire_auth_extension sl1_ext{};
+        std::string err;
+        if (!verify_envelope_buffer(buf.data(), buf.size(), bind_go, message_direction::responder_to_initiator,
+                                    GOLDEN_SL1_KEY_PRIMARY.data(), GOLDEN_SL1_KEY_PRIMARY.size(), sl1_ext, &err) ||
+            sl1_ext.auth_seq != 1) {
+            std::cerr << "C++ verification failed on session_bind_sl1_confirm_go.bin MAC: " << err << std::endl;
+            return 1;
+        }
+        std::cout << "  -> session_bind_sl1_confirm_go.bin: PASS" << std::endl;
+    }
+
+    // 16. Verify SL1 Request Frame (Primary Key) (Go -> C++)
+    if (read_file(dir + "/request_chat_sl1_go.bin", buf)) {
+        request_envelope sl1_req_in{};
+        if (!decode_request(buf.data(), buf.size(), sl1_req_in)) {
+            std::cerr << "C++ verification failed on request_chat_sl1_go.bin decode!" << std::endl;
+            return 1;
+        }
+        wire_auth_extension sl1_ext{};
+        std::string err;
+        if (!verify_envelope_buffer(buf.data(), buf.size(), bind_go, message_direction::initiator_to_responder,
+                                    GOLDEN_SL1_KEY_PRIMARY.data(), GOLDEN_SL1_KEY_PRIMARY.size(), sl1_ext, &err) ||
+            sl1_ext.auth_seq != 2 || sl1_ext.key_id != 1) {
+            std::cerr << "C++ verification failed on request_chat_sl1_go.bin MAC: " << err << std::endl;
+            return 1;
+        }
+        std::cout << "  -> request_chat_sl1_go.bin: PASS" << std::endl;
+    }
+
+    // 17. Verify SL1 Request Frame with Rotated Key (Go -> C++)
+    if (read_file(dir + "/request_chat_sl1_rotated_key_go.bin", buf)) {
+        request_envelope sl1_rot_req_in{};
+        if (!decode_request(buf.data(), buf.size(), sl1_rot_req_in)) {
+            std::cerr << "C++ verification failed on request_chat_sl1_rotated_key_go.bin decode!" << std::endl;
+            return 1;
+        }
+        wire_auth_extension sl1_ext{};
+        std::string err;
+        if (!verify_envelope_buffer(buf.data(), buf.size(), bind_go, message_direction::initiator_to_responder,
+                                    GOLDEN_SL1_KEY_ROTATED.data(), GOLDEN_SL1_KEY_ROTATED.size(), sl1_ext, &err) ||
+            sl1_ext.auth_seq != 3 || sl1_ext.key_id != 2) {
+            std::cerr << "C++ verification failed on request_chat_sl1_rotated_key_go.bin MAC: " << err << std::endl;
+            return 1;
+        }
+        std::cout << "  -> request_chat_sl1_rotated_key_go.bin: PASS" << std::endl;
+    }
+
+    // 18. Verify SL1 Content Delta Frame (Go -> C++)
+    if (read_file(dir + "/event_delta_sl1_go.bin", buf)) {
+        event_envelope sl1_delta_in{};
+        if (!decode_event(buf.data(), buf.size(), sl1_delta_in)) {
+            std::cerr << "C++ verification failed on event_delta_sl1_go.bin decode!" << std::endl;
+            return 1;
+        }
+        wire_auth_extension sl1_ext{};
+        std::string err;
+        if (!verify_envelope_buffer(buf.data(), buf.size(), bind_go, message_direction::responder_to_initiator,
+                                    GOLDEN_SL1_KEY_PRIMARY.data(), GOLDEN_SL1_KEY_PRIMARY.size(), sl1_ext, &err) ||
+            sl1_ext.auth_seq != 2 || sl1_ext.key_id != 1) {
+            std::cerr << "C++ verification failed on event_delta_sl1_go.bin MAC: " << err << std::endl;
+            return 1;
+        }
+        std::cout << "  -> event_delta_sl1_go.bin: PASS" << std::endl;
+    }
+
     std::cout << "[C++ Golden Tool] ALL GO-GENERATED FRAMES (TCP & UDP) DECODED AND VERIFIED BY C++ CORE 100%!" << std::endl;
     return 0;
 }
