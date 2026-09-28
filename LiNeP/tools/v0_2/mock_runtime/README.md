@@ -43,5 +43,5 @@ linep-v02-mock-runtime --port 11435 --require-sl1 --sl1-key 0102030405060708090a
 authentication extension (`FLAG_AUTHENTICATED`) signed with HMAC-SHA256 (`auth_seq = 1`),
 responds with a signed server confirmation frame, and validates monotonic framing
 on all subsequent requests and events. `--sl1-key` supplies the 32-byte (64 hex characters)
-shared secret, and `--sl1-key-id` specifies the primary key identifier.
+shared secret, `--sl1-key-file` reads the secret from a file (hex or raw binary, preventing exposure in process listings), and `--sl1-key-id` specifies the primary key identifier.
 

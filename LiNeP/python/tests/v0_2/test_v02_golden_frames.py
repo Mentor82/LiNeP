@@ -43,7 +43,22 @@ from linep.v0_2 import (
     encode_capabilities,
     encode_control_datagram,
     encode_session_bind,
+    LINEP_V02_FLAG_AUTHENTICATED,
+    MessageDirection,
+    AuthExtension,
+    compute_sl1_mac,
+    sign_envelope,
+    verify_envelope,
 )
+
+
+GOLDEN_SL1_KEY_PRIMARY = bytes(range(1, 33))
+GOLDEN_SL1_KEY_ROTATED = bytes([
+    0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11,
+    0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
+    0x01, 0x12, 0x23, 0x34, 0x45, 0x56, 0x67, 0x78,
+    0x89, 0x9A, 0xAB, 0xBC, 0xCD, 0xDE, 0xEF, 0xF0,
+])
 
 
 def find_cpp_golden_tool() -> Optional[Path]:
@@ -215,6 +230,47 @@ def test_python_decodes_cpp_generated_golden_frames():
         assert bind.identity.endpoint_id == 1
         assert bind.control_epoch == 1
         assert bind.lease_token == 0xAABBCCDDEEFF0011
+
+        # 15. Verify C++ SL1 Signed Session Bind Frame (Client -> Server)
+        sl1_bind_bytes = (p / "session_bind_sl1_cpp.bin").read_bytes()
+        assert len(sl1_bind_bytes) == 92
+        sl1_bind = decode_session_bind(sl1_bind_bytes)
+        assert sl1_bind is not None
+        assert sl1_bind.sl1_requested is True
+        assert sl1_bind.key_id == 1
+        ok, ext, _, err = verify_envelope(sl1_bind_bytes, bind, MessageDirection.INITIATOR_TO_RESPONDER, GOLDEN_SL1_KEY_PRIMARY)
+        assert ok is True, f"Python verification of session_bind_sl1_cpp.bin failed: {err}"
+        assert ext.auth_seq == 1
+        assert ext.key_id == 1
+
+        # 16. Verify C++ SL1 Server Confirmation Frame (Server -> Client)
+        sl1_conf_bytes = (p / "session_bind_sl1_confirm_cpp.bin").read_bytes()
+        assert len(sl1_conf_bytes) == 92
+        ok, ext, _, err = verify_envelope(sl1_conf_bytes, bind, MessageDirection.RESPONDER_TO_INITIATOR, GOLDEN_SL1_KEY_PRIMARY)
+        assert ok is True, f"Python verification of session_bind_sl1_confirm_cpp.bin failed: {err}"
+        assert ext.auth_seq == 1
+        assert ext.key_id == 1
+
+        # 17. Verify C++ SL1 Signed Request Frame (Client -> Server)
+        sl1_req_bytes = (p / "request_chat_sl1_cpp.bin").read_bytes()
+        ok, ext, payload, err = verify_envelope(sl1_req_bytes, bind, MessageDirection.INITIATOR_TO_RESPONDER, GOLDEN_SL1_KEY_PRIMARY)
+        assert ok is True, f"Python verification of request_chat_sl1_cpp.bin failed: {err}"
+        assert ext.auth_seq == 2
+        assert ext.key_id == 1
+
+        # 18. Verify C++ SL1 Signed Request with Rotated Key (Client -> Server)
+        sl1_rot_bytes = (p / "request_chat_sl1_rotated_key_cpp.bin").read_bytes()
+        ok, ext, payload, err = verify_envelope(sl1_rot_bytes, bind, MessageDirection.INITIATOR_TO_RESPONDER, GOLDEN_SL1_KEY_ROTATED)
+        assert ok is True, f"Python verification of request_chat_sl1_rotated_key_cpp.bin failed: {err}"
+        assert ext.auth_seq == 3
+        assert ext.key_id == 2
+
+        # 19. Verify C++ SL1 Signed Content Delta Event (Server -> Client)
+        sl1_delta_bytes = (p / "event_delta_sl1_cpp.bin").read_bytes()
+        ok, ext, payload, err = verify_envelope(sl1_delta_bytes, bind, MessageDirection.RESPONDER_TO_INITIATOR, GOLDEN_SL1_KEY_PRIMARY)
+        assert ok is True, f"Python verification of event_delta_sl1_cpp.bin failed: {err}"
+        assert ext.auth_seq == 2
+        assert ext.key_id == 1
 
 
 def test_cpp_verifies_python_generated_golden_frames():
@@ -388,6 +444,38 @@ def test_cpp_verifies_python_generated_golden_frames():
         )
         (p / "session_bind_go.bin").write_bytes(encode_session_bind(bind))
 
+        # 14. SL1 Signed Session Bind Frame (Client -> Server)
+        sl1_bind_go = SessionBindEnvelope(
+            identity=NodeEndpointIdentity(node_id=8001, runtime_id=9001, endpoint_id=1),
+            control_epoch=1,
+            lease_token=0x9988776655443322,
+            sl1_requested=False,
+        )
+        bind_unauth_bytes = encode_session_bind(sl1_bind_go)
+        sl1_bind_go.sl1_requested = True
+        sl1_bind_go.key_id = 1
+        sl1_bind_bytes = sign_envelope(bind_unauth_bytes, sl1_bind_go, MessageDirection.INITIATOR_TO_RESPONDER, auth_seq=1, key_id=1, secret_key=GOLDEN_SL1_KEY_PRIMARY)
+        (p / "session_bind_sl1_go.bin").write_bytes(sl1_bind_bytes)
+
+        # 15. SL1 Server Confirmation Frame (Server -> Client)
+        sl1_confirm_bytes = sign_envelope(bind_unauth_bytes, bind, MessageDirection.RESPONDER_TO_INITIATOR, auth_seq=1, key_id=1, secret_key=GOLDEN_SL1_KEY_PRIMARY)
+        (p / "session_bind_sl1_confirm_go.bin").write_bytes(sl1_confirm_bytes)
+
+        # 16. SL1 Request Frame (Primary Key)
+        req_unauth_bytes = encode_request(req)
+        sl1_req_bytes = sign_envelope(req_unauth_bytes, bind, MessageDirection.INITIATOR_TO_RESPONDER, auth_seq=2, key_id=1, secret_key=GOLDEN_SL1_KEY_PRIMARY)
+        (p / "request_chat_sl1_go.bin").write_bytes(sl1_req_bytes)
+
+        # 17. SL1 Request Frame (Rotated Key)
+        sl1_rot_req_bytes = sign_envelope(req_unauth_bytes, bind, MessageDirection.INITIATOR_TO_RESPONDER, auth_seq=3, key_id=2, secret_key=GOLDEN_SL1_KEY_ROTATED)
+        (p / "request_chat_sl1_rotated_key_go.bin").write_bytes(sl1_rot_req_bytes)
+
+        # 18. SL1 Content Delta Event
+        evt_delta_unauth_bytes = encode_event(evt_delta)
+        sl1_delta_bytes = sign_envelope(evt_delta_unauth_bytes, bind, MessageDirection.RESPONDER_TO_INITIATOR, auth_seq=2, key_id=1, secret_key=GOLDEN_SL1_KEY_PRIMARY)
+        (p / "event_delta_sl1_go.bin").write_bytes(sl1_delta_bytes)
+
         # Execute C++ verifier against Python-generated frames!
         res = subprocess.run([str(cpp_tool), "verify", tmp_dir], capture_output=True, text=True)
         assert res.returncode == 0, f"C++ verification of Python frames failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"
+

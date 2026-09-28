@@ -55,4 +55,5 @@ linep_add_test(test_task_streaming                        test_task_streaming.cp
 linep_add_test(test_normalized_scoring                    test_normalized_scoring.cpp)
 linep_add_test(test_consensus_engine                      test_consensus_engine.cpp)
 linep_add_test(test_sl1_auth                          test_sl1_auth.cpp)
+linep_add_test(test_sha256                            test_sha256.cpp)
 

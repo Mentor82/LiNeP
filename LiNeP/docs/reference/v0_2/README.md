@@ -200,7 +200,7 @@ In SL1, the session bind itself is signed, establishing mutual cryptographic key
 ### Monotonic Sequences & Overflow Protection (`auth_seq`)
 
 - Sequence counters increment monotonically per direction starting at 1 (consumed by `SESSION_BIND` and its confirmation). Application envelopes start at `auth_seq = 2`.
-- Inbound sequences must be strictly greater than the last successfully verified sequence ($S_{new} > S_{last}$). Replays or non-increasing sequence numbers are rejected with 401 (`auth_bad_seq`).
+- Inbound sequences must increment monotonically per direction without gaps or replays ($S_{new} = S_{last} + 1$). Replays or sequence mismatches are rejected with 401 (`auth_replay`).
 - **No Wrap-Around**: At $2^{32} - 1$ (`0xFFFFFFFF`), the sequence counter MUST NOT wrap around to 0 or 1. Any attempt to send or receive a frame with `auth_seq == 0xFFFFFFFF` terminates the connection with 401 (`auth_seq_exhausted`). The connection must perform a fresh handshake on a new incarnation.
 
 ### Receiver Key Rotation & Grace Window
@@ -212,11 +212,12 @@ In SL1, the session bind itself is signed, establishing mutual cryptographic key
 ### Unified 401 Error Classification
 
 All authentication errors are classified under HTTP status 401 (`error_category::unauthorized`) for consistency with lease and binding rejection:
-- `auth_missing`: Required `FLAG_AUTHENTICATED` missing on active SL1 session.
-- `auth_bad_key`: Unknown `key_id` or key unavailable.
-- `auth_bad_mac`: HMAC verification failed (tampered content or wrong secret).
-- `auth_bad_seq`: Sequence number is non-monotonic or replayed.
-- `auth_seq_exhausted`: Sequence counter reached $2^{32}-1$.
+- `auth_required`: Required `FLAG_AUTHENTICATED` missing on active SL1 session.
+- `unknown_key`: Unknown `key_id` or key unavailable / outside grace window.
+- `auth_invalid`: HMAC verification failed (tampered content or wrong secret), or corrupted auth extension.
+- `auth_replay`: Sequence number is non-monotonic or replayed ($S_{new} \neq S_{last} + 1$).
+- `auth_unexpected`: Authenticated envelope received on non-SL1 connection.
+- `auth_seq_exhausted`: Sequence counter reached $2^{32}-1$, re-bind required.
 
 ### Transport Scope & Follow-Up Tracking
 

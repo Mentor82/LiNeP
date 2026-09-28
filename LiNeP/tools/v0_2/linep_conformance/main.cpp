@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -29,6 +31,27 @@ static bool parse_hex_key(const std::string& hex, std::vector<std::uint8_t>& out
     return true;
 }
 
+static bool read_key_file(const std::string& path, std::vector<std::uint8_t>& out) {
+    std::ifstream ifs(path);
+    if (!ifs.is_open()) return false;
+    std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    content.erase(std::remove_if(content.begin(), content.end(), [](unsigned char c) { return std::isspace(c); }), content.end());
+    if (parse_hex_key(content, out) && out.size() >= 32) {
+        return true;
+    }
+    std::ifstream bifs(path, std::ios::binary | std::ios::ate);
+    if (bifs.is_open()) {
+        auto sz = bifs.tellg();
+        if (sz >= 32) {
+            bifs.seekg(0, std::ios::beg);
+            out.resize(sz);
+            bifs.read(reinterpret_cast<char*>(out.data()), sz);
+            return true;
+        }
+    }
+    return false;
+}
+
 static void print_usage(const char* prog) {
     std::cout << "LiNeP V0.2 Conformance Test Runner\n"
               << "Usage: " << prog << " [OPTIONS]\n\n"
@@ -37,14 +60,16 @@ static void print_usage(const char* prog) {
               << "  --control <host:port>     UDP control plane (lease issuer) of the endpoint; every suite\n"
               << "                            binds with SESSION_BIND and 'all' adds the dual-plane suites\n"
               << "  --sl1-key <hex>           Hex-encoded SL1 shared secret key (>= 32 bytes / 64 hex digits)\n"
+              << "  --sl1-key-file <file>     Read SL1 shared secret key from file (hex or binary, >= 32 bytes)\n"
               << "  --sl1-key-id <id>         SL1 key ID (default: 1)\n"
               << "  --profile <name>          Profile to verify: generate, chat, embed, dual_plane, sl1, all (default: all)\n"
               << "                            dual_plane needs --control and an endpoint that requires leases\n"
-              << "                            sl1 needs --sl1-key\n"
+              << "                            sl1 needs --sl1-key or --sl1-key-file\n"
               << "  --json                    Output report in JSON format\n"
               << "  --output-report <file>    Write report to specified file path\n"
               << "  --help, -h                Show this help message\n";
 }
+
 
 static bool parse_endpoint(const std::string& ep, std::string& out_host, std::uint16_t& out_port) {
     auto pos = ep.find(':');
@@ -150,6 +175,12 @@ int main(int argc, char* argv[]) {
             std::string hex = argv[++i];
             if (!parse_hex_key(hex, sl1_key) || sl1_key.size() < 32) {
                 std::cerr << "Error: --sl1-key must be a valid hex string of at least 32 bytes (64 hex characters)\n";
+                return 1;
+            }
+        } else if (arg == "--sl1-key-file" && i + 1 < argc) {
+            std::string path = argv[++i];
+            if (!read_key_file(path, sl1_key) || sl1_key.size() < 32) {
+                std::cerr << "Error: --sl1-key-file must contain a valid hex string or raw key of at least 32 bytes\n";
                 return 1;
             }
         } else if (arg == "--sl1-key-id" && i + 1 < argc) {

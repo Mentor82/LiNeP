@@ -50,4 +50,6 @@ The `mock_runtime_server` provides deterministic reproduction of edge cases:
 - `--disconnect-before-terminal`: Tests client behavior under abrupt TCP teardown.
 - `--require-sl1`: Enforces strict SL1 authenticated framing on all incoming data connections.
 - `--sl1-key <hex>`: Configures 256-bit pre-shared symmetric key (hex-encoded, $\ge 32$ bytes).
+- `--sl1-key-file <file>`: Reads 256-bit pre-shared symmetric key from file (hex or raw binary, $\ge 32$ bytes).
 - `--sl1-key-id <id>`: Configures the active `key_id` (default: 1).
+

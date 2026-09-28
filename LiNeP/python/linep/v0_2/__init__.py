@@ -31,6 +31,9 @@ from linep.v0_2.constants import (
     NodeLifecycle,
     SessionBindingState,
     LINEP_V02_SESSION_BIND_PAYLOAD_SIZE,
+    LINEP_V02_FLAG_AUTHENTICATED,
+    LINEP_V02_AUTH_EXTENSION_SIZE,
+    MessageDirection,
 )
 from linep.v0_2.envelopes import (
     StreamIdentity,
@@ -45,6 +48,7 @@ from linep.v0_2.envelopes import (
     EmbeddingPayload,
     RuntimeErrorPayload,
     SessionBindEnvelope,
+    AuthExtension,
     encode_header,
     decode_header,
     peek_envelope_type,
@@ -58,6 +62,9 @@ from linep.v0_2.envelopes import (
     decode_capabilities,
     encode_session_bind,
     decode_session_bind,
+    compute_sl1_mac,
+    sign_envelope,
+    verify_envelope,
 )
 from linep.v0_2.control_plane import (
     UdpControlDatagram,
@@ -99,6 +106,9 @@ __all__ = [
     "NodeLifecycle",
     "SessionBindingState",
     "LINEP_V02_SESSION_BIND_PAYLOAD_SIZE",
+    "LINEP_V02_FLAG_AUTHENTICATED",
+    "LINEP_V02_AUTH_EXTENSION_SIZE",
+    "MessageDirection",
     # Envelopes
     "StreamIdentity",
     "WireEnvelopeHeader",
@@ -112,6 +122,7 @@ __all__ = [
     "EmbeddingPayload",
     "RuntimeErrorPayload",
     "SessionBindEnvelope",
+    "AuthExtension",
     "encode_header",
     "decode_header",
     "peek_envelope_type",
@@ -125,6 +136,9 @@ __all__ = [
     "decode_capabilities",
     "encode_session_bind",
     "decode_session_bind",
+    "compute_sl1_mac",
+    "sign_envelope",
+    "verify_envelope",
     # Control Plane
     "UdpControlDatagram",
     "NodeEndpointIdentity",

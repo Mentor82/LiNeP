@@ -1,7 +1,10 @@
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -39,6 +42,27 @@ static bool parse_hex_key(const std::string& hex, std::vector<std::uint8_t>& out
     return true;
 }
 
+static bool read_key_file(const std::string& path, std::vector<std::uint8_t>& out) {
+    std::ifstream ifs(path);
+    if (!ifs.is_open()) return false;
+    std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    content.erase(std::remove_if(content.begin(), content.end(), [](unsigned char c) { return std::isspace(c); }), content.end());
+    if (parse_hex_key(content, out) && out.size() >= 32) {
+        return true;
+    }
+    std::ifstream bifs(path, std::ios::binary | std::ios::ate);
+    if (bifs.is_open()) {
+        auto sz = bifs.tellg();
+        if (sz >= 32) {
+            bifs.seekg(0, std::ios::beg);
+            out.resize(sz);
+            bifs.read(reinterpret_cast<char*>(out.data()), sz);
+            return true;
+        }
+    }
+    return false;
+}
+
 static void print_usage(const char* prog) {
     std::cout << "LiNeP V0.2 Deterministic Mock Runtime Server\n"
               << "Usage: " << prog << " [OPTIONS]\n\n"
@@ -48,6 +72,7 @@ static void print_usage(const char* prog) {
               << "  --require-lease               Reject REQUESTs without a current SESSION_BIND (needs --udp-port)\n"
               << "  --require-sl1                 Require SL1 authenticated session binding on all trunks\n"
               << "  --sl1-key <hex>               Hex-encoded SL1 shared secret key (>= 32 bytes / 64 hex digits)\n"
+              << "  --sl1-key-file <file>         Read SL1 shared secret key from file (hex or binary, >= 32 bytes)\n"
               << "  --sl1-key-id <id>             SL1 key ID (default: 1)\n"
               << "  --model <id>                  Model ID to advertise (default: linep-mock-v02)\n"
               << "  --delay-per-event <ms>        Delay between stream events (default: 2 ms)\n"
@@ -92,6 +117,12 @@ int main(int argc, char* argv[]) {
             std::string hex = argv[++i];
             if (!parse_hex_key(hex, cfg.sl1_key) || cfg.sl1_key.size() < 32) {
                 std::cerr << "Error: --sl1-key must be a valid hex string of at least 32 bytes (64 hex characters)\n";
+                return 1;
+            }
+        } else if (arg == "--sl1-key-file" && i + 1 < argc) {
+            std::string path = argv[++i];
+            if (!read_key_file(path, cfg.sl1_key) || cfg.sl1_key.size() < 32) {
+                std::cerr << "Error: --sl1-key-file must contain a valid hex string or raw key of at least 32 bytes\n";
                 return 1;
             }
         } else if (arg == "--sl1-key-id" && i + 1 < argc) {

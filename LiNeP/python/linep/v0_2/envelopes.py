@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import struct
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
@@ -12,7 +14,10 @@ from linep.v0_2.constants import (
     LINEP_V02_VERSION_MINOR,
     LINEP_V02_HEADER_SIZE,
     LINEP_V02_SESSION_BIND_PAYLOAD_SIZE,
+    LINEP_V02_FLAG_AUTHENTICATED,
+    LINEP_V02_AUTH_EXTENSION_SIZE,
     LINEP_V02_MAX_EMBEDDING_DIMS,
+    MessageDirection,
     RuntimeProfile,
     EnvelopeType,
     EventType,
@@ -263,10 +268,33 @@ class ControlEnvelope:
 
 
 @dataclass
+class AuthExtension:
+    auth_seq: int = 0
+    key_id: int = 0
+    reserved: int = 0
+    mac: bytes = field(default_factory=lambda: bytes(16))
+
+    def encode(self) -> bytes:
+        return struct.pack("<IHH16s", self.auth_seq, self.key_id, self.reserved, self.mac)
+
+    @classmethod
+    def decode(cls, data: bytes) -> Optional["AuthExtension"]:
+        if len(data) < LINEP_V02_AUTH_EXTENSION_SIZE:
+            return None
+        auth_seq, key_id, reserved, mac = struct.unpack_from("<IHH16s", data, 0)
+        if reserved != 0:
+            return None
+        return cls(auth_seq=auth_seq, key_id=key_id, reserved=reserved, mac=mac)
+
+
+@dataclass
 class SessionBindEnvelope:
     identity: NodeEndpointIdentity = field(default_factory=NodeEndpointIdentity)
     control_epoch: int = 0
     lease_token: int = 0
+    sl1_requested: bool = False
+    key_id: int = 0
+    auth_ext: Optional[AuthExtension] = None
 
     def is_valid(self) -> bool:
         return self.identity.is_valid() and self.lease_token != 0
@@ -779,13 +807,17 @@ def encode_session_bind(bind: SessionBindEnvelope) -> bytes:
         version_major=LINEP_V02_VERSION_MAJOR,
         version_minor=LINEP_V02_VERSION_MINOR,
         envelope_type=int(EnvelopeType.SESSION_BIND),
-        flags=0,
+        flags=LINEP_V02_FLAG_AUTHENTICATED if bind.sl1_requested else 0,
         request_id=0,
         execution_id=0,
         output_id=0,
         payload_len=len(payload),
     )
-    return encode_header(hdr) + payload
+    hdr_bytes = encode_header(hdr)
+    if bind.sl1_requested:
+        ext = bind.auth_ext if bind.auth_ext is not None else AuthExtension(auth_seq=1, key_id=bind.key_id)
+        return hdr_bytes + ext.encode() + payload
+    return hdr_bytes + payload
 
 
 def decode_session_bind(data: bytes) -> Optional[SessionBindEnvelope]:
@@ -796,17 +828,30 @@ def decode_session_bind(data: bytes) -> Optional[SessionBindEnvelope]:
         or hdr.magic != LINEP_V02_MAGIC
         or hdr.version_major != LINEP_V02_VERSION_MAJOR
         or hdr.envelope_type != int(EnvelopeType.SESSION_BIND)
-        or hdr.flags != 0
+        or (hdr.flags & ~LINEP_V02_FLAG_AUTHENTICATED) != 0
         or hdr.request_id != 0
         or hdr.execution_id != 0
         or hdr.output_id != 0
         or hdr.payload_len != LINEP_V02_SESSION_BIND_PAYLOAD_SIZE
-        or len(data) != (LINEP_V02_HEADER_SIZE + hdr.payload_len)
     ):
         return None
 
+    has_auth = (hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0
+    expected_size = LINEP_V02_HEADER_SIZE + (LINEP_V02_AUTH_EXTENSION_SIZE if has_auth else 0) + hdr.payload_len
+    if len(data) != expected_size:
+        return None
+
+    auth_ext = None
+    if has_auth:
+        auth_ext = AuthExtension.decode(data[LINEP_V02_HEADER_SIZE : LINEP_V02_HEADER_SIZE + LINEP_V02_AUTH_EXTENSION_SIZE])
+        if auth_ext is None:
+            return None
+        payload_offset = LINEP_V02_HEADER_SIZE + LINEP_V02_AUTH_EXTENSION_SIZE
+    else:
+        payload_offset = LINEP_V02_HEADER_SIZE
+
     try:
-        r = BufferReader(data[LINEP_V02_HEADER_SIZE : LINEP_V02_HEADER_SIZE + hdr.payload_len])
+        r = BufferReader(data[payload_offset : payload_offset + hdr.payload_len])
         node_id = r.read_u64()
         runtime_id = r.read_u64()
         endpoint_id = r.read_u32()
@@ -819,9 +864,92 @@ def decode_session_bind(data: bytes) -> Optional[SessionBindEnvelope]:
             identity=NodeEndpointIdentity(node_id=node_id, runtime_id=runtime_id, endpoint_id=endpoint_id),
             control_epoch=control_epoch,
             lease_token=lease_token,
+            sl1_requested=has_auth,
+            key_id=auth_ext.key_id if auth_ext else 0,
+            auth_ext=auth_ext,
         )
         if not bind.is_valid():
             return None
         return bind
     except Exception:
         return None
+
+
+def compute_sl1_mac(
+    secret_key: bytes,
+    header: WireEnvelopeHeader,
+    auth_ext: AuthExtension,
+    binding: SessionBindEnvelope,
+    direction: MessageDirection,
+    payload: bytes = b"",
+) -> bytes:
+    """Compute 16-byte SL1 truncated HMAC-SHA256 over canonical 80-byte prefix and payload."""
+    if not secret_key:
+        return bytes(16)
+    hdr_bytes = encode_header(header)
+    auth_prefix = struct.pack("<IHH", auth_ext.auth_seq, auth_ext.key_id, auth_ext.reserved)
+    bind_bytes = struct.pack(
+        "<QQIQQ",
+        binding.identity.node_id,
+        binding.identity.runtime_id,
+        binding.identity.endpoint_id,
+        binding.control_epoch,
+        binding.lease_token,
+    )
+    direction_bytes = struct.pack("<BBBB", int(direction), 0, 0, 0)
+    mac_input = hdr_bytes + auth_prefix + bind_bytes + direction_bytes + payload
+    full_digest = hmac.new(secret_key, mac_input, hashlib.sha256).digest()
+    return full_digest[:16]
+
+
+def sign_envelope(
+    raw_frame: bytes,
+    binding: SessionBindEnvelope,
+    direction: MessageDirection,
+    auth_seq: int,
+    key_id: int,
+    secret_key: bytes,
+) -> bytes:
+    """Sign an existing serialized envelope buffer with an SL1 wire_auth_extension."""
+    if len(raw_frame) < LINEP_V02_HEADER_SIZE or not secret_key or auth_seq == 0:
+        raise ValueError("Invalid parameters for envelope signing")
+    hdr = decode_header(raw_frame)
+    if hdr is None or len(raw_frame) != (LINEP_V02_HEADER_SIZE + hdr.payload_len):
+        raise ValueError("Invalid frame buffer for envelope signing")
+
+    hdr.flags |= LINEP_V02_FLAG_AUTHENTICATED
+    auth_ext = AuthExtension(auth_seq=auth_seq, key_id=key_id, reserved=0)
+    payload = raw_frame[LINEP_V02_HEADER_SIZE:]
+    auth_ext.mac = compute_sl1_mac(secret_key, hdr, auth_ext, binding, direction, payload)
+
+    new_hdr_bytes = encode_header(hdr)
+    return new_hdr_bytes + auth_ext.encode() + payload
+
+
+def verify_envelope(
+    raw_frame: bytes,
+    binding: SessionBindEnvelope,
+    direction: MessageDirection,
+    secret_key: bytes,
+) -> Tuple[bool, Optional[AuthExtension], Optional[bytes], str]:
+    """Verify an SL1 signed envelope buffer."""
+    if len(raw_frame) < (LINEP_V02_HEADER_SIZE + LINEP_V02_AUTH_EXTENSION_SIZE):
+        return False, None, None, "buffer too small for authenticated envelope"
+    hdr = decode_header(raw_frame)
+    if hdr is None:
+        return False, None, None, "header decode failed"
+    if (hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) == 0:
+        return False, None, None, "auth_required: missing authentication flag"
+    if len(raw_frame) != (LINEP_V02_HEADER_SIZE + LINEP_V02_AUTH_EXTENSION_SIZE + hdr.payload_len):
+        return False, None, None, "envelope size mismatch"
+
+    auth_ext = AuthExtension.decode(raw_frame[LINEP_V02_HEADER_SIZE : LINEP_V02_HEADER_SIZE + LINEP_V02_AUTH_EXTENSION_SIZE])
+    if auth_ext is None:
+        return False, None, None, "auth extension decode failed"
+
+    payload = raw_frame[LINEP_V02_HEADER_SIZE + LINEP_V02_AUTH_EXTENSION_SIZE :]
+    expected_mac = compute_sl1_mac(secret_key, hdr, auth_ext, binding, direction, payload)
+    if not hmac.compare_digest(auth_ext.mac, expected_mac):
+        return False, auth_ext, payload, "auth_invalid: MAC verification failed"
+    return True, auth_ext, payload, ""
+

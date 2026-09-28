@@ -81,7 +81,7 @@ Use this checklist when implementing or reviewing a LiNeP V0.2 adapter.
 - [ ] Fail-closed immediate socket teardown upon receiving unsigned or tampered frames post-bind
 - [ ] Receiver key rotation: accepts `current_key_id` and `previous_key_id` during transition window
 - [ ] Key length enforcement: pre-shared symmetric keys rejected if $< 32$ bytes (256 bits)
-- [ ] Unified 401 Unauthorized status for all authentication errors (`auth_missing`, `auth_bad_key`, `auth_bad_mac`, `auth_bad_seq`, `auth_seq_exhausted`)
+- [ ] Unified 401 Unauthorized status for all authentication errors (`auth_required`, `unknown_key`, `auth_invalid`, `auth_replay`, `auth_unexpected`, `auth_seq_exhausted`)
 
 ## Cancellation
 
