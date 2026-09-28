@@ -97,6 +97,14 @@ bool envelope_connection::send_request(const request_envelope& req) {
         return false;
     }
     std::lock_guard<std::mutex> lock(send_mutex_);
+    if (sl1_active_ && !sl1_key_.empty()) {
+        if (next_auth_seq_ >= 0xFFFFFFFF) {
+            return false; // Sequence exhausted, re-bind required
+        }
+        if (!sign_envelope_buffer(buf, sl1_binding_, sl1_direction_, next_auth_seq_++, sl1_key_id_, sl1_key_.data(), sl1_key_.size())) {
+            return false;
+        }
+    }
     return send_bytes_locked(buf.data(), buf.size());
 }
 
@@ -106,6 +114,14 @@ bool envelope_connection::send_event(const event_envelope& evt) {
         return false;
     }
     std::lock_guard<std::mutex> lock(send_mutex_);
+    if (sl1_active_ && !sl1_key_.empty()) {
+        if (next_auth_seq_ >= 0xFFFFFFFF) {
+            return false;
+        }
+        if (!sign_envelope_buffer(buf, sl1_binding_, sl1_direction_, next_auth_seq_++, sl1_key_id_, sl1_key_.data(), sl1_key_.size())) {
+            return false;
+        }
+    }
     return send_bytes_locked(buf.data(), buf.size());
 }
 
@@ -115,6 +131,14 @@ bool envelope_connection::send_control(const control_envelope& ctrl) {
         return false;
     }
     std::lock_guard<std::mutex> lock(send_mutex_);
+    if (sl1_active_ && !sl1_key_.empty()) {
+        if (next_auth_seq_ >= 0xFFFFFFFF) {
+            return false;
+        }
+        if (!sign_envelope_buffer(buf, sl1_binding_, sl1_direction_, next_auth_seq_++, sl1_key_id_, sl1_key_.data(), sl1_key_.size())) {
+            return false;
+        }
+    }
     return send_bytes_locked(buf.data(), buf.size());
 }
 
@@ -124,21 +148,84 @@ bool envelope_connection::send_capabilities(const capabilities_envelope& caps) {
         return false;
     }
     std::lock_guard<std::mutex> lock(send_mutex_);
+    if (sl1_active_ && !sl1_key_.empty()) {
+        if (next_auth_seq_ >= 0xFFFFFFFF) {
+            return false;
+        }
+        if (!sign_envelope_buffer(buf, sl1_binding_, sl1_direction_, next_auth_seq_++, sl1_key_id_, sl1_key_.data(), sl1_key_.size())) {
+            return false;
+        }
+    }
     return send_bytes_locked(buf.data(), buf.size());
 }
 
 bool envelope_connection::send_session_bind(const session_bind_envelope& bind) {
-    std::vector<std::uint8_t> buf;
-    if (!encode_session_bind(bind, buf)) {
-        return false;
-    }
     std::lock_guard<std::mutex> lock(send_mutex_);
+    std::vector<std::uint8_t> buf;
+    if (bind.sl1_requested && !sl1_key_.empty()) {
+        session_bind_envelope base_bind = bind;
+        base_bind.sl1_requested = false; // Encode base 68-byte frame without auth ext
+        if (!encode_session_bind(base_bind, buf)) {
+            return false;
+        }
+        sl1_binding_ = bind;
+        if (bind.key_id != 0) {
+            sl1_key_id_ = bind.key_id;
+        }
+        if (next_auth_seq_ >= 0xFFFFFFFF) {
+            return false; // Sequence exhausted, fail closed
+        }
+        if (!sign_envelope_buffer(buf, sl1_binding_, sl1_direction_, next_auth_seq_++, sl1_key_id_, sl1_key_.data(), sl1_key_.size())) {
+            return false;
+        }
+        sl1_active_ = true;
+    } else {
+        if (!encode_session_bind(bind, buf)) {
+            return false;
+        }
+    }
     return send_bytes_locked(buf.data(), buf.size());
 }
 
 bool envelope_connection::send_frame_raw(const std::uint8_t* data, std::size_t len) {
     std::lock_guard<std::mutex> lock(send_mutex_);
     return send_bytes_locked(data, len);
+}
+
+void envelope_connection::set_sl1_auth(const session_bind_envelope& binding, message_direction direction,
+                                      std::uint16_t key_id, const std::vector<std::uint8_t>& key)
+{
+    std::lock_guard<std::mutex> lock(send_mutex_);
+    if (!key.empty() && key.size() < 32) {
+        return; // Key must be at least 32 bytes (256 bits)
+    }
+    sl1_binding_ = binding;
+    sl1_direction_ = direction;
+    sl1_key_id_ = key_id;
+    sl1_key_ = key;
+    sl1_active_ = !key.empty();
+    next_auth_seq_ = 1;
+}
+
+void envelope_connection::set_sl1_key(std::uint16_t key_id, const std::vector<std::uint8_t>& key) {
+    std::lock_guard<std::mutex> lock(send_mutex_);
+    if (!key.empty() && key.size() < 32) {
+        return; // Key must be at least 32 bytes (256 bits)
+    }
+    sl1_key_id_ = key_id;
+    sl1_key_ = key;
+}
+
+void envelope_connection::clear_sl1_auth() noexcept {
+    std::lock_guard<std::mutex> lock(send_mutex_);
+    sl1_active_ = false;
+    sl1_key_.clear();
+    next_auth_seq_ = 1;
+}
+
+bool envelope_connection::is_sl1_active() const noexcept {
+    std::lock_guard<std::mutex> lock(send_mutex_);
+    return sl1_active_;
 }
 
 bool envelope_connection::receive_envelope_raw(std::vector<std::uint8_t>& out_buffer) {
@@ -165,12 +252,23 @@ bool envelope_connection::receive_envelope_raw(std::vector<std::uint8_t>& out_bu
         return false;
     }
 
-    out_buffer.resize(LINEP_V02_HEADER_SIZE + hdr.payload_len);
+    const bool is_auth = (hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0;
+
+    // After successful SL1 bind, all frames must be authenticated (fail-closed against spoofed unsigned 401)
+    if (sl1_active_ && !is_auth) {
+        close();
+        return false;
+    }
+
+    const std::size_t auth_ext_len = is_auth ? LINEP_V02_AUTH_EXTENSION_SIZE : 0;
+    const std::size_t total_body_len = auth_ext_len + hdr.payload_len;
+
+    out_buffer.resize(LINEP_V02_HEADER_SIZE + total_body_len);
     std::memcpy(out_buffer.data(), hdr_bytes, LINEP_V02_HEADER_SIZE);
 
-    if (hdr.payload_len > 0) {
-        if (!recv_all_bytes(out_buffer.data() + LINEP_V02_HEADER_SIZE, hdr.payload_len)) {
-            close(); // Fail closed on truncated payload
+    if (total_body_len > 0) {
+        if (!recv_all_bytes(out_buffer.data() + LINEP_V02_HEADER_SIZE, total_body_len)) {
+            close(); // Fail closed on truncated payload / auth extension
             return false;
         }
     }

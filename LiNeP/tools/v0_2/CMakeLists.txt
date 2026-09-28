@@ -5,9 +5,11 @@ function(linep_v02_tool TARGET_NAME SOURCE_FILE)
     target_include_directories(${TARGET_NAME} PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/src/pal
+        ${CMAKE_SOURCE_DIR}/src/core
     )
     target_link_libraries(${TARGET_NAME} PRIVATE
         $<TARGET_OBJECTS:linep_v02_core>
+        $<TARGET_OBJECTS:linep_core>
         $<TARGET_OBJECTS:linep_pal>
     )
     if(WIN32)

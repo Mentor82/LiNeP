@@ -32,3 +32,16 @@ LEASE_ACK) and hands its router to the TCP server, so every `SESSION_BIND` is
 validated against the control plane. `--require-lease` additionally rejects
 REQUESTs on unbound (401, closed) and stale (401 `stale_binding`, open)
 connections. It needs `--udp-port`.
+
+## SL1 MAC Authentication
+
+```text
+linep-v02-mock-runtime --port 11435 --require-sl1 --sl1-key 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20 --sl1-key-id 1
+```
+
+`--require-sl1` enforces that all incoming `SESSION_BIND` frames carry the SL1
+authentication extension (`FLAG_AUTHENTICATED`) signed with HMAC-SHA256 (`auth_seq = 1`),
+responds with a signed server confirmation frame, and validates monotonic framing
+on all subsequent requests and events. `--sl1-key` supplies the 32-byte (64 hex characters)
+shared secret, and `--sl1-key-id` specifies the primary key identifier.
+

@@ -35,6 +35,10 @@ struct mock_runtime_config {
     std::uint32_t embedding_dimensions{768};
     std::size_t max_buffered_bytes_per_stream{1024 * 1024};
     bool require_lease{false};
+    bool require_sl1{false};
+    std::uint16_t sl1_key_id{1};
+    std::vector<std::uint8_t> sl1_key{};
+    std::unordered_map<std::uint16_t, std::vector<std::uint8_t>> sl1_keys{};
 };
 
 class control_plane_router;

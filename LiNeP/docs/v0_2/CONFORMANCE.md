@@ -1,4 +1,4 @@
-﻿# LiNeP V0.2 Conformance Harness & Verification Specification
+# LiNeP V0.2 Conformance Harness & Verification Specification
 
 ## 1. Conformance Principle
 
@@ -19,6 +19,11 @@ Conformance to LiNeP V0.2 is based strictly on **executed test suite verificatio
 | `PROTOCOL_VIOLATION_FAIL_CLOSED` | Immediate socket teardown (`close()`) upon tampered magic or corrupt framing. | All Profiles |
 | `CONTENT_SNAPSHOT_EQUIVALENCE` | Full cumulative text snapshot delivery via `content_snapshot` events. | `PROFILE_GENERATE` |
 | `MULTI_OUTPUT_STREAMING` | Concurrent delivery of multiple candidates (`output_id = 0, 1, ...`) under shared execution. | `PROFILE_GENERATE` |
+| `SL1_MUTUAL_HANDSHAKE` | Signed `SESSION_BIND` (`auth_seq = 1`, client $\to$ server) with signed server confirmation (`auth_seq = 1`, server $\to$ client). | `PROFILE_SL1` |
+| `SL1_AUTHENTICATED_STREAMING` | Full HMAC-SHA256 authenticated streaming pipeline with monotonic `auth_seq >= 2` and key validation. | `PROFILE_SL1` |
+| `SL1_MISSING_AUTH_REJECTION` | Unauthenticated frame rejected on active SL1 session; connection terminates fail-closed. | `PROFILE_SL1` |
+| `SL1_WRONG_KEY_REJECTION` | Tampered signature or invalid `key_id` rejected with 401 Unauthorized. | `PROFILE_SL1` |
+| `SL1_REPLAY_REJECTION` | Stale or replayed `auth_seq` rejected with 401 Unauthorized; strict sequence monotonicity. | `PROFILE_SL1` |
 
 ---
 
@@ -28,6 +33,7 @@ Conformance to LiNeP V0.2 is based strictly on **executed test suite verificatio
 PROFILE_GENERATE ...... CONFORMANT
 PROFILE_CHAT .......... CONFORMANT
 PROFILE_EMBED ......... CONFORMANT
+PROFILE_SL1 ........... CONFORMANT
 ```
 
 ---
@@ -42,3 +48,6 @@ The `mock_runtime_server` provides deterministic reproduction of edge cases:
 - `--fail-after N`: Forces runtime error 500 mid-stream.
 - `--cancel-after-accept`: Tests cancellation race before first output is generated.
 - `--disconnect-before-terminal`: Tests client behavior under abrupt TCP teardown.
+- `--require-sl1`: Enforces strict SL1 authenticated framing on all incoming data connections.
+- `--sl1-key <hex>`: Configures 256-bit pre-shared symmetric key (hex-encoded, $\ge 32$ bytes).
+- `--sl1-key-id <id>`: Configures the active `key_id` (default: 1).

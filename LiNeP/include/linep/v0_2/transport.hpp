@@ -40,6 +40,13 @@ public:
     // Receive the next binary envelope from the TCP stream (blocking)
     bool receive_envelope_raw(std::vector<std::uint8_t>& out_buffer);
 
+    // SL1 authentication configuration
+    void set_sl1_auth(const session_bind_envelope& binding, message_direction direction,
+                      std::uint16_t key_id, const std::vector<std::uint8_t>& key);
+    void set_sl1_key(std::uint16_t key_id, const std::vector<std::uint8_t>& key);
+    void clear_sl1_auth() noexcept;
+    bool is_sl1_active() const noexcept;
+
     // Connection state & lifecycle
     bool is_connected() const noexcept;
     void close() noexcept;
@@ -52,6 +59,13 @@ private:
 
     std::uintptr_t sock_{~static_cast<std::uintptr_t>(0u)};
     mutable std::mutex send_mutex_;
+
+    bool sl1_active_{false};
+    session_bind_envelope sl1_binding_{};
+    message_direction sl1_direction_{message_direction::initiator_to_responder};
+    std::uint16_t sl1_key_id_{1};
+    std::vector<std::uint8_t> sl1_key_{};
+    std::uint32_t next_auth_seq_{1};
 };
 
 class envelope_server {

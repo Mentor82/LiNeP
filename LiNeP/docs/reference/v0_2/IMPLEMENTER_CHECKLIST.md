@@ -68,6 +68,21 @@ Use this checklist when implementing or reviewing a LiNeP V0.2 adapter.
 - [ ] 64-bit `lease_token` treated as logical lease handle, not cryptographic bearer auth (LiNeP-SL provides cryptographic security)
 - [ ] new incarnation cannot resurrect old execution state
 
+## Security Layer: Profile SL1
+
+- [ ] `FLAG_AUTHENTICATED` (0x01) asserted in envelope header flags byte 7
+- [ ] 24-byte `wire_auth_extension` (`auth_seq: u32`, `key_id: u16`, `reserved: u16`, `mac: [16]u8`) placed immediately after 32-byte header
+- [ ] Authenticated `SESSION_BIND` wire size is exactly 92 bytes ($32 + 24 + 36$)
+- [ ] HMAC-SHA256 truncated to 16 bytes over canonical 80-byte prefix (header, auth_ext prefix, bound identity/lease, direction) and payload
+- [ ] Mutual key confirmation: `SESSION_BIND` is signed (`auth_seq = 1`, client $\to$ server) and confirmed with signed frame (`auth_seq = 1`, server $\to$ client)
+- [ ] Inbound and outbound sequence counters strictly monotonic ($S_{new} > S_{last}$) starting at 1
+- [ ] Sequence counter overflow protection: fail-closed with 401 (`auth_seq_exhausted`) at $2^{32}-1$, no wrap-around
+- [ ] Strict post-bind enforcement: all frames (including error events on `(0, 0, 0)` and `CAPABILITIES`) are signed once SL1 is active
+- [ ] Fail-closed immediate socket teardown upon receiving unsigned or tampered frames post-bind
+- [ ] Receiver key rotation: accepts `current_key_id` and `previous_key_id` during transition window
+- [ ] Key length enforcement: pre-shared symmetric keys rejected if $< 32$ bytes (256 bits)
+- [ ] Unified 401 Unauthorized status for all authentication errors (`auth_missing`, `auth_bad_key`, `auth_bad_mac`, `auth_bad_seq`, `auth_seq_exhausted`)
+
 ## Cancellation
 
 - [ ] targeted output cancellation is unambiguous
@@ -118,6 +133,7 @@ Epoch / Replay
 Lease Binding
 Availability
 Dual-Plane Integration
+Security Profile (SL1)
 Failure Semantics
 Cross-language Interop
 ```

@@ -180,6 +180,110 @@ void test_golden_frames_roundtrip() {
     LINEP_TEST_CHECK(decoded_bind.control_epoch == 1);
     LINEP_TEST_CHECK(decoded_bind.lease_token == 0xAABBCCDDEEFF0011ULL);
 
+    // 5. SL1 Mutual Handshake & MAC Reference Frames
+    const std::vector<std::uint8_t> sl1_primary_key(32, 0x33);
+    const std::vector<std::uint8_t> sl1_rotated_key(32, 0x77);
+
+    session_bind_envelope sl1_bind = bind_env;
+    sl1_bind.sl1_requested = true;
+    sl1_bind.key_id = 1;
+    session_bind_envelope base_bind = sl1_bind;
+    base_bind.sl1_requested = false;
+
+    // 5a. SL1 Signed Bind (Client -> Server, auth_seq = 1)
+    std::vector<std::uint8_t> sl1_bind_buf;
+    LINEP_TEST_CHECK(encode_session_bind(base_bind, sl1_bind_buf));
+    LINEP_TEST_CHECK(sign_envelope_buffer(sl1_bind_buf, sl1_bind, message_direction::initiator_to_responder,
+                                          1, 1, sl1_primary_key.data(), sl1_primary_key.size()));
+    LINEP_TEST_CHECK(sl1_bind_buf.size() == 92); // 32 header + 24 auth + 36 payload
+    LINEP_TEST_CHECK(write_file((temp_dir / "session_bind_sl1_cpp.bin").string(), sl1_bind_buf));
+
+    LINEP_TEST_CHECK(read_file((temp_dir / "session_bind_sl1_cpp.bin").string(), read_buf));
+    session_bind_envelope decoded_sl1_bind{};
+    LINEP_TEST_CHECK(decode_session_bind(read_buf.data(), read_buf.size(), decoded_sl1_bind));
+    LINEP_TEST_CHECK(decoded_sl1_bind.sl1_requested);
+    LINEP_TEST_CHECK(decoded_sl1_bind.key_id == 1);
+    wire_auth_extension sl1_ext{};
+    std::string err;
+    LINEP_TEST_CHECK(verify_envelope_buffer(read_buf.data(), read_buf.size(), sl1_bind,
+                                            message_direction::initiator_to_responder,
+                                            sl1_primary_key.data(), sl1_primary_key.size(),
+                                            sl1_ext, &err));
+    LINEP_TEST_CHECK(sl1_ext.auth_seq == 1);
+
+    // 5b. SL1 Signed Confirmation (Server -> Client, auth_seq = 1)
+    std::vector<std::uint8_t> sl1_conf_buf;
+    LINEP_TEST_CHECK(encode_session_bind(base_bind, sl1_conf_buf));
+    LINEP_TEST_CHECK(sign_envelope_buffer(sl1_conf_buf, sl1_bind, message_direction::responder_to_initiator,
+                                          1, 1, sl1_primary_key.data(), sl1_primary_key.size()));
+    LINEP_TEST_CHECK(sl1_conf_buf.size() == 92);
+    LINEP_TEST_CHECK(write_file((temp_dir / "session_bind_sl1_confirm_cpp.bin").string(), sl1_conf_buf));
+
+    LINEP_TEST_CHECK(read_file((temp_dir / "session_bind_sl1_confirm_cpp.bin").string(), read_buf));
+    LINEP_TEST_CHECK(verify_envelope_buffer(read_buf.data(), read_buf.size(), sl1_bind,
+                                            message_direction::responder_to_initiator,
+                                            sl1_primary_key.data(), sl1_primary_key.size(),
+                                            sl1_ext, &err));
+    LINEP_TEST_CHECK(sl1_ext.auth_seq == 1);
+
+    // 5c. SL1 Signed Request (Client -> Server, auth_seq = 2, key_id = 1)
+    std::vector<std::uint8_t> sl1_req_buf;
+    LINEP_TEST_CHECK(encode_request(req, sl1_req_buf));
+    LINEP_TEST_CHECK(sign_envelope_buffer(sl1_req_buf, sl1_bind, message_direction::initiator_to_responder,
+                                          2, 1, sl1_primary_key.data(), sl1_primary_key.size()));
+    LINEP_TEST_CHECK(write_file((temp_dir / "request_chat_sl1_cpp.bin").string(), sl1_req_buf));
+
+    LINEP_TEST_CHECK(read_file((temp_dir / "request_chat_sl1_cpp.bin").string(), read_buf));
+    request_envelope decoded_sl1_req{};
+    LINEP_TEST_CHECK(decode_request(read_buf.data(), read_buf.size(), decoded_sl1_req));
+    LINEP_TEST_CHECK(verify_envelope_buffer(read_buf.data(), read_buf.size(), sl1_bind,
+                                            message_direction::initiator_to_responder,
+                                            sl1_primary_key.data(), sl1_primary_key.size(),
+                                            sl1_ext, &err));
+    LINEP_TEST_CHECK(sl1_ext.auth_seq == 2);
+    LINEP_TEST_CHECK(sl1_ext.key_id == 1);
+
+    // 5d. SL1 Signed Request with Rotated Key (Client -> Server, auth_seq = 3, key_id = 2)
+    std::vector<std::uint8_t> sl1_rot_buf;
+    LINEP_TEST_CHECK(encode_request(req, sl1_rot_buf));
+    LINEP_TEST_CHECK(sign_envelope_buffer(sl1_rot_buf, sl1_bind, message_direction::initiator_to_responder,
+                                          3, 2, sl1_rotated_key.data(), sl1_rotated_key.size()));
+    LINEP_TEST_CHECK(write_file((temp_dir / "request_chat_sl1_rotated_key_cpp.bin").string(), sl1_rot_buf));
+
+    LINEP_TEST_CHECK(read_file((temp_dir / "request_chat_sl1_rotated_key_cpp.bin").string(), read_buf));
+    LINEP_TEST_CHECK(verify_envelope_buffer(read_buf.data(), read_buf.size(), sl1_bind,
+                                            message_direction::initiator_to_responder,
+                                            sl1_rotated_key.data(), sl1_rotated_key.size(),
+                                            sl1_ext, &err));
+    LINEP_TEST_CHECK(sl1_ext.auth_seq == 3);
+    LINEP_TEST_CHECK(sl1_ext.key_id == 2);
+
+    // 5e. SL1 Signed Content Delta (Server -> Client, auth_seq = 2, key_id = 1)
+    event_envelope evt_delta{};
+    evt_delta.stream.request_id = 1001;
+    evt_delta.stream.execution_id = 2001;
+    evt_delta.stream.output_id = 1;
+    evt_delta.event_seq = 42;
+    evt_delta.event_type = runtime_event_type::content_delta;
+    evt_delta.payload = "Neural";
+    evt_delta.timestamp_us = 1700000000123456ULL;
+
+    std::vector<std::uint8_t> sl1_delta_buf;
+    LINEP_TEST_CHECK(encode_event(evt_delta, sl1_delta_buf));
+    LINEP_TEST_CHECK(sign_envelope_buffer(sl1_delta_buf, sl1_bind, message_direction::responder_to_initiator,
+                                          2, 1, sl1_primary_key.data(), sl1_primary_key.size()));
+    LINEP_TEST_CHECK(write_file((temp_dir / "event_delta_sl1_cpp.bin").string(), sl1_delta_buf));
+
+    LINEP_TEST_CHECK(read_file((temp_dir / "event_delta_sl1_cpp.bin").string(), read_buf));
+    event_envelope decoded_sl1_delta{};
+    LINEP_TEST_CHECK(decode_event(read_buf.data(), read_buf.size(), decoded_sl1_delta));
+    LINEP_TEST_CHECK(verify_envelope_buffer(read_buf.data(), read_buf.size(), sl1_bind,
+                                            message_direction::responder_to_initiator,
+                                            sl1_primary_key.data(), sl1_primary_key.size(),
+                                            sl1_ext, &err));
+    LINEP_TEST_CHECK(sl1_ext.auth_seq == 2);
+    LINEP_TEST_CHECK(sl1_ext.key_id == 1);
+
     fs::remove_all(temp_dir);
     std::cout << "  -> Golden Frames Generation & Verification PASSED" << std::endl;
 }

@@ -18,6 +18,27 @@ static void signal_handler(int) {
     g_shutdown = true;
 }
 
+static bool parse_hex_key(const std::string& hex, std::vector<std::uint8_t>& out) {
+    if (hex.size() % 2 != 0) return false;
+    out.clear();
+    out.reserve(hex.size() / 2);
+    for (std::size_t i = 0; i < hex.size(); i += 2) {
+        char high = hex[i];
+        char low = hex[i + 1];
+        auto hex_val = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
+        };
+        int h = hex_val(high);
+        int l = hex_val(low);
+        if (h < 0 || l < 0) return false;
+        out.push_back(static_cast<std::uint8_t>((h << 4) | l));
+    }
+    return true;
+}
+
 static void print_usage(const char* prog) {
     std::cout << "LiNeP V0.2 Deterministic Mock Runtime Server\n"
               << "Usage: " << prog << " [OPTIONS]\n\n"
@@ -25,6 +46,9 @@ static void print_usage(const char* prog) {
               << "  --port <port>                 TCP listen port (default: 11435, 0 for ephemeral)\n"
               << "  --udp-port <port>             UDP control plane (lease issuer) port (default: 0 = disabled)\n"
               << "  --require-lease               Reject REQUESTs without a current SESSION_BIND (needs --udp-port)\n"
+              << "  --require-sl1                 Require SL1 authenticated session binding on all trunks\n"
+              << "  --sl1-key <hex>               Hex-encoded SL1 shared secret key (>= 32 bytes / 64 hex digits)\n"
+              << "  --sl1-key-id <id>             SL1 key ID (default: 1)\n"
               << "  --model <id>                  Model ID to advertise (default: linep-mock-v02)\n"
               << "  --delay-per-event <ms>        Delay between stream events (default: 2 ms)\n"
               << "  --tokens <N>                  Default tokens to generate per stream (default: 10)\n"
@@ -62,6 +86,16 @@ int main(int argc, char* argv[]) {
             udp_port = static_cast<std::uint16_t>(std::stoi(argv[++i]));
         } else if (arg == "--require-lease") {
             cfg.require_lease = true;
+        } else if (arg == "--require-sl1") {
+            cfg.require_sl1 = true;
+        } else if (arg == "--sl1-key" && i + 1 < argc) {
+            std::string hex = argv[++i];
+            if (!parse_hex_key(hex, cfg.sl1_key) || cfg.sl1_key.size() < 32) {
+                std::cerr << "Error: --sl1-key must be a valid hex string of at least 32 bytes (64 hex characters)\n";
+                return 1;
+            }
+        } else if (arg == "--sl1-key-id" && i + 1 < argc) {
+            cfg.sl1_key_id = static_cast<std::uint16_t>(std::stoul(argv[++i]));
         } else if (arg == "--model" && i + 1 < argc) {
             cfg.model_id = argv[++i];
         } else if (arg == "--delay-per-event" && i + 1 < argc) {
@@ -101,6 +135,14 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    if (cfg.require_sl1 && cfg.sl1_key.empty()) {
+        std::cerr << "Error: --require-sl1 requires --sl1-key <hex> (at least 32 bytes)\n";
+        return 1;
+    }
+    if (!cfg.sl1_key.empty() && cfg.sl1_key_id == 0) {
+        cfg.sl1_key_id = 1;
+    }
+
     if (cfg.require_lease && udp_port == 0) {
         std::cerr << "--require-lease needs --udp-port: clients obtain leases on the UDP control plane\n";
         return 1;
@@ -125,6 +167,11 @@ int main(int argc, char* argv[]) {
     std::uint16_t bound_tcp = server.get_bound_port();
     std::cout << "[LiNeP Mock Runtime] TCP Data Plane listening on 0.0.0.0:" << bound_tcp << "\n";
     std::cout << "  Model: " << cfg.model_id << " | Tokens: " << cfg.default_tokens << " | Delay: " << cfg.delay_per_event_ms << "ms\n";
+    if (cfg.require_sl1) {
+        std::cout << "  SL1 Authentication: REQUIRED (key_id=" << cfg.sl1_key_id << ", " << cfg.sl1_key.size() << " bytes)\n";
+    } else if (!cfg.sl1_key.empty()) {
+        std::cout << "  SL1 Authentication: OPTIONAL (key_id=" << cfg.sl1_key_id << ", " << cfg.sl1_key.size() << " bytes)\n";
+    }
     if (issuer.is_running()) {
         std::cout << "[LiNeP Mock Runtime] UDP Control Plane (lease issuer) listening on 0.0.0.0:" << issuer.get_bound_port() << "\n";
         std::cout << "  SESSION_BIND: " << (cfg.require_lease ? "required before REQUEST" : "optional (binds are validated)") << "\n";

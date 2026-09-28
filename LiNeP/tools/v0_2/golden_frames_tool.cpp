@@ -13,6 +13,20 @@
 
 using namespace linep::v0_2;
 
+static const std::vector<std::uint8_t> GOLDEN_SL1_KEY_PRIMARY = {
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+    0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20
+};
+
+static const std::vector<std::uint8_t> GOLDEN_SL1_KEY_ROTATED = {
+    0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11,
+    0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
+    0x01, 0x12, 0x23, 0x34, 0x45, 0x56, 0x67, 0x78,
+    0x89, 0x9A, 0xAB, 0xBC, 0xCD, 0xDE, 0xEF, 0xF0
+};
+
 static bool write_file(const std::string& path, const std::vector<std::uint8_t>& data) {
     std::ofstream ofs(path, std::ios::binary);
     if (!ofs.is_open()) {
@@ -289,6 +303,56 @@ int do_generate(const std::string& dir) {
     bind.lease_token = 0xAABBCCDDEEFF0011ULL;
     std::vector<std::uint8_t> bind_buf;
     if (!encode_session_bind(bind, bind_buf) || !write_file(dir + "/session_bind_cpp.bin", bind_buf)) {
+        return 1;
+    }
+
+    // 15. SL1 Signed SESSION_BIND (Client -> Server, auth_seq = 1)
+    session_bind_envelope sl1_bind = bind;
+    sl1_bind.sl1_requested = true;
+    sl1_bind.key_id = 1;
+    session_bind_envelope base_bind = sl1_bind;
+    base_bind.sl1_requested = false;
+    std::vector<std::uint8_t> sl1_bind_buf;
+    encode_session_bind(base_bind, sl1_bind_buf);
+    sign_envelope_buffer(sl1_bind_buf, sl1_bind, message_direction::initiator_to_responder,
+                         1, 1, GOLDEN_SL1_KEY_PRIMARY.data(), GOLDEN_SL1_KEY_PRIMARY.size());
+    if (!write_file(dir + "/session_bind_sl1_cpp.bin", sl1_bind_buf)) {
+        return 1;
+    }
+
+    // 16. SL1 Server Confirmation SESSION_BIND (Server -> Client, auth_seq = 1)
+    std::vector<std::uint8_t> sl1_confirm_buf;
+    encode_session_bind(base_bind, sl1_confirm_buf);
+    sign_envelope_buffer(sl1_confirm_buf, sl1_bind, message_direction::responder_to_initiator,
+                         1, 1, GOLDEN_SL1_KEY_PRIMARY.data(), GOLDEN_SL1_KEY_PRIMARY.size());
+    if (!write_file(dir + "/session_bind_sl1_confirm_cpp.bin", sl1_confirm_buf)) {
+        return 1;
+    }
+
+    // 17. SL1 Signed Request (Client -> Server, auth_seq = 2, key_id = 1)
+    std::vector<std::uint8_t> sl1_req_buf;
+    encode_request(req, sl1_req_buf);
+    sign_envelope_buffer(sl1_req_buf, sl1_bind, message_direction::initiator_to_responder,
+                         2, 1, GOLDEN_SL1_KEY_PRIMARY.data(), GOLDEN_SL1_KEY_PRIMARY.size());
+    if (!write_file(dir + "/request_chat_sl1_cpp.bin", sl1_req_buf)) {
+        return 1;
+    }
+
+    // 18. SL1 Signed Request with Rotated Key (Client -> Server, auth_seq = 3, key_id = 2)
+    std::vector<std::uint8_t> sl1_rot_req_buf;
+    encode_request(req, sl1_rot_req_buf);
+    sign_envelope_buffer(sl1_rot_req_buf, sl1_bind, message_direction::initiator_to_responder,
+                         3, 2, GOLDEN_SL1_KEY_ROTATED.data(), GOLDEN_SL1_KEY_ROTATED.size());
+    if (!write_file(dir + "/request_chat_sl1_rotated_key_cpp.bin", sl1_rot_req_buf)) {
+        return 1;
+    }
+
+    // 19. SL1 Signed Content Delta Event (Server -> Client, auth_seq = 2, key_id = 1)
+    std::vector<std::uint8_t> sl1_delta_buf;
+    encode_event(evt_delta, sl1_delta_buf);
+    sign_envelope_buffer(sl1_delta_buf, sl1_bind, message_direction::responder_to_initiator,
+                         2, 1, GOLDEN_SL1_KEY_PRIMARY.data(), GOLDEN_SL1_KEY_PRIMARY.size());
+    if (!write_file(dir + "/event_delta_sl1_cpp.bin", sl1_delta_buf)) {
         return 1;
     }
 
@@ -631,7 +695,84 @@ int do_verify_cpp(const std::string& dir) {
     }
     std::cout << "  -> session_bind_cpp.bin: PASS" << std::endl;
 
-    std::cout << "[C++ Golden Tool] ALL 14 C++ REFERENCE FRAMES VERIFIED 100%!" << std::endl;
+    // 15. Verify SL1 Session Bind Frame
+    if (!read_file(dir + "/session_bind_sl1_cpp.bin", buf)) return 1;
+    session_bind_envelope sl1_bind_in{};
+    if (!decode_session_bind(buf.data(), buf.size(), sl1_bind_in) || !sl1_bind_in.sl1_requested || sl1_bind_in.key_id != 1) {
+        std::cerr << "C++ verification failed on session_bind_sl1_cpp.bin decode!" << std::endl;
+        return 1;
+    }
+    wire_auth_extension sl1_ext{};
+    std::string err;
+    if (!verify_envelope_buffer(buf.data(), buf.size(), sl1_bind_in, message_direction::initiator_to_responder,
+                                GOLDEN_SL1_KEY_PRIMARY.data(), GOLDEN_SL1_KEY_PRIMARY.size(), sl1_ext, &err) ||
+        sl1_ext.auth_seq != 1) {
+        std::cerr << "C++ verification failed on session_bind_sl1_cpp.bin MAC: " << err << std::endl;
+        return 1;
+    }
+    std::cout << "  -> session_bind_sl1_cpp.bin: PASS" << std::endl;
+
+    // 16. Verify SL1 Confirmation Frame
+    if (!read_file(dir + "/session_bind_sl1_confirm_cpp.bin", buf)) return 1;
+    session_bind_envelope sl1_conf_in{};
+    if (!decode_session_bind(buf.data(), buf.size(), sl1_conf_in) || !sl1_conf_in.sl1_requested || sl1_conf_in.key_id != 1) {
+        std::cerr << "C++ verification failed on session_bind_sl1_confirm_cpp.bin decode!" << std::endl;
+        return 1;
+    }
+    if (!verify_envelope_buffer(buf.data(), buf.size(), sl1_bind_in, message_direction::responder_to_initiator,
+                                GOLDEN_SL1_KEY_PRIMARY.data(), GOLDEN_SL1_KEY_PRIMARY.size(), sl1_ext, &err) ||
+        sl1_ext.auth_seq != 1) {
+        std::cerr << "C++ verification failed on session_bind_sl1_confirm_cpp.bin MAC: " << err << std::endl;
+        return 1;
+    }
+    std::cout << "  -> session_bind_sl1_confirm_cpp.bin: PASS" << std::endl;
+
+    // 17. Verify SL1 Request Frame (Primary Key)
+    if (!read_file(dir + "/request_chat_sl1_cpp.bin", buf)) return 1;
+    request_envelope sl1_req_in{};
+    if (!decode_request(buf.data(), buf.size(), sl1_req_in)) {
+        std::cerr << "C++ verification failed on request_chat_sl1_cpp.bin decode!" << std::endl;
+        return 1;
+    }
+    if (!verify_envelope_buffer(buf.data(), buf.size(), sl1_bind_in, message_direction::initiator_to_responder,
+                                GOLDEN_SL1_KEY_PRIMARY.data(), GOLDEN_SL1_KEY_PRIMARY.size(), sl1_ext, &err) ||
+        sl1_ext.auth_seq != 2 || sl1_ext.key_id != 1) {
+        std::cerr << "C++ verification failed on request_chat_sl1_cpp.bin MAC: " << err << std::endl;
+        return 1;
+    }
+    std::cout << "  -> request_chat_sl1_cpp.bin: PASS" << std::endl;
+
+    // 18. Verify SL1 Request Frame with Rotated Key
+    if (!read_file(dir + "/request_chat_sl1_rotated_key_cpp.bin", buf)) return 1;
+    request_envelope sl1_rot_req_in{};
+    if (!decode_request(buf.data(), buf.size(), sl1_rot_req_in)) {
+        std::cerr << "C++ verification failed on request_chat_sl1_rotated_key_cpp.bin decode!" << std::endl;
+        return 1;
+    }
+    if (!verify_envelope_buffer(buf.data(), buf.size(), sl1_bind_in, message_direction::initiator_to_responder,
+                                GOLDEN_SL1_KEY_ROTATED.data(), GOLDEN_SL1_KEY_ROTATED.size(), sl1_ext, &err) ||
+        sl1_ext.auth_seq != 3 || sl1_ext.key_id != 2) {
+        std::cerr << "C++ verification failed on request_chat_sl1_rotated_key_cpp.bin MAC: " << err << std::endl;
+        return 1;
+    }
+    std::cout << "  -> request_chat_sl1_rotated_key_cpp.bin: PASS" << std::endl;
+
+    // 19. Verify SL1 Content Delta Frame
+    if (!read_file(dir + "/event_delta_sl1_cpp.bin", buf)) return 1;
+    event_envelope sl1_delta_in{};
+    if (!decode_event(buf.data(), buf.size(), sl1_delta_in)) {
+        std::cerr << "C++ verification failed on event_delta_sl1_cpp.bin decode!" << std::endl;
+        return 1;
+    }
+    if (!verify_envelope_buffer(buf.data(), buf.size(), sl1_bind_in, message_direction::responder_to_initiator,
+                                GOLDEN_SL1_KEY_PRIMARY.data(), GOLDEN_SL1_KEY_PRIMARY.size(), sl1_ext, &err) ||
+        sl1_ext.auth_seq != 2 || sl1_ext.key_id != 1) {
+        std::cerr << "C++ verification failed on event_delta_sl1_cpp.bin MAC: " << err << std::endl;
+        return 1;
+    }
+    std::cout << "  -> event_delta_sl1_cpp.bin: PASS" << std::endl;
+
+    std::cout << "[C++ Golden Tool] ALL 19 C++ REFERENCE FRAMES VERIFIED 100%!" << std::endl;
     return 0;
 }
 

@@ -2,11 +2,13 @@ function(linep_v02_add_test name src)
     add_executable(${name} ${src})
     target_link_libraries(${name} PRIVATE
         $<TARGET_OBJECTS:linep_v02_core>
+        $<TARGET_OBJECTS:linep_core>
         $<TARGET_OBJECTS:linep_pal>
     )
     target_include_directories(${name} PRIVATE
         ${PROJECT_SOURCE_DIR}/include
         ${PROJECT_SOURCE_DIR}/src/pal
+        ${PROJECT_SOURCE_DIR}/src/core
     )
     if(WIN32)
         target_link_libraries(${name} PRIVATE ws2_32)

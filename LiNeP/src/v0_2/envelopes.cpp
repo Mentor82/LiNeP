@@ -1,4 +1,6 @@
 #include "linep/v0_2/envelopes.hpp"
+#include "sha256.hpp"
+#include "security.hpp"
 #include <algorithm>
 #include <cstring>
 
@@ -170,6 +172,180 @@ bool decode_header(const std::uint8_t* data, std::size_t size, wire_envelope_hea
     return true;
 }
 
+void encode_auth_extension(const wire_auth_extension& ext, std::vector<std::uint8_t>& out_buf) {
+    write_u32(out_buf, ext.auth_seq);
+    write_u16(out_buf, ext.key_id);
+    write_u16(out_buf, ext.reserved);
+    out_buf.insert(out_buf.end(), ext.mac, ext.mac + 16);
+}
+
+bool decode_auth_extension(const std::uint8_t* data, std::size_t size, wire_auth_extension& out_ext) {
+    if (!data || size < LINEP_V02_AUTH_EXTENSION_SIZE) {
+        return false;
+    }
+    buffer_reader r(data, LINEP_V02_AUTH_EXTENSION_SIZE);
+    if (!r.read_u32(out_ext.auth_seq)) return false;
+    if (!r.read_u16(out_ext.key_id)) return false;
+    if (!r.read_u16(out_ext.reserved)) return false;
+    if (out_ext.reserved != 0) return false;
+    std::memcpy(out_ext.mac, data + 8, 16);
+    return true;
+}
+
+void compute_sl1_mac(
+    const std::uint8_t*          secret_key,
+    std::size_t                  key_len,
+    const wire_envelope_header&  header,
+    const wire_auth_extension&   auth_ext,
+    const session_bind_envelope& binding,
+    message_direction            direction,
+    const std::uint8_t*          payload,
+    std::uint32_t                payload_len,
+    std::uint8_t                 out_mac[16]) noexcept
+{
+    if (!secret_key || key_len == 0 || !out_mac) {
+        if (out_mac) std::memset(out_mac, 0, 16);
+        return;
+    }
+
+    // Canonical MAC input buffer:
+    // 1. Header (32 bytes Little-Endian)
+    // 2. AuthExt prefix (8 bytes: auth_seq u32, key_id u16, reserved u16)
+    // 3. Bound Identity & Lease (36 bytes: node_id u64, runtime_id u64, endpoint_id u32, control_epoch u64, lease_token u64)
+    // 4. Direction (4 bytes: direction u8, 3 bytes zero padding)
+    // 5. Payload (payload_len bytes)
+    // Total prefix size = 32 + 8 + 36 + 4 = 80 bytes
+    std::vector<std::uint8_t> buf;
+    buf.reserve(80 + payload_len);
+
+    // 1. Header
+    encode_header(header, buf);
+
+    // 2. AuthExt prefix
+    write_u32(buf, auth_ext.auth_seq);
+    write_u16(buf, auth_ext.key_id);
+    write_u16(buf, auth_ext.reserved);
+
+    // 3. Bound Identity & Lease
+    write_u64(buf, binding.identity.node_id);
+    write_u64(buf, binding.identity.runtime_id);
+    write_u32(buf, binding.identity.endpoint_id);
+    write_u64(buf, binding.control_epoch);
+    write_u64(buf, binding.lease_token);
+
+    // 4. Direction
+    write_u8(buf, static_cast<std::uint8_t>(direction));
+    write_u8(buf, 0);
+    write_u8(buf, 0);
+    write_u8(buf, 0);
+
+    // 5. Payload
+    if (payload && payload_len > 0) {
+        buf.insert(buf.end(), payload, payload + payload_len);
+    }
+
+    std::uint8_t full_mac[32];
+    linep::core::hmac_sha256(secret_key, key_len, buf.data(), buf.size(), full_mac);
+    std::memcpy(out_mac, full_mac, 16);
+}
+
+bool verify_sl1_mac(
+    const std::uint8_t*          secret_key,
+    std::size_t                  key_len,
+    const wire_envelope_header&  header,
+    const wire_auth_extension&   auth_ext,
+    const session_bind_envelope& binding,
+    message_direction            direction,
+    const std::uint8_t*          payload,
+    std::uint32_t                payload_len) noexcept
+{
+    std::uint8_t expected_mac[16];
+    compute_sl1_mac(secret_key, key_len, header, auth_ext, binding, direction, payload, payload_len, expected_mac);
+    return linep::core::constant_time_memcmp16(auth_ext.mac, expected_mac);
+}
+
+bool sign_envelope_buffer(
+    std::vector<std::uint8_t>&   in_out_envelope_buf,
+    const session_bind_envelope& binding,
+    message_direction            direction,
+    std::uint32_t                auth_seq,
+    std::uint16_t                key_id,
+    const std::uint8_t*          secret_key,
+    std::size_t                  key_len)
+{
+    if (in_out_envelope_buf.size() < LINEP_V02_HEADER_SIZE || !secret_key || key_len == 0 || auth_seq == 0) {
+        return false;
+    }
+    wire_envelope_header hdr{};
+    if (!decode_header(in_out_envelope_buf.data(), LINEP_V02_HEADER_SIZE, hdr)) {
+        return false;
+    }
+    if (in_out_envelope_buf.size() != LINEP_V02_HEADER_SIZE + hdr.payload_len) {
+        return false;
+    }
+
+    hdr.flags |= LINEP_V02_FLAG_AUTHENTICATED;
+
+    wire_auth_extension ext{};
+    ext.auth_seq = auth_seq;
+    ext.key_id = key_id;
+    ext.reserved = 0;
+
+    const std::uint8_t* payload_ptr = hdr.payload_len > 0 ? (in_out_envelope_buf.data() + LINEP_V02_HEADER_SIZE) : nullptr;
+    compute_sl1_mac(secret_key, key_len, hdr, ext, binding, direction, payload_ptr, hdr.payload_len, ext.mac);
+
+    std::vector<std::uint8_t> new_hdr_buf;
+    new_hdr_buf.reserve(LINEP_V02_HEADER_SIZE);
+    encode_header(hdr, new_hdr_buf);
+
+    std::vector<std::uint8_t> ext_buf;
+    ext_buf.reserve(LINEP_V02_AUTH_EXTENSION_SIZE);
+    encode_auth_extension(ext, ext_buf);
+
+    std::memcpy(in_out_envelope_buf.data(), new_hdr_buf.data(), LINEP_V02_HEADER_SIZE);
+    in_out_envelope_buf.insert(in_out_envelope_buf.begin() + LINEP_V02_HEADER_SIZE, ext_buf.begin(), ext_buf.end());
+    return true;
+}
+
+bool verify_envelope_buffer(
+    const std::uint8_t*          data,
+    std::size_t                  size,
+    const session_bind_envelope& binding,
+    message_direction            direction,
+    const std::uint8_t*          secret_key,
+    std::size_t                  key_len,
+    wire_auth_extension&         out_auth_ext,
+    std::string*                 out_error)
+{
+    if (!data || size < (LINEP_V02_HEADER_SIZE + LINEP_V02_AUTH_EXTENSION_SIZE)) {
+        if (out_error) *out_error = "buffer too small for authenticated envelope";
+        return false;
+    }
+    wire_envelope_header hdr{};
+    if (!decode_header(data, LINEP_V02_HEADER_SIZE, hdr)) {
+        if (out_error) *out_error = "header decode failed";
+        return false;
+    }
+    if ((hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) == 0) {
+        if (out_error) *out_error = "auth_required: missing authentication flag";
+        return false;
+    }
+    if (size != (LINEP_V02_HEADER_SIZE + LINEP_V02_AUTH_EXTENSION_SIZE + hdr.payload_len)) {
+        if (out_error) *out_error = "envelope size mismatch";
+        return false;
+    }
+    if (!decode_auth_extension(data + LINEP_V02_HEADER_SIZE, LINEP_V02_AUTH_EXTENSION_SIZE, out_auth_ext)) {
+        if (out_error) *out_error = "auth extension decode failed";
+        return false;
+    }
+    const std::uint8_t* payload_ptr = hdr.payload_len > 0 ? (data + LINEP_V02_HEADER_SIZE + LINEP_V02_AUTH_EXTENSION_SIZE) : nullptr;
+    if (!verify_sl1_mac(secret_key, key_len, hdr, out_auth_ext, binding, direction, payload_ptr, hdr.payload_len)) {
+        if (out_error) *out_error = "auth_invalid: MAC verification failed";
+        return false;
+    }
+    return true;
+}
+
 runtime_envelope_type peek_envelope_type(const std::uint8_t* data, std::size_t size) noexcept {
     wire_envelope_header hdr{};
     if (!decode_header(data, size, hdr)) {
@@ -262,7 +438,10 @@ bool decode_request(const std::uint8_t* data, std::size_t size, request_envelope
         return false;
     }
 
-    if (size < (LINEP_V02_HEADER_SIZE + hdr.payload_len)) {
+    const bool is_auth = (hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0;
+    const std::size_t auth_ext_len = is_auth ? LINEP_V02_AUTH_EXTENSION_SIZE : 0;
+
+    if (size < (LINEP_V02_HEADER_SIZE + auth_ext_len + hdr.payload_len)) {
         return false; // Truncated buffer
     }
 
@@ -270,7 +449,7 @@ bool decode_request(const std::uint8_t* data, std::size_t size, request_envelope
     out_req.stream.execution_id = hdr.execution_id;
     out_req.stream.output_id = hdr.output_id;
 
-    buffer_reader r(data + LINEP_V02_HEADER_SIZE, hdr.payload_len);
+    buffer_reader r(data + LINEP_V02_HEADER_SIZE + auth_ext_len, hdr.payload_len);
     std::uint8_t prof{};
     if (!r.read_u8(prof)) return false;
     out_req.profile = static_cast<runtime_profile>(prof);
@@ -398,7 +577,10 @@ bool decode_event(const std::uint8_t* data, std::size_t size, event_envelope& ou
         return false;
     }
 
-    if (size < (LINEP_V02_HEADER_SIZE + hdr.payload_len)) {
+    const bool is_auth = (hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0;
+    const std::size_t auth_ext_len = is_auth ? LINEP_V02_AUTH_EXTENSION_SIZE : 0;
+
+    if (size < (LINEP_V02_HEADER_SIZE + auth_ext_len + hdr.payload_len)) {
         return false;
     }
 
@@ -406,7 +588,7 @@ bool decode_event(const std::uint8_t* data, std::size_t size, event_envelope& ou
     out_evt.stream.execution_id = hdr.execution_id;
     out_evt.stream.output_id = hdr.output_id;
 
-    buffer_reader r(data + LINEP_V02_HEADER_SIZE, hdr.payload_len);
+    buffer_reader r(data + LINEP_V02_HEADER_SIZE + auth_ext_len, hdr.payload_len);
     if (!r.read_u64(out_evt.event_seq)) return false;
 
     std::uint8_t ev_type{}, outcome{}, err_cat{};
@@ -498,7 +680,10 @@ bool decode_control(const std::uint8_t* data, std::size_t size, control_envelope
         return false;
     }
 
-    if (size < (LINEP_V02_HEADER_SIZE + hdr.payload_len)) {
+    const bool is_auth = (hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0;
+    const std::size_t auth_ext_len = is_auth ? LINEP_V02_AUTH_EXTENSION_SIZE : 0;
+
+    if (size < (LINEP_V02_HEADER_SIZE + auth_ext_len + hdr.payload_len)) {
         return false;
     }
 
@@ -506,7 +691,7 @@ bool decode_control(const std::uint8_t* data, std::size_t size, control_envelope
     out_ctrl.stream.execution_id = hdr.execution_id;
     out_ctrl.stream.output_id = hdr.output_id;
 
-    buffer_reader r(data + LINEP_V02_HEADER_SIZE, hdr.payload_len);
+    buffer_reader r(data + LINEP_V02_HEADER_SIZE + auth_ext_len, hdr.payload_len);
     std::uint8_t ctrl_type{};
     if (!r.read_u8(ctrl_type)) return false;
     out_ctrl.control_type = static_cast<runtime_control_type>(ctrl_type);
@@ -583,11 +768,14 @@ bool decode_capabilities(const std::uint8_t* data, std::size_t size, capabilitie
         return false;
     }
 
-    if (size < (LINEP_V02_HEADER_SIZE + hdr.payload_len)) {
+    const bool is_auth = (hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0;
+    const std::size_t auth_ext_len = is_auth ? LINEP_V02_AUTH_EXTENSION_SIZE : 0;
+
+    if (size < (LINEP_V02_HEADER_SIZE + auth_ext_len + hdr.payload_len)) {
         return false;
     }
 
-    buffer_reader r(data + LINEP_V02_HEADER_SIZE, hdr.payload_len);
+    buffer_reader r(data + LINEP_V02_HEADER_SIZE + auth_ext_len, hdr.payload_len);
     auto& desc = out_caps.descriptor;
 
     std::uint16_t prof_count{};
@@ -665,16 +853,23 @@ bool encode_session_bind(const session_bind_envelope& bind, std::vector<std::uin
     hdr.version_major = LINEP_V02_VERSION_MAJOR;
     hdr.version_minor = LINEP_V02_VERSION_MINOR;
     hdr.envelope_type = static_cast<std::uint8_t>(runtime_envelope_type::session_bind);
-    hdr.flags = 0;
+    hdr.flags = bind.sl1_requested ? LINEP_V02_FLAG_AUTHENTICATED : 0;
     hdr.request_id = 0;
     hdr.execution_id = 0;
     hdr.output_id = 0;
     hdr.payload_len = static_cast<std::uint32_t>(payload_buf.size());
 
     out_buffer.clear();
-    out_buffer.reserve(LINEP_V02_HEADER_SIZE + payload_buf.size());
-    encode_header(hdr, out_buffer);
-    out_buffer.insert(out_buffer.end(), payload_buf.begin(), payload_buf.end());
+    if (bind.sl1_requested) {
+        out_buffer.reserve(LINEP_V02_HEADER_SIZE + LINEP_V02_AUTH_EXTENSION_SIZE + payload_buf.size());
+        encode_header(hdr, out_buffer);
+        encode_auth_extension(bind.auth_ext, out_buffer);
+        out_buffer.insert(out_buffer.end(), payload_buf.begin(), payload_buf.end());
+    } else {
+        out_buffer.reserve(LINEP_V02_HEADER_SIZE + payload_buf.size());
+        encode_header(hdr, out_buffer);
+        out_buffer.insert(out_buffer.end(), payload_buf.begin(), payload_buf.end());
+    }
     return true;
 }
 
@@ -687,7 +882,7 @@ bool decode_session_bind(const std::uint8_t* data, std::size_t size, session_bin
     if (hdr.magic != LINEP_V02_MAGIC ||
         hdr.version_major != LINEP_V02_VERSION_MAJOR ||
         hdr.envelope_type != static_cast<std::uint8_t>(runtime_envelope_type::session_bind) ||
-        hdr.flags != 0) {
+        (hdr.flags & ~LINEP_V02_FLAG_AUTHENTICATED) != 0) { // Reject any unexpected flags
         return false;
     }
 
@@ -700,12 +895,27 @@ bool decode_session_bind(const std::uint8_t* data, std::size_t size, session_bin
         return false;
     }
 
-    // Exact framing check: reject truncated or trailing garbage bytes
-    if (size != (LINEP_V02_HEADER_SIZE + hdr.payload_len)) {
-        return false;
+    const bool has_auth = (hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0;
+    const std::size_t expected_size = LINEP_V02_HEADER_SIZE + (has_auth ? LINEP_V02_AUTH_EXTENSION_SIZE : 0) + hdr.payload_len;
+    if (size != expected_size) {
+        return false; // Exact framing check: reject truncated or trailing garbage bytes
     }
 
-    buffer_reader r(data + LINEP_V02_HEADER_SIZE, hdr.payload_len);
+    const std::uint8_t* payload_ptr = nullptr;
+    if (has_auth) {
+        if (!decode_auth_extension(data + LINEP_V02_HEADER_SIZE, LINEP_V02_AUTH_EXTENSION_SIZE, out_bind.auth_ext)) {
+            return false;
+        }
+        out_bind.sl1_requested = true;
+        out_bind.key_id = out_bind.auth_ext.key_id;
+        payload_ptr = data + LINEP_V02_HEADER_SIZE + LINEP_V02_AUTH_EXTENSION_SIZE;
+    } else {
+        out_bind.sl1_requested = false;
+        out_bind.auth_ext = wire_auth_extension{};
+        payload_ptr = data + LINEP_V02_HEADER_SIZE;
+    }
+
+    buffer_reader r(payload_ptr, hdr.payload_len);
     if (!r.read_u64(out_bind.identity.node_id)) return false;
     if (!r.read_u64(out_bind.identity.runtime_id)) return false;
     if (!r.read_u32(out_bind.identity.endpoint_id)) return false;

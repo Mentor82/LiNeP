@@ -12,6 +12,7 @@ add_library(linep_v02_core OBJECT
 target_include_directories(linep_v02_core PUBLIC
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/src/pal
+    ${PROJECT_SOURCE_DIR}/src/core
 )
 
 set_target_properties(linep_v02_core PROPERTIES

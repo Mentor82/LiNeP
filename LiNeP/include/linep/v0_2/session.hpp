@@ -40,6 +40,11 @@ struct session_descriptor {
     std::uint64_t session_id{0};
     session_limits limits{};
     bool require_lease{false};
+    bool require_sl1{false};
+    std::uint16_t current_key_id{1};
+    std::uint16_t previous_key_id{0}; // 0 = none; accepted during rotation grace window
+    std::uint16_t default_key_id{1};
+    std::unordered_map<std::uint16_t, std::vector<std::uint8_t>> sl1_keys{};
 };
 
 struct active_stream_state {
@@ -104,6 +109,34 @@ public:
     void mark_binding_stale();
     session_bind_envelope bound_session() const;
 
+    // SL1 configuration & key management
+    bool require_sl1() const noexcept { return descriptor_.require_sl1; }
+    void set_require_sl1(bool require) noexcept { descriptor_.require_sl1 = require; }
+    bool add_sl1_key(std::uint16_t key_id, std::vector<std::uint8_t> key);
+    bool get_sl1_key(std::uint16_t key_id, std::vector<std::uint8_t>& out_key) const;
+    void set_default_key_id(std::uint16_t key_id) noexcept { descriptor_.default_key_id = key_id; }
+    std::uint16_t default_key_id() const noexcept { return descriptor_.default_key_id; }
+    void set_rotation_keys(std::uint16_t current_id, std::uint16_t previous_id) noexcept {
+        descriptor_.current_key_id = current_id;
+        descriptor_.previous_key_id = previous_id;
+        descriptor_.default_key_id = current_id;
+    }
+    bool is_sl1_active() const noexcept;
+
+    // SL1 inbound frame verification and sequence validation
+    bool verify_inbound_frame(
+        const std::uint8_t* data,
+        std::size_t size,
+        message_direction direction,
+        wire_auth_extension& out_auth_ext,
+        runtime_error& out_err);
+
+    // SL1 outbound frame signing
+    bool sign_outbound_frame(
+        std::vector<std::uint8_t>& in_out_buf,
+        message_direction direction,
+        runtime_error& out_err);
+
     // Fail-closed termination of all in-flight streams on connection disconnect / error
     std::size_t terminate_all_active_streams(terminal_outcome outcome = terminal_outcome::unknown, const runtime_error& err = {});
 
@@ -113,6 +146,9 @@ private:
     std::unordered_map<stream_identity, active_stream_state, stream_identity_hash> active_streams_;
     session_binding_state binding_state_{session_binding_state::unbound};
     session_bind_envelope bound_bind_{};
+    bool is_sl1_active_{false};
+    std::uint32_t next_outbound_auth_seq_{1};
+    std::uint32_t expected_inbound_auth_seq_{1};
 };
 
 } // namespace linep::v0_2

@@ -382,6 +382,45 @@ bool session_manager::process_session_bind(const session_bind_envelope& bind, co
         }
     }
 
+    // Check if SL1 is required on this trunk
+    if (descriptor_.require_sl1 && !bind.sl1_requested) {
+        out_err.category = error_category::unauthorized;
+        out_err.code = 401;
+        out_err.message = "auth_required: SL1 authentication required on this trunk";
+        return false;
+    }
+
+    if (bind.sl1_requested) {
+        if (descriptor_.sl1_keys.empty()) {
+            out_err.category = error_category::unauthorized;
+            out_err.code = 401;
+            out_err.message = "unknown_key: no SL1 key configured";
+            return false;
+        }
+        auto it = descriptor_.sl1_keys.find(bind.auth_ext.key_id);
+        if (it == descriptor_.sl1_keys.end()) {
+            out_err.category = error_category::unauthorized;
+            out_err.code = 401;
+            out_err.message = "unknown_key: key_id not recognized";
+            return false;
+        }
+        if (descriptor_.previous_key_id != 0) {
+            if (bind.auth_ext.key_id != descriptor_.current_key_id &&
+                bind.auth_ext.key_id != descriptor_.previous_key_id) {
+                out_err.category = error_category::unauthorized;
+                out_err.code = 401;
+                out_err.message = "unknown_key: key_id outside rotation window";
+                return false;
+            }
+        }
+        if (bind.auth_ext.auth_seq != 1) {
+            out_err.category = error_category::unauthorized;
+            out_err.code = 401;
+            out_err.message = "auth_invalid: bind auth_seq must be 1";
+            return false;
+        }
+    }
+
     // Idempotent duplicate bind: same lease token & epoch while already bound
     if (binding_state_ == session_binding_state::bound_current && bound_bind_ == bind) {
         return true;
@@ -389,6 +428,214 @@ bool session_manager::process_session_bind(const session_bind_envelope& bind, co
 
     bound_bind_ = bind;
     binding_state_ = session_binding_state::bound_current;
+    if (bind.sl1_requested) {
+        is_sl1_active_ = true;
+        next_outbound_auth_seq_ = 1;
+        expected_inbound_auth_seq_ = 2; // Sequence 1 was consumed by SESSION_BIND
+    } else {
+        is_sl1_active_ = false;
+    }
+    return true;
+}
+
+bool session_manager::add_sl1_key(std::uint16_t key_id, std::vector<std::uint8_t> key) {
+    if (key.size() < 32) {
+        return false; // Minimum key length requirement >= 32 bytes (256 bits)
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    descriptor_.sl1_keys[key_id] = std::move(key);
+    return true;
+}
+
+bool session_manager::get_sl1_key(std::uint16_t key_id, std::vector<std::uint8_t>& out_key) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = descriptor_.sl1_keys.find(key_id);
+    if (it == descriptor_.sl1_keys.end()) {
+        return false;
+    }
+    out_key = it->second;
+    return true;
+}
+
+bool session_manager::is_sl1_active() const noexcept {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return is_sl1_active_;
+}
+
+bool session_manager::verify_inbound_frame(
+    const std::uint8_t* data,
+    std::size_t size,
+    message_direction direction,
+    wire_auth_extension& out_auth_ext,
+    runtime_error& out_err)
+{
+    if (!data || size < LINEP_V02_HEADER_SIZE) {
+        out_err.category = error_category::bad_request;
+        out_err.code = 400;
+        out_err.message = "Malformed envelope: truncated header";
+        return false;
+    }
+
+    wire_envelope_header hdr{};
+    if (!decode_header(data, LINEP_V02_HEADER_SIZE, hdr)) {
+        out_err.category = error_category::bad_request;
+        out_err.code = 400;
+        out_err.message = "Malformed envelope header";
+        return false;
+    }
+
+    // SESSION_BIND is connection-level handshake (handled via process_session_bind)
+    if (hdr.envelope_type == static_cast<std::uint8_t>(runtime_envelope_type::session_bind)) {
+        return true;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    const bool has_auth = (hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0;
+
+    if (!is_sl1_active_) {
+        if (has_auth) {
+            out_err.category = error_category::unauthorized;
+            out_err.code = 401;
+            out_err.message = "auth_unexpected: authenticated envelope received on non-SL1 connection";
+            return false;
+        }
+        return true; // Unauthenticated connection, regular frame
+    }
+
+    // SL1 is active on this connection: all frames MUST be authenticated
+    if (!has_auth) {
+        out_err.category = error_category::unauthorized;
+        out_err.code = 401;
+        out_err.message = "auth_required: unauthenticated envelope received on SL1 connection";
+        return false;
+    }
+
+    if (size < (LINEP_V02_HEADER_SIZE + LINEP_V02_AUTH_EXTENSION_SIZE)) {
+        out_err.category = error_category::unauthorized;
+        out_err.code = 401;
+        out_err.message = "auth_invalid: envelope truncated";
+        return false;
+    }
+
+    if (!decode_auth_extension(data + LINEP_V02_HEADER_SIZE, LINEP_V02_AUTH_EXTENSION_SIZE, out_auth_ext)) {
+        out_err.category = error_category::unauthorized;
+        out_err.code = 401;
+        out_err.message = "auth_invalid: invalid auth extension";
+        return false;
+    }
+
+    // Replay / sequence check (strictly monotone per direction)
+    if (out_auth_ext.auth_seq != expected_inbound_auth_seq_) {
+        out_err.category = error_category::unauthorized;
+        out_err.code = 401;
+        out_err.message = "auth_replay: sequence mismatch (expected " +
+                          std::to_string(expected_inbound_auth_seq_) + ", got " +
+                          std::to_string(out_auth_ext.auth_seq) + ")";
+        return false;
+    }
+
+    // Key lookup & rotation check (accept current and previous key_id during grace window)
+    if (descriptor_.previous_key_id != 0) {
+        if (out_auth_ext.key_id != descriptor_.current_key_id &&
+            out_auth_ext.key_id != descriptor_.previous_key_id) {
+            out_err.category = error_category::unauthorized;
+            out_err.code = 401;
+            out_err.message = "unknown_key: key_id " + std::to_string(out_auth_ext.key_id) + " outside rotation window";
+            return false;
+        }
+    }
+    auto it = descriptor_.sl1_keys.find(out_auth_ext.key_id);
+    if (it == descriptor_.sl1_keys.end()) {
+        out_err.category = error_category::unauthorized;
+        out_err.code = 401;
+        out_err.message = "unknown_key: key_id " + std::to_string(out_auth_ext.key_id) + " not found";
+        return false;
+    }
+
+    // MAC verification
+    std::string verify_err;
+    if (!verify_envelope_buffer(
+            data, size, bound_bind_, direction,
+            it->second.data(), it->second.size(),
+            out_auth_ext, &verify_err)) {
+        out_err.category = error_category::unauthorized;
+        out_err.code = 401;
+        out_err.message = "auth_invalid: " + verify_err;
+        return false;
+    }
+
+    // Sequence accepted (bounded at 2^32-1)
+    if (expected_inbound_auth_seq_ < 0xFFFFFFFF) {
+        expected_inbound_auth_seq_++;
+    }
+    return true;
+}
+
+bool session_manager::sign_outbound_frame(
+    std::vector<std::uint8_t>& in_out_buf,
+    message_direction direction,
+    runtime_error& out_err)
+{
+    if (in_out_buf.size() < LINEP_V02_HEADER_SIZE) {
+        out_err.category = error_category::bad_request;
+        out_err.code = 400;
+        out_err.message = "Buffer too small for envelope header";
+        return false;
+    }
+
+    wire_envelope_header hdr{};
+    if (!decode_header(in_out_buf.data(), LINEP_V02_HEADER_SIZE, hdr)) {
+        out_err.category = error_category::bad_request;
+        out_err.code = 400;
+        out_err.message = "Failed to decode envelope header";
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!is_sl1_active_) {
+        return true; // Not an SL1 connection, send frame as-is
+    }
+
+    // Sender always uses current_key_id
+    std::uint16_t key_id = descriptor_.current_key_id;
+    auto it = descriptor_.sl1_keys.find(key_id);
+    if (it == descriptor_.sl1_keys.end()) {
+        key_id = descriptor_.default_key_id;
+        it = descriptor_.sl1_keys.find(key_id);
+        if (it == descriptor_.sl1_keys.end()) {
+            if (!descriptor_.sl1_keys.empty()) {
+                it = descriptor_.sl1_keys.begin();
+                key_id = it->first;
+            } else {
+                out_err.category = error_category::unauthorized;
+                out_err.code = 401;
+                out_err.message = "unknown_key: no SL1 key configured for signing";
+                return false;
+            }
+        }
+    }
+
+    // Overflow protection: 32-bit sequence cannot wrap around
+    if (next_outbound_auth_seq_ >= 0xFFFFFFFF) {
+        out_err.category = error_category::unauthorized;
+        out_err.code = 401;
+        out_err.message = "auth_seq_exhausted: 32-bit sequence limit reached, re-bind required";
+        return false;
+    }
+
+    std::uint32_t seq = next_outbound_auth_seq_;
+    if (!sign_envelope_buffer(
+            in_out_buf, bound_bind_, direction, seq, key_id,
+            it->second.data(), it->second.size())) {
+        out_err.category = error_category::internal;
+        out_err.code = 500;
+        out_err.message = "Failed to sign envelope buffer";
+        return false;
+    }
+
+    next_outbound_auth_seq_++;
     return true;
 }
 

@@ -77,6 +77,13 @@ void mock_runtime_server::client_loop(std::shared_ptr<envelope_connection> conn)
     session_descriptor desc{};
     desc.limits.max_buffered_bytes_per_stream = config_.max_buffered_bytes_per_stream;
     desc.require_lease = config_.require_lease;
+    desc.require_sl1 = config_.require_sl1;
+    desc.current_key_id = config_.sl1_key_id;
+    desc.default_key_id = config_.sl1_key_id;
+    desc.sl1_keys = config_.sl1_keys;
+    if (desc.sl1_keys.empty() && !config_.sl1_key.empty()) {
+        desc.sl1_keys[config_.sl1_key_id] = config_.sl1_key;
+    }
     session_manager session(desc);
 
     std::vector<std::thread> workers;
@@ -115,6 +122,69 @@ void mock_runtime_server::client_loop(std::shared_ptr<envelope_connection> conn)
                 conn->close();
                 break;
             }
+
+            // If SL1 is required, incoming bind MUST have requested SL1
+            if (config_.require_sl1 && !bind.sl1_requested) {
+                event_envelope fail_evt{};
+                fail_evt.stream = stream_identity{0, 0, 0};
+                fail_evt.event_seq = 1;
+                fail_evt.event_type = runtime_event_type::failed;
+                fail_evt.outcome = terminal_outcome::failed;
+                fail_evt.error.category = error_category::unauthorized;
+                fail_evt.error.code = 401;
+                fail_evt.error.message = "auth_required";
+                conn->send_event(fail_evt);
+                conn->close();
+                break;
+            }
+
+            // If bind requested SL1, verify MAC and key before binding
+            if (bind.sl1_requested) {
+                std::vector<std::uint8_t> key;
+                if (!session.get_sl1_key(bind.auth_ext.key_id, key)) {
+                    event_envelope fail_evt{};
+                    fail_evt.stream = stream_identity{0, 0, 0};
+                    fail_evt.event_seq = 1;
+                    fail_evt.event_type = runtime_event_type::failed;
+                    fail_evt.outcome = terminal_outcome::failed;
+                    fail_evt.error.category = error_category::unauthorized;
+                    fail_evt.error.code = 401;
+                    fail_evt.error.message = "unknown_key";
+                    conn->send_event(fail_evt);
+                    conn->close();
+                    break;
+                }
+                if (bind.auth_ext.auth_seq != 1) {
+                    event_envelope fail_evt{};
+                    fail_evt.stream = stream_identity{0, 0, 0};
+                    fail_evt.event_seq = 1;
+                    fail_evt.event_type = runtime_event_type::failed;
+                    fail_evt.outcome = terminal_outcome::failed;
+                    fail_evt.error.category = error_category::unauthorized;
+                    fail_evt.error.code = 401;
+                    fail_evt.error.message = "auth_replay";
+                    conn->send_event(fail_evt);
+                    conn->close();
+                    break;
+                }
+                wire_auth_extension ext{};
+                std::string err_msg;
+                if (!verify_envelope_buffer(raw.data(), raw.size(), bind, message_direction::initiator_to_responder,
+                                            key.data(), key.size(), ext, &err_msg)) {
+                    event_envelope fail_evt{};
+                    fail_evt.stream = stream_identity{0, 0, 0};
+                    fail_evt.event_seq = 1;
+                    fail_evt.event_type = runtime_event_type::failed;
+                    fail_evt.outcome = terminal_outcome::failed;
+                    fail_evt.error.category = error_category::unauthorized;
+                    fail_evt.error.code = 401;
+                    fail_evt.error.message = "auth_invalid";
+                    conn->send_event(fail_evt);
+                    conn->close();
+                    break;
+                }
+            }
+
             runtime_error err{};
             if (!session.process_session_bind(bind, router_, err)) {
                 event_envelope fail_evt{};
@@ -129,7 +199,47 @@ void mock_runtime_server::client_loop(std::shared_ptr<envelope_connection> conn)
                 conn->close();
                 break;
             }
-        } else if (hdr.envelope_type == static_cast<std::uint8_t>(runtime_envelope_type::request)) {
+
+            // If bind requested SL1, server confirms with signed frame!
+            if (bind.sl1_requested) {
+                std::vector<std::uint8_t> key;
+                session.get_sl1_key(bind.auth_ext.key_id, key);
+                conn->set_sl1_auth(bind, message_direction::responder_to_initiator, bind.auth_ext.key_id, key);
+                session_bind_envelope confirm = bind;
+                confirm.sl1_requested = true;
+                conn->send_session_bind(confirm);
+            }
+        } else {
+            // Verify inbound SL1 frame if SL1 is active
+            if (session.is_sl1_active()) {
+                wire_auth_extension in_ext{};
+                runtime_error auth_err{};
+                if (!session.verify_inbound_frame(raw.data(), raw.size(), message_direction::initiator_to_responder, in_ext, auth_err)) {
+                    event_envelope fail_evt{};
+                    fail_evt.stream = stream_identity{0, 0, 0};
+                    fail_evt.event_seq = 1;
+                    fail_evt.event_type = runtime_event_type::failed;
+                    fail_evt.outcome = terminal_outcome::failed;
+                    fail_evt.error = auth_err;
+                    conn->send_event(fail_evt);
+                    conn->close();
+                    break;
+                }
+            } else if (config_.require_sl1) {
+                event_envelope fail_evt{};
+                fail_evt.stream = stream_identity{0, 0, 0};
+                fail_evt.event_seq = 1;
+                fail_evt.event_type = runtime_event_type::failed;
+                fail_evt.outcome = terminal_outcome::failed;
+                fail_evt.error.category = error_category::unauthorized;
+                fail_evt.error.code = 401;
+                fail_evt.error.message = "auth_required";
+                conn->send_event(fail_evt);
+                conn->close();
+                break;
+            }
+
+            if (hdr.envelope_type == static_cast<std::uint8_t>(runtime_envelope_type::request)) {
             request_envelope req{};
             if (decode_request(raw.data(), raw.size(), req)) {
                 if (router_ != nullptr && session.binding_state() == session_binding_state::bound_current) {
@@ -181,6 +291,7 @@ void mock_runtime_server::client_loop(std::shared_ptr<envelope_connection> conn)
             conn->send_capabilities(caps);
         }
     }
+}
 
     for (auto& w : workers) {
         if (w.joinable()) {

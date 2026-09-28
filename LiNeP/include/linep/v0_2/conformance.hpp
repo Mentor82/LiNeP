@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <cstdint>
 #include <memory>
@@ -79,17 +79,34 @@ public:
     test_result test_dual_plane_identity_change();
     test_result test_dual_plane_malformed_bind();
 
+    // SL1 MAC authentication credentials. When set, run_all() adds the PROFILE_SL1 suites.
+    void set_sl1_credentials(std::uint16_t key_id, std::vector<std::uint8_t> key);
+    bool has_sl1() const noexcept { return !sl1_key_.empty(); }
+
+    // Run only the PROFILE_SL1 test suites
+    conformance_report run_sl1();
+
+    // Standardized SL1 test suites:
+    test_result test_sl1_mutual_handshake();
+    test_result test_sl1_authenticated_streaming();
+    test_result test_sl1_missing_auth_rejection();
+    test_result test_sl1_wrong_key_rejection();
+    test_result test_sl1_replay_rejection();
+
 private:
     std::unique_ptr<envelope_connection> create_connection();
     std::unique_ptr<lease_client> make_lease_client() const;
     bool ensure_lease(std::string& out_error);
     void run_dual_plane_suites(conformance_report& rep);
+    void run_sl1_suites(conformance_report& rep);
 
     std::string host_;
     std::uint16_t port_;
     std::string control_host_;
     std::uint16_t control_port_{0};
     std::unique_ptr<lease_client> lease_;
+    std::uint16_t sl1_key_id_{1};
+    std::vector<std::uint8_t> sl1_key_;
 };
 
 } // namespace linep::v0_2

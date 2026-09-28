@@ -1,4 +1,4 @@
-﻿#include "linep/v0_2/conformance.hpp"
+#include "linep/v0_2/conformance.hpp"
 #include <chrono>
 #include <cmath>
 #include <iostream>
@@ -17,11 +17,24 @@ void conformance_runner::set_control_endpoint(std::string host, std::uint16_t po
     lease_.reset();
 }
 
+void conformance_runner::set_sl1_credentials(std::uint16_t key_id, std::vector<std::uint8_t> key) {
+    sl1_key_id_ = key_id;
+    sl1_key_ = std::move(key);
+    if (lease_) {
+        lease_->set_sl1(true, sl1_key_id_, sl1_key_);
+    }
+}
+
 std::unique_ptr<lease_client> conformance_runner::make_lease_client() const {
     lease_client_config cfg{};
     cfg.control_host = control_host_;
     cfg.control_port = control_port_;
     cfg.trunk_port = port_;
+    if (has_sl1()) {
+        cfg.enable_sl1 = true;
+        cfg.sl1_key_id = sl1_key_id_;
+        cfg.sl1_key = sl1_key_;
+    }
     return std::make_unique<lease_client>(cfg);
 }
 
@@ -34,15 +47,34 @@ bool conformance_runner::ensure_lease(std::string& out_error) {
 }
 
 std::unique_ptr<envelope_connection> conformance_runner::create_connection() {
-    if (!has_control_endpoint()) {
-        return envelope_connection::connect(host_, port_);
+    if (has_control_endpoint()) {
+        std::string err;
+        if (!ensure_lease(err)) {
+            std::cerr << "[conformance] lease acquisition failed: " << err << std::endl;
+            return nullptr;
+        }
+        return connect_bound(host_, port_, *lease_);
     }
-    std::string err;
-    if (!ensure_lease(err)) {
-        std::cerr << "[conformance] lease acquisition failed: " << err << std::endl;
-        return nullptr;
+    auto conn = envelope_connection::connect(host_, port_);
+    if (conn && has_sl1()) {
+        session_bind_envelope bind{};
+        bind.identity = node_endpoint_identity{1001, 2001, 1};
+        bind.control_epoch = 1;
+        bind.lease_token = 0xC0FFEE1234ULL;
+        bind.sl1_requested = true;
+        bind.key_id = sl1_key_id_;
+        conn->set_sl1_auth(bind, message_direction::initiator_to_responder, sl1_key_id_, sl1_key_);
+        if (!conn->send_session_bind(bind)) {
+            conn->close();
+            return nullptr;
+        }
+        std::vector<std::uint8_t> raw;
+        if (!conn->receive_envelope_raw(raw)) {
+            conn->close();
+            return nullptr;
+        }
     }
-    return connect_bound(host_, port_, *lease_);
+    return conn;
 }
 
 conformance_report conformance_runner::run_all() {
@@ -97,6 +129,10 @@ conformance_report conformance_runner::run_all() {
         run_dual_plane_suites(rep);
     }
 
+    if (has_sl1()) {
+        run_sl1_suites(rep);
+    }
+
     return rep;
 }
 
@@ -104,6 +140,13 @@ conformance_report conformance_runner::run_dual_plane() {
     conformance_report rep{};
     rep.target_endpoint = host_ + ":" + std::to_string(port_);
     run_dual_plane_suites(rep);
+    return rep;
+}
+
+conformance_report conformance_runner::run_sl1() {
+    conformance_report rep{};
+    rep.target_endpoint = host_ + ":" + std::to_string(port_);
+    run_sl1_suites(rep);
     return rep;
 }
 
@@ -139,14 +182,45 @@ void conformance_runner::run_dual_plane_suites(conformance_report& rep) {
     rep.profiles.push_back(p_dual);
 }
 
+void conformance_runner::run_sl1_suites(conformance_report& rep) {
+    profile_conformance_status p_sl1{};
+    p_sl1.profile = runtime_profile::unspecified;
+    p_sl1.profile_name = "PROFILE_SL1";
+    p_sl1.conformant = true;
+
+    auto run_test = [&](test_result res) {
+        rep.total_tests++;
+        if (res.passed) {
+            rep.passed_tests++;
+            p_sl1.passed_suites.push_back(res.test_name);
+        } else {
+            rep.failed_tests++;
+            p_sl1.failed_suites.push_back(res.test_name);
+            p_sl1.conformant = false;
+        }
+        rep.results.push_back(res);
+    };
+
+    if (!has_sl1()) {
+        run_test(test_result{"SL1_CREDENTIALS", false, "No SL1 shared secret configured", 0});
+    } else {
+        run_test(test_sl1_mutual_handshake());
+        run_test(test_sl1_authenticated_streaming());
+        run_test(test_sl1_missing_auth_rejection());
+        run_test(test_sl1_wrong_key_rejection());
+        run_test(test_sl1_replay_rejection());
+    }
+    rep.profiles.push_back(p_sl1);
+}
+
 conformance_report conformance_runner::run_profile(runtime_profile profile) {
     auto full = run_all();
     conformance_report filtered{};
     filtered.target_endpoint = full.target_endpoint;
 
     for (const auto& p : full.profiles) {
-        // The dual-plane profile gates every profile once a control endpoint is set
-        if (p.profile == profile || p.profile_name == "PROFILE_DUAL_PLANE") {
+        // The dual-plane and SL1 profiles gate every profile once enabled
+        if (p.profile == profile || p.profile_name == "PROFILE_DUAL_PLANE" || p.profile_name == "PROFILE_SL1") {
             filtered.profiles.push_back(p);
         }
     }
@@ -889,7 +963,7 @@ test_result conformance_runner::test_dual_plane_malformed_bind() {
         res.details = "Failed to encode SESSION_BIND";
         return res;
     }
-    frame[7] = 0x01; // reserved header flags must be zero
+    frame[7] = 0x80; // reserved header flags must be zero (0x01 is FLAG_AUTHENTICATED in V0.2)
 
     auto conn = envelope_connection::connect(host_, port_);
     if (!conn || !conn->send_frame_raw(frame.data(), frame.size())) {
@@ -910,6 +984,332 @@ test_result conformance_runner::test_dual_plane_malformed_bind() {
     res.duration_ms = elapsed_ms(t0);
     res.passed = true;
     res.details = "Malformed SESSION_BIND rejected with 400 and closed";
+    return res;
+}
+
+test_result conformance_runner::test_sl1_mutual_handshake() {
+    auto t0 = std::chrono::steady_clock::now();
+    test_result res{"SL1_MUTUAL_HANDSHAKE", false, "", 0};
+
+    auto conn = envelope_connection::connect(host_, port_);
+    if (!conn) {
+        res.details = "Failed to connect to " + host_ + ":" + std::to_string(port_);
+        return res;
+    }
+
+    session_bind_envelope bind{};
+    if (lease_ && lease_->has_lease()) {
+        bind = lease_->current_bind();
+    } else {
+        bind.identity = node_endpoint_identity{1001, 2001, 1};
+        bind.control_epoch = 1;
+        bind.lease_token = 0xC0FFEE1234ULL;
+    }
+    bind.sl1_requested = true;
+    bind.key_id = sl1_key_id_;
+
+    conn->set_sl1_auth(bind, message_direction::initiator_to_responder, sl1_key_id_, sl1_key_);
+    if (!conn->send_session_bind(bind)) {
+        res.details = "Failed to send signed SESSION_BIND";
+        return res;
+    }
+
+    std::vector<std::uint8_t> raw;
+    if (!conn->receive_envelope_raw(raw)) {
+        res.details = "No confirmation frame received from server";
+        return res;
+    }
+
+    wire_envelope_header hdr{};
+    if (!decode_header(raw.data(), raw.size(), hdr)) {
+        res.details = "Malformed confirmation frame header";
+        return res;
+    }
+
+    if (hdr.envelope_type != static_cast<std::uint8_t>(runtime_envelope_type::session_bind)) {
+        res.details = "Expected SESSION_BIND confirmation, got envelope type " + std::to_string(hdr.envelope_type);
+        return res;
+    }
+
+    session_bind_envelope confirm{};
+    if (!decode_session_bind(raw.data(), raw.size(), confirm)) {
+        res.details = "Failed to decode SESSION_BIND confirmation";
+        return res;
+    }
+
+    if (!confirm.sl1_requested) {
+        res.details = "Server confirmation missing sl1_requested / FLAG_AUTHENTICATED";
+        return res;
+    }
+
+    wire_auth_extension ext{};
+    std::string err;
+    if (!verify_envelope_buffer(raw.data(), raw.size(), bind, message_direction::responder_to_initiator,
+                                sl1_key_.data(), sl1_key_.size(), ext, &err)) {
+        res.details = "Server confirmation MAC verification failed: " + err;
+        return res;
+    }
+
+    if (ext.auth_seq != 1) {
+        res.details = "Server confirmation auth_seq must be 1, got " + std::to_string(ext.auth_seq);
+        return res;
+    }
+
+    res.duration_ms = elapsed_ms(t0);
+    res.passed = true;
+    res.details = "Mutual SL1 key confirmation established (auth_seq=1 in both directions)";
+    return res;
+}
+
+test_result conformance_runner::test_sl1_authenticated_streaming() {
+    auto t0 = std::chrono::steady_clock::now();
+    test_result res{"SL1_AUTHENTICATED_STREAMING", false, "", 0};
+
+    auto conn = envelope_connection::connect(host_, port_);
+    if (!conn) {
+        res.details = "Failed to connect to " + host_ + ":" + std::to_string(port_);
+        return res;
+    }
+
+    session_bind_envelope bind{};
+    if (lease_ && lease_->has_lease()) {
+        bind = lease_->current_bind();
+    } else {
+        bind.identity = node_endpoint_identity{1001, 2001, 1};
+        bind.control_epoch = 1;
+        bind.lease_token = 0xC0FFEE1234ULL;
+    }
+    bind.sl1_requested = true;
+    bind.key_id = sl1_key_id_;
+
+    conn->set_sl1_auth(bind, message_direction::initiator_to_responder, sl1_key_id_, sl1_key_);
+    if (!conn->send_session_bind(bind)) {
+        res.details = "Failed to send signed SESSION_BIND";
+        return res;
+    }
+
+    std::vector<std::uint8_t> raw;
+    if (!conn->receive_envelope_raw(raw)) {
+        res.details = "Server did not confirm SESSION_BIND";
+        return res;
+    }
+
+    // Submit authenticated chat request (auth_seq = 2)
+    request_envelope req{stream_identity{101, 201, 0}, runtime_profile::chat, "linep-conformance-model-v02", "SL1 stream test"};
+    if (!conn->send_request(req)) {
+        res.details = "Failed to send signed request envelope";
+        return res;
+    }
+
+    std::size_t events_received = 0;
+    std::uint32_t last_auth_seq = 1; // Server confirmation was seq 1
+    bool saw_completed = false;
+
+    while (conn->receive_envelope_raw(raw)) {
+        wire_envelope_header hdr{};
+        if (!decode_header(raw.data(), raw.size(), hdr)) {
+            res.details = "Malformed event header";
+            return res;
+        }
+
+        if ((hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) == 0) {
+            res.details = "Unauthenticated frame received on active SL1 session";
+            return res;
+        }
+
+        wire_auth_extension ext{};
+        std::string err;
+        if (!verify_envelope_buffer(raw.data(), raw.size(), bind, message_direction::responder_to_initiator,
+                                    sl1_key_.data(), sl1_key_.size(), ext, &err)) {
+            res.details = "Event MAC verification failed: " + err;
+            return res;
+        }
+
+        if (ext.auth_seq <= last_auth_seq) {
+            res.details = "Non-monotonic server auth_seq (last=" + std::to_string(last_auth_seq) +
+                          ", got=" + std::to_string(ext.auth_seq) + ")";
+            return res;
+        }
+        last_auth_seq = ext.auth_seq;
+
+        event_envelope evt{};
+        if (!decode_event(raw.data(), raw.size(), evt)) {
+            res.details = "Failed to decode event envelope";
+            return res;
+        }
+
+        events_received++;
+        if (evt.event_type == runtime_event_type::completed) {
+            saw_completed = true;
+            break;
+        }
+    }
+
+    if (!saw_completed) {
+        res.details = "Stream ended without completed terminal event (received " + std::to_string(events_received) + " events)";
+        return res;
+    }
+
+    res.duration_ms = elapsed_ms(t0);
+    res.passed = true;
+    res.details = "Authenticated streaming verified (" + std::to_string(events_received) + " signed events with monotonic auth_seq)";
+    return res;
+}
+
+test_result conformance_runner::test_sl1_missing_auth_rejection() {
+    auto t0 = std::chrono::steady_clock::now();
+    test_result res{"SL1_MISSING_AUTH_REJECTION", false, "", 0};
+
+    auto conn = envelope_connection::connect(host_, port_);
+    if (!conn) {
+        res.details = "Failed to connect to " + host_ + ":" + std::to_string(port_);
+        return res;
+    }
+
+    session_bind_envelope bind{};
+    if (lease_ && lease_->has_lease()) {
+        bind = lease_->current_bind();
+    } else {
+        bind.identity = node_endpoint_identity{1001, 2001, 1};
+        bind.control_epoch = 1;
+        bind.lease_token = 0xC0FFEE1234ULL;
+    }
+    bind.sl1_requested = false;
+
+    if (!conn->send_session_bind(bind)) {
+        res.details = "Failed to send unauthenticated SESSION_BIND";
+        return res;
+    }
+
+    std::vector<std::uint8_t> raw;
+    if (!conn->receive_envelope_raw(raw)) {
+        res.passed = true;
+        res.duration_ms = elapsed_ms(t0);
+        res.details = "Unauthenticated connection closed immediately by server";
+        return res;
+    }
+
+    event_envelope evt{};
+    if (decode_event(raw.data(), raw.size(), evt)) {
+        if (evt.stream.is_connection_level() && evt.error.code == 401 && evt.error.message == "auth_required") {
+            res.passed = true;
+            res.duration_ms = elapsed_ms(t0);
+            res.details = "Unauthenticated bind rejected with 401 auth_required and socket closed";
+            return res;
+        }
+    }
+
+    res.details = "Expected 401 auth_required or immediate connection close";
+    return res;
+}
+
+test_result conformance_runner::test_sl1_wrong_key_rejection() {
+    auto t0 = std::chrono::steady_clock::now();
+    test_result res{"SL1_WRONG_KEY_REJECTION", false, "", 0};
+
+    auto conn = envelope_connection::connect(host_, port_);
+    if (!conn) {
+        res.details = "Failed to connect to " + host_ + ":" + std::to_string(port_);
+        return res;
+    }
+
+    std::vector<std::uint8_t> bad_key(sl1_key_.size(), 0xEE);
+
+    session_bind_envelope bind{};
+    if (lease_ && lease_->has_lease()) {
+        bind = lease_->current_bind();
+    } else {
+        bind.identity = node_endpoint_identity{1001, 2001, 1};
+        bind.control_epoch = 1;
+        bind.lease_token = 0xC0FFEE1234ULL;
+    }
+    bind.sl1_requested = true;
+    bind.key_id = sl1_key_id_;
+
+    conn->set_sl1_auth(bind, message_direction::initiator_to_responder, sl1_key_id_, bad_key);
+    if (!conn->send_session_bind(bind)) {
+        res.details = "Failed to send signed SESSION_BIND with bad key";
+        return res;
+    }
+
+    std::vector<std::uint8_t> raw;
+    if (!conn->receive_envelope_raw(raw)) {
+        res.passed = true;
+        res.duration_ms = elapsed_ms(t0);
+        res.details = "Connection with invalid MAC closed immediately by server";
+        return res;
+    }
+
+    event_envelope evt{};
+    if (decode_event(raw.data(), raw.size(), evt)) {
+        if (evt.stream.is_connection_level() && evt.error.code == 401) {
+            res.passed = true;
+            res.duration_ms = elapsed_ms(t0);
+            res.details = "Invalid MAC rejected with 401 (" + evt.error.message + ")";
+            return res;
+        }
+    }
+
+    res.details = "Expected 401 unauthorized or immediate socket close";
+    return res;
+}
+
+test_result conformance_runner::test_sl1_replay_rejection() {
+    auto t0 = std::chrono::steady_clock::now();
+    test_result res{"SL1_REPLAY_REJECTION", false, "", 0};
+
+    auto conn = envelope_connection::connect(host_, port_);
+    if (!conn) {
+        res.details = "Failed to connect to " + host_ + ":" + std::to_string(port_);
+        return res;
+    }
+
+    session_bind_envelope bind{};
+    if (lease_ && lease_->has_lease()) {
+        bind = lease_->current_bind();
+    } else {
+        bind.identity = node_endpoint_identity{1001, 2001, 1};
+        bind.control_epoch = 1;
+        bind.lease_token = 0xC0FFEE1234ULL;
+    }
+    bind.sl1_requested = true;
+    bind.key_id = sl1_key_id_;
+
+    session_bind_envelope base_bind = bind;
+    base_bind.sl1_requested = false;
+    std::vector<std::uint8_t> raw_bind;
+    encode_session_bind(base_bind, raw_bind);
+    // Bind with invalid auth_seq != 1 (replay attempt)
+    if (!sign_envelope_buffer(raw_bind, bind, message_direction::initiator_to_responder,
+                             42, sl1_key_id_, sl1_key_.data(), sl1_key_.size())) {
+        res.details = "Failed to sign envelope buffer for replay test";
+        return res;
+    }
+
+    if (!conn->send_frame_raw(raw_bind.data(), raw_bind.size())) {
+        res.details = "Failed to send replayed SESSION_BIND frame";
+        return res;
+    }
+
+    std::vector<std::uint8_t> raw;
+    if (!conn->receive_envelope_raw(raw)) {
+        res.passed = true;
+        res.duration_ms = elapsed_ms(t0);
+        res.details = "Replay sequence closed immediately by server";
+        return res;
+    }
+
+    event_envelope evt{};
+    if (decode_event(raw.data(), raw.size(), evt)) {
+        if (evt.stream.is_connection_level() && evt.error.code == 401 && evt.error.message == "auth_replay") {
+            res.passed = true;
+            res.duration_ms = elapsed_ms(t0);
+            res.details = "Replayed sequence rejected with 401 auth_replay";
+            return res;
+        }
+    }
+
+    res.details = "Expected 401 auth_replay or immediate socket close";
     return res;
 }
 

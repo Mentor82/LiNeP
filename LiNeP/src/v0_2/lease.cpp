@@ -192,12 +192,67 @@ bool lease_client::renew(std::string* out_error) {
     return request_invite_locked(out_error) && ack_lease_locked(out_error);
 }
 
+void lease_client::set_sl1(bool enable, std::uint16_t key_id, std::vector<std::uint8_t> key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    config_.enable_sl1 = enable;
+    config_.sl1_key_id = key_id;
+    config_.sl1_key = std::move(key);
+}
+
 bool lease_client::bind(envelope_connection& conn) const {
     session_bind_envelope b = current_bind();
     if (!b.is_valid()) {
         return false;
     }
-    return conn.send_session_bind(b);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (config_.enable_sl1) {
+        if (config_.sl1_key.size() < 32) {
+            return false; // Minimum key size >= 32 bytes (256 bits)
+        }
+        b.sl1_requested = true;
+        b.key_id = config_.sl1_key_id;
+        conn.set_sl1_auth(b, message_direction::initiator_to_responder, config_.sl1_key_id, config_.sl1_key);
+        if (!conn.send_session_bind(b)) {
+            return false;
+        }
+
+        // Wait for server's signed confirmation frame
+        std::vector<std::uint8_t> confirm_raw;
+        if (!conn.receive_envelope_raw(confirm_raw)) {
+            return false;
+        }
+
+        wire_envelope_header hdr{};
+        if (!decode_header(confirm_raw.data(), confirm_raw.size(), hdr)) {
+            return false;
+        }
+
+        if (hdr.envelope_type == static_cast<std::uint8_t>(runtime_envelope_type::session_bind)) {
+            session_bind_envelope confirm_bind{};
+            if (!decode_session_bind(confirm_raw.data(), confirm_raw.size(), confirm_bind)) {
+                return false;
+            }
+            if (!confirm_bind.sl1_requested) {
+                return false;
+            }
+            wire_auth_extension ext{};
+            std::string err;
+            if (!verify_envelope_buffer(confirm_raw.data(), confirm_raw.size(), b,
+                                        message_direction::responder_to_initiator,
+                                        config_.sl1_key.data(), config_.sl1_key.size(),
+                                        ext, &err)) {
+                return false;
+            }
+            if (ext.auth_seq != 1) {
+                return false;
+            }
+            return true;
+        } else {
+            return false; // Received error event or unexpected frame
+        }
+    } else {
+        return conn.send_session_bind(b);
+    }
 }
 
 bool lease_client::send_heartbeat() {

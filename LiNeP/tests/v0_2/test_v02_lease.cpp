@@ -205,6 +205,93 @@ int main() {
         std::cout << "[PASS] acquire failure paths" << std::endl;
     }
 
+    // 6. SL1 authenticated session binding over lease
+    {
+        std::vector<std::uint8_t> sl1_key(32, 0x42);
+        std::vector<std::uint8_t> wrong_key(32, 0x99);
+
+        // Configure server with SL1
+        mock_runtime_config sl1_srv_cfg = cfg;
+        sl1_srv_cfg.require_lease = true;
+        sl1_srv_cfg.require_sl1 = true;
+        sl1_srv_cfg.sl1_key_id = 101;
+        sl1_srv_cfg.sl1_key = sl1_key;
+
+        mock_runtime_server sl1_server(sl1_srv_cfg);
+        sl1_server.set_control_plane_router(&issuer.router());
+        LINEP_TEST_CHECK(sl1_server.start(0));
+        std::uint16_t sl1_tcp_port = sl1_server.get_bound_port();
+
+        // 6.1 Valid SL1 handshake & chat streaming
+        {
+            lease_client_config sl1_lcfg = lcfg;
+            sl1_lcfg.enable_sl1 = true;
+            sl1_lcfg.sl1_key_id = 101;
+            sl1_lcfg.sl1_key = sl1_key;
+            lease_client sl1_lease(sl1_lcfg);
+            std::string err;
+            LINEP_TEST_CHECK(sl1_lease.acquire(&err));
+
+            auto conn = connect_bound("127.0.0.1", sl1_tcp_port, sl1_lease);
+            LINEP_TEST_CHECK(conn != nullptr);
+            LINEP_TEST_CHECK(conn->is_sl1_active());
+
+            request_envelope req{stream_identity{777, 888, 0}, runtime_profile::chat, "linep-conformance-model-v02", "Hello SL1"};
+            LINEP_TEST_CHECK(conn->send_request(req));
+
+            std::vector<std::uint8_t> raw;
+            bool saw_completed = false;
+            while (conn->receive_envelope_raw(raw)) {
+                event_envelope evt{};
+                LINEP_TEST_CHECK(decode_event(raw.data(), raw.size(), evt));
+                if (evt.event_type == runtime_event_type::completed) {
+                    saw_completed = true;
+                    break;
+                }
+            }
+            LINEP_TEST_CHECK(saw_completed);
+            conn->close();
+        }
+
+        // 6.2 Wrong key rejected
+        {
+            lease_client_config bad_lcfg = lcfg;
+            bad_lcfg.enable_sl1 = true;
+            bad_lcfg.sl1_key_id = 101;
+            bad_lcfg.sl1_key = wrong_key;
+            lease_client bad_lease(bad_lcfg);
+            std::string err;
+            LINEP_TEST_CHECK(bad_lease.acquire(&err));
+
+            auto conn = connect_bound("127.0.0.1", sl1_tcp_port, bad_lease);
+            LINEP_TEST_CHECK(conn == nullptr); // Handshake rejected!
+        }
+
+        // 6.3 Missing SL1 rejected on require_sl1 server with 401 auth_required and socket closed
+        {
+            lease_client_config no_sl1_lcfg = lcfg;
+            no_sl1_lcfg.enable_sl1 = false;
+            lease_client no_sl1_lease(no_sl1_lcfg);
+            std::string err;
+            LINEP_TEST_CHECK(no_sl1_lease.acquire(&err));
+
+            auto conn = connect_bound("127.0.0.1", sl1_tcp_port, no_sl1_lease);
+            LINEP_TEST_CHECK(conn != nullptr);
+            std::vector<std::uint8_t> raw;
+            LINEP_TEST_CHECK(conn->receive_envelope_raw(raw));
+            event_envelope evt{};
+            LINEP_TEST_CHECK(decode_event(raw.data(), raw.size(), evt));
+            LINEP_TEST_CHECK(evt.stream.is_connection_level());
+            LINEP_TEST_CHECK(evt.error.category == error_category::unauthorized);
+            LINEP_TEST_CHECK(evt.error.code == 401);
+            LINEP_TEST_CHECK(evt.error.message == "auth_required");
+            LINEP_TEST_CHECK(!conn->receive_envelope_raw(raw)); // Connection closed by server
+        }
+
+        sl1_server.stop();
+        std::cout << "[PASS] SL1 authenticated session binding over lease" << std::endl;
+    }
+
     server.stop();
     issuer.stop();
     std::cout << "\nALL LEASE TESTS PASSED" << std::endl;

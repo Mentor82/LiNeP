@@ -490,6 +490,190 @@ void test_session_binding_state_machine() {
     std::cout << "  -> Session Binding State Machine Tests PASSED" << std::endl;
 }
 
+void test_sl1_session_state_machine() {
+    std::cout << "[Test 9] SL1 Session State Machine, Keyring & Monotonic Sequences..." << std::endl;
+
+    const std::vector<std::uint8_t> secret_key_1 = {
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+        0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20
+    };
+
+    session_descriptor desc{};
+    desc.require_lease = true;
+    desc.require_sl1 = true; // SL1 is required!
+    session_manager mgr(desc);
+
+    session_bind_envelope unauth_bind{};
+    unauth_bind.identity = node_endpoint_identity{10, 20, 30};
+    unauth_bind.control_epoch = 1;
+    unauth_bind.lease_token = 0xAABBCCDDEEFFULL;
+    unauth_bind.sl1_requested = false; // missing SL1!
+
+    runtime_error err{};
+    // Rule: Server requiring SL1 must reject unflagged bind (401 auth_required)
+    LINEP_TEST_CHECK(!mgr.process_session_bind(unauth_bind, err));
+    LINEP_TEST_CHECK(err.category == error_category::unauthorized);
+    LINEP_TEST_CHECK(err.code == 401);
+
+    // Rule: Reject key shorter than 32 bytes
+    const std::vector<std::uint8_t> short_key(16, 0xAA);
+    LINEP_TEST_CHECK(!mgr.add_sl1_key(1, short_key));
+
+    // Rule: SL1 bind without configured keys must be rejected (401 unknown_key)
+    session_bind_envelope sl1_bind = unauth_bind;
+    sl1_bind.sl1_requested = true;
+    sl1_bind.auth_ext.auth_seq = 1;
+    sl1_bind.auth_ext.key_id = 1;
+    LINEP_TEST_CHECK(!mgr.process_session_bind(sl1_bind, err));
+    LINEP_TEST_CHECK(err.code == 401);
+
+    // Add key and re-bind (Client -> Server: auth_seq = 1 on bind)
+    LINEP_TEST_CHECK(mgr.add_sl1_key(1, secret_key_1));
+    LINEP_TEST_CHECK(mgr.process_session_bind(sl1_bind, err));
+    LINEP_TEST_CHECK(mgr.is_sl1_active());
+
+    // 1. Inbound validation: Unauthenticated frame on SL1 connection -> REJECTED (401 auth_required)
+    request_envelope req{};
+    req.stream = stream_identity{10, 100, 0};
+    req.profile = runtime_profile::chat;
+    req.model_id = "test-model";
+    req.payload = "Unauth frame";
+    std::vector<std::uint8_t> unauth_req_buf;
+    LINEP_TEST_CHECK(encode_request(req, unauth_req_buf));
+
+    wire_auth_extension out_ext{};
+    LINEP_TEST_CHECK(!mgr.verify_inbound_frame(
+        unauth_req_buf.data(), unauth_req_buf.size(),
+        message_direction::initiator_to_responder,
+        out_ext, err));
+    LINEP_TEST_CHECK(err.code == 401);
+
+    // 2. Inbound validation: Valid authenticated frame (auth_seq = 2, since seq 1 was consumed by bind) -> ACCEPTED
+    std::vector<std::uint8_t> auth_req_buf = unauth_req_buf;
+    LINEP_TEST_CHECK(sign_envelope_buffer(
+        auth_req_buf, sl1_bind, message_direction::initiator_to_responder,
+        2, 1, secret_key_1.data(), secret_key_1.size()));
+
+    LINEP_TEST_CHECK(mgr.verify_inbound_frame(
+        auth_req_buf.data(), auth_req_buf.size(),
+        message_direction::initiator_to_responder,
+        out_ext, err));
+    LINEP_TEST_CHECK(out_ext.auth_seq == 2);
+
+    // 3. Replay Protection: Same frame replayed (auth_seq = 2 again) -> REJECTED (401 auth_replay)
+    LINEP_TEST_CHECK(!mgr.verify_inbound_frame(
+        auth_req_buf.data(), auth_req_buf.size(),
+        message_direction::initiator_to_responder,
+        out_ext, err));
+    LINEP_TEST_CHECK(err.code == 401);
+
+    // 4. Out-of-order / sequence gap (auth_seq = 5 when 3 expected) -> REJECTED (401 auth_replay)
+    std::vector<std::uint8_t> gap_req_buf = unauth_req_buf;
+    LINEP_TEST_CHECK(sign_envelope_buffer(
+        gap_req_buf, sl1_bind, message_direction::initiator_to_responder,
+        5, 1, secret_key_1.data(), secret_key_1.size()));
+    LINEP_TEST_CHECK(!mgr.verify_inbound_frame(
+        gap_req_buf.data(), gap_req_buf.size(),
+        message_direction::initiator_to_responder,
+        out_ext, err));
+    LINEP_TEST_CHECK(err.code == 401);
+
+    // 5. Correct next sequence (auth_seq = 3) -> ACCEPTED
+    std::vector<std::uint8_t> next_req_buf = unauth_req_buf;
+    LINEP_TEST_CHECK(sign_envelope_buffer(
+        next_req_buf, sl1_bind, message_direction::initiator_to_responder,
+        3, 1, secret_key_1.data(), secret_key_1.size()));
+    LINEP_TEST_CHECK(mgr.verify_inbound_frame(
+        next_req_buf.data(), next_req_buf.size(),
+        message_direction::initiator_to_responder,
+        out_ext, err));
+    LINEP_TEST_CHECK(out_ext.auth_seq == 3);
+
+    // 6. Outbound signing: automatically signs with monotone outbound sequence starting at 1
+    event_envelope evt{};
+    evt.stream = stream_identity{10, 100, 0};
+    evt.event_seq = 1;
+    evt.event_type = runtime_event_type::content_delta;
+    evt.payload = "Outbound token 1";
+    std::vector<std::uint8_t> outbound_evt_buf;
+    LINEP_TEST_CHECK(encode_event(evt, outbound_evt_buf));
+
+    LINEP_TEST_CHECK(mgr.sign_outbound_frame(outbound_evt_buf, message_direction::responder_to_initiator, err));
+    wire_envelope_header out_hdr1{};
+    LINEP_TEST_CHECK(decode_header(outbound_evt_buf.data(), outbound_evt_buf.size(), out_hdr1));
+    LINEP_TEST_CHECK((out_hdr1.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0);
+
+    wire_auth_extension out_ext1{};
+    LINEP_TEST_CHECK(decode_auth_extension(outbound_evt_buf.data() + LINEP_V02_HEADER_SIZE, LINEP_V02_AUTH_EXTENSION_SIZE, out_ext1));
+    LINEP_TEST_CHECK(out_ext1.auth_seq == 1);
+
+    // Second outbound event has auth_seq = 2
+    evt.event_seq = 2;
+    std::vector<std::uint8_t> outbound_evt_buf2;
+    LINEP_TEST_CHECK(encode_event(evt, outbound_evt_buf2));
+    LINEP_TEST_CHECK(mgr.sign_outbound_frame(outbound_evt_buf2, message_direction::responder_to_initiator, err));
+    wire_auth_extension out_ext2{};
+    LINEP_TEST_CHECK(decode_auth_extension(outbound_evt_buf2.data() + LINEP_V02_HEADER_SIZE, LINEP_V02_AUTH_EXTENSION_SIZE, out_ext2));
+    LINEP_TEST_CHECK(out_ext2.auth_seq == 2);
+
+    // 7. Non-SL1 connection: authenticated frame -> REJECTED (401 auth_unexpected)
+    session_descriptor plain_desc{};
+    session_manager plain_mgr(plain_desc);
+    session_bind_envelope plain_bind = unauth_bind;
+    LINEP_TEST_CHECK(plain_mgr.process_session_bind(plain_bind, err));
+    LINEP_TEST_CHECK(!plain_mgr.is_sl1_active());
+
+    LINEP_TEST_CHECK(!plain_mgr.verify_inbound_frame(
+        auth_req_buf.data(), auth_req_buf.size(),
+        message_direction::initiator_to_responder,
+        out_ext, err));
+    LINEP_TEST_CHECK(err.code == 401);
+
+    // 8. Key Rotation Test: receiver configured with current=2, previous=1
+    const std::vector<std::uint8_t> secret_key_2(32, 0x88);
+    mgr.add_sl1_key(2, secret_key_2);
+    mgr.set_rotation_keys(2 /* current */, 1 /* previous */);
+
+    // Frame with previous key_id = 1 is still accepted
+    std::vector<std::uint8_t> prev_key_req = unauth_req_buf;
+    LINEP_TEST_CHECK(sign_envelope_buffer(
+        prev_key_req, sl1_bind, message_direction::initiator_to_responder,
+        4, 1 /* key_id 1 */, secret_key_1.data(), secret_key_1.size()));
+    LINEP_TEST_CHECK(mgr.verify_inbound_frame(
+        prev_key_req.data(), prev_key_req.size(),
+        message_direction::initiator_to_responder,
+        out_ext, err));
+    LINEP_TEST_CHECK(out_ext.key_id == 1);
+    LINEP_TEST_CHECK(out_ext.auth_seq == 4);
+
+    // Frame with current key_id = 2 is accepted
+    std::vector<std::uint8_t> curr_key_req = unauth_req_buf;
+    LINEP_TEST_CHECK(sign_envelope_buffer(
+        curr_key_req, sl1_bind, message_direction::initiator_to_responder,
+        5, 2 /* key_id 2 */, secret_key_2.data(), secret_key_2.size()));
+    LINEP_TEST_CHECK(mgr.verify_inbound_frame(
+        curr_key_req.data(), curr_key_req.size(),
+        message_direction::initiator_to_responder,
+        out_ext, err));
+    LINEP_TEST_CHECK(out_ext.key_id == 2);
+    LINEP_TEST_CHECK(out_ext.auth_seq == 5);
+
+    // Frame with unknown key_id = 3 is rejected
+    std::vector<std::uint8_t> unk_key_req = unauth_req_buf;
+    LINEP_TEST_CHECK(sign_envelope_buffer(
+        unk_key_req, sl1_bind, message_direction::initiator_to_responder,
+        6, 3 /* key_id 3 */, secret_key_2.data(), secret_key_2.size()));
+    LINEP_TEST_CHECK(!mgr.verify_inbound_frame(
+        unk_key_req.data(), unk_key_req.size(),
+        message_direction::initiator_to_responder,
+        out_ext, err));
+    LINEP_TEST_CHECK(err.code == 401);
+
+    std::cout << "  -> SL1 Session State Machine Tests PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "=== LiNeP V0.2 Persistent Session & Multiplexing Test Suite ===" << std::endl;
     test_concurrent_multiplexing();
@@ -500,6 +684,7 @@ int main() {
     test_bounded_buffer_protection();
     test_single_authoritative_terminal_outcome();
     test_session_binding_state_machine();
+    test_sl1_session_state_machine();
     std::cout << "ALL V0.2 PHASE B SESSION MULTIPLEXING TESTS PASSED 100%!" << std::endl;
     return 0;
 }

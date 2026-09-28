@@ -507,6 +507,300 @@ void test_session_bind_envelope() {
     std::cout << "  -> Session Bind Envelope Tests PASSED" << std::endl;
 }
 
+void test_sl1_authentication_and_envelopes() {
+    std::cout << "[Test 10] SL1 Authentication, Framing, Replay & Tampering Invariants..." << std::endl;
+
+    // 1. SESSION_BIND SL1 announcement
+    session_bind_envelope bind{};
+    bind.identity.node_id = 1001;
+    bind.identity.runtime_id = 2001;
+    bind.identity.endpoint_id = 1;
+    bind.control_epoch = 42;
+    bind.lease_token = 0xAABBCCDDEEFF0011ULL;
+    bind.sl1_requested = true;
+    bind.key_id = 1;
+
+    const std::vector<std::uint8_t> secret_key_1 = {
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+        0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20
+    };
+
+    // Client encodes unauthenticated bind buffer first, then signs with auth_seq = 1
+    session_bind_envelope raw_bind = bind;
+    raw_bind.sl1_requested = false; // base encoding
+    std::vector<std::uint8_t> bind_buf;
+    LINEP_TEST_CHECK(encode_session_bind(raw_bind, bind_buf));
+    LINEP_TEST_CHECK(bind_buf.size() == LINEP_V02_HEADER_SIZE + LINEP_V02_SESSION_BIND_PAYLOAD_SIZE);
+
+    // Sign the SESSION_BIND (Client -> Server: auth_seq = 1, direction = initiator_to_responder)
+    LINEP_TEST_CHECK(sign_envelope_buffer(
+        bind_buf,
+        bind,
+        message_direction::initiator_to_responder,
+        1 /* auth_seq */,
+        1 /* key_id */,
+        secret_key_1.data(),
+        secret_key_1.size()
+    ));
+    LINEP_TEST_CHECK(bind_buf.size() == LINEP_V02_HEADER_SIZE + LINEP_V02_AUTH_EXTENSION_SIZE + LINEP_V02_SESSION_BIND_PAYLOAD_SIZE);
+    
+    wire_envelope_header bind_hdr{};
+    LINEP_TEST_CHECK(decode_header(bind_buf.data(), bind_buf.size(), bind_hdr));
+    LINEP_TEST_CHECK((bind_hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0);
+
+    session_bind_envelope dec_bind{};
+    LINEP_TEST_CHECK(decode_session_bind(bind_buf.data(), bind_buf.size(), dec_bind));
+    LINEP_TEST_CHECK(dec_bind.sl1_requested == true);
+    LINEP_TEST_CHECK(dec_bind.auth_ext.auth_seq == 1);
+    LINEP_TEST_CHECK(dec_bind.auth_ext.key_id == 1);
+
+    // Server verifies Client's signed SESSION_BIND
+    wire_auth_extension srv_ext{};
+    std::string srv_err;
+    LINEP_TEST_CHECK(verify_envelope_buffer(
+        bind_buf.data(), bind_buf.size(), bind,
+        message_direction::initiator_to_responder,
+        secret_key_1.data(), secret_key_1.size(),
+        srv_ext, &srv_err
+    ));
+    LINEP_TEST_CHECK(srv_ext.auth_seq == 1);
+
+    // Server confirms with signed frame (Server -> Client: auth_seq = 1, direction = responder_to_initiator)
+    std::vector<std::uint8_t> confirm_buf;
+    LINEP_TEST_CHECK(encode_session_bind(raw_bind, confirm_buf));
+    LINEP_TEST_CHECK(sign_envelope_buffer(
+        confirm_buf,
+        bind,
+        message_direction::responder_to_initiator,
+        1 /* auth_seq */,
+        1 /* key_id */,
+        secret_key_1.data(),
+        secret_key_1.size()
+    ));
+
+    // Client verifies Server's signed confirmation
+    wire_auth_extension cli_ext{};
+    std::string cli_err;
+    LINEP_TEST_CHECK(verify_envelope_buffer(
+        confirm_buf.data(), confirm_buf.size(), bind,
+        message_direction::responder_to_initiator,
+        secret_key_1.data(), secret_key_1.size(),
+        cli_ext, &cli_err
+    ));
+    LINEP_TEST_CHECK(cli_ext.auth_seq == 1);
+
+    // Reject unknown bind flags (e.g. 0x02)
+    std::vector<std::uint8_t> bad_bind_flags = bind_buf;
+    bad_bind_flags[7] = 0x02; // unknown flag
+    session_bind_envelope bad_bind{};
+    LINEP_TEST_CHECK(!decode_session_bind(bad_bind_flags.data(), bad_bind_flags.size(), bad_bind));
+
+    // Reject unauthenticated buffer claiming FLAG_AUTHENTICATED without extension (68 bytes)
+    std::vector<std::uint8_t> truncated_auth_bind;
+    LINEP_TEST_CHECK(encode_session_bind(raw_bind, truncated_auth_bind));
+    truncated_auth_bind[7] = LINEP_V02_FLAG_AUTHENTICATED; // 0x01 flag on 68-byte buffer
+    session_bind_envelope trunc_dec{};
+    LINEP_TEST_CHECK(!decode_session_bind(truncated_auth_bind.data(), truncated_auth_bind.size(), trunc_dec));
+
+    request_envelope req{};
+    req.stream.request_id = 500;
+    req.stream.execution_id = 600;
+    req.stream.output_id = 0;
+    req.profile = runtime_profile::chat;
+    req.model_id = "test-model";
+    req.payload = "Hello SL1 authenticated world!";
+    req.max_tokens = 256;
+    req.temperature = 0.5f;
+
+    std::vector<std::uint8_t> raw_req_buf;
+    LINEP_TEST_CHECK(encode_request(req, raw_req_buf));
+    std::size_t unauth_size = raw_req_buf.size();
+
+    // Sign the request
+    bool sign_ok = sign_envelope_buffer(
+        raw_req_buf,
+        bind,
+        message_direction::initiator_to_responder,
+        1 /* auth_seq */,
+        1 /* key_id */,
+        secret_key_1.data(),
+        secret_key_1.size()
+    );
+    LINEP_TEST_CHECK(sign_ok);
+    LINEP_TEST_CHECK(raw_req_buf.size() == unauth_size + LINEP_V02_AUTH_EXTENSION_SIZE);
+
+    // Verify envelope header has FLAG_AUTHENTICATED
+    wire_envelope_header req_hdr{};
+    LINEP_TEST_CHECK(decode_header(raw_req_buf.data(), raw_req_buf.size(), req_hdr));
+    LINEP_TEST_CHECK((req_hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0);
+
+    // Verify envelope buffer
+    wire_auth_extension ext{};
+    std::string err;
+    bool verify_ok = verify_envelope_buffer(
+        raw_req_buf.data(),
+        raw_req_buf.size(),
+        bind,
+        message_direction::initiator_to_responder,
+        secret_key_1.data(),
+        secret_key_1.size(),
+        ext,
+        &err
+    );
+    LINEP_TEST_CHECK(verify_ok);
+    LINEP_TEST_CHECK(ext.auth_seq == 1);
+    LINEP_TEST_CHECK(ext.key_id == 1);
+    LINEP_TEST_CHECK(ext.reserved == 0);
+
+    // Decode request directly from authenticated buffer
+    request_envelope dec_req{};
+    LINEP_TEST_CHECK(decode_request(raw_req_buf.data(), raw_req_buf.size(), dec_req));
+    LINEP_TEST_CHECK(dec_req.stream.request_id == 500);
+    LINEP_TEST_CHECK(dec_req.stream.execution_id == 600);
+    LINEP_TEST_CHECK(dec_req.model_id == "test-model");
+    LINEP_TEST_CHECK(dec_req.payload == "Hello SL1 authenticated world!");
+
+    // 3. Negative / Tampering Tests
+    // a) Wrong direction (reflection attack prevention)
+    bool refl_ok = verify_envelope_buffer(
+        raw_req_buf.data(),
+        raw_req_buf.size(),
+        bind,
+        message_direction::responder_to_initiator, // wrong direction!
+        secret_key_1.data(),
+        secret_key_1.size(),
+        ext,
+        &err
+    );
+    LINEP_TEST_CHECK(!refl_ok);
+
+    // b) Wrong binding (cross-session / cross-node replay prevention)
+    session_bind_envelope other_bind = bind;
+    other_bind.lease_token = 0x99999999ULL;
+    bool other_ok = verify_envelope_buffer(
+        raw_req_buf.data(),
+        raw_req_buf.size(),
+        other_bind,
+        message_direction::initiator_to_responder,
+        secret_key_1.data(),
+        secret_key_1.size(),
+        ext,
+        &err
+    );
+    LINEP_TEST_CHECK(!other_ok);
+
+    // c) Tampered payload
+    std::vector<std::uint8_t> tampered_payload = raw_req_buf;
+    tampered_payload.back() ^= 0xFF;
+    bool tamp_pay_ok = verify_envelope_buffer(
+        tampered_payload.data(),
+        tampered_payload.size(),
+        bind,
+        message_direction::initiator_to_responder,
+        secret_key_1.data(),
+        secret_key_1.size(),
+        ext,
+        &err
+    );
+    LINEP_TEST_CHECK(!tamp_pay_ok);
+
+    // d) Tampered auth_seq
+    std::vector<std::uint8_t> tampered_seq = raw_req_buf;
+    tampered_seq[LINEP_V02_HEADER_SIZE] = 0x02; // Change auth_seq
+    bool tamp_seq_ok = verify_envelope_buffer(
+        tampered_seq.data(),
+        tampered_seq.size(),
+        bind,
+        message_direction::initiator_to_responder,
+        secret_key_1.data(),
+        secret_key_1.size(),
+        ext,
+        &err
+    );
+    LINEP_TEST_CHECK(!tamp_seq_ok);
+
+    // e) Wrong secret key
+    const std::vector<std::uint8_t> wrong_key(32, 0xEE);
+    bool wrong_key_ok = verify_envelope_buffer(
+        raw_req_buf.data(),
+        raw_req_buf.size(),
+        bind,
+        message_direction::initiator_to_responder,
+        wrong_key.data(),
+        wrong_key.size(),
+        ext,
+        &err
+    );
+    LINEP_TEST_CHECK(!wrong_key_ok);
+
+    // 4. Authenticated EVENT roundtrip (Server -> Client)
+    event_envelope evt{};
+    evt.stream = stream_identity{500, 600, 0};
+    evt.event_seq = 1;
+    evt.event_type = runtime_event_type::content_delta;
+    evt.payload = "Authenticated delta token";
+    evt.timestamp_us = 1234567890ULL;
+
+    std::vector<std::uint8_t> raw_evt_buf;
+    LINEP_TEST_CHECK(encode_event(evt, raw_evt_buf));
+    LINEP_TEST_CHECK(sign_envelope_buffer(
+        raw_evt_buf,
+        bind,
+        message_direction::responder_to_initiator,
+        1, // auth_seq
+        1, // key_id
+        secret_key_1.data(),
+        secret_key_1.size()
+    ));
+
+    event_envelope dec_evt{};
+    LINEP_TEST_CHECK(decode_event(raw_evt_buf.data(), raw_evt_buf.size(), dec_evt));
+    LINEP_TEST_CHECK(dec_evt.stream.request_id == 500);
+    LINEP_TEST_CHECK(dec_evt.payload == "Authenticated delta token");
+
+    // 5. Key Rotation Support
+    const std::vector<std::uint8_t> secret_key_2(32, 0x77);
+    event_envelope evt2{};
+    evt2.stream = stream_identity{500, 600, 0};
+    evt2.event_seq = 2;
+    evt2.event_type = runtime_event_type::completed;
+    evt2.outcome = terminal_outcome::completed;
+
+    std::vector<std::uint8_t> raw_evt2_buf;
+    LINEP_TEST_CHECK(encode_event(evt2, raw_evt2_buf));
+    LINEP_TEST_CHECK(sign_envelope_buffer(
+        raw_evt2_buf,
+        bind,
+        message_direction::responder_to_initiator,
+        2, // auth_seq
+        2, // key_id: rotated!
+        secret_key_2.data(),
+        secret_key_2.size()
+    ));
+
+    // Verifying with key 1 must fail
+    LINEP_TEST_CHECK(!verify_envelope_buffer(
+        raw_evt2_buf.data(), raw_evt2_buf.size(),
+        bind, message_direction::responder_to_initiator,
+        secret_key_1.data(), secret_key_1.size(),
+        ext, &err
+    ));
+
+    // Verifying with key 2 must succeed
+    LINEP_TEST_CHECK(verify_envelope_buffer(
+        raw_evt2_buf.data(), raw_evt2_buf.size(),
+        bind, message_direction::responder_to_initiator,
+        secret_key_2.data(), secret_key_2.size(),
+        ext, &err
+    ));
+    LINEP_TEST_CHECK(ext.key_id == 2);
+    LINEP_TEST_CHECK(ext.auth_seq == 2);
+
+    std::cout << "  -> SL1 Authentication & Envelopes Tests PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "=== LiNeP V0.2 Envelope & Contract Test Suite ===" << std::endl;
     test_request_envelope();
@@ -518,6 +812,7 @@ int main() {
     test_tampered_and_corrupt_envelopes();
     test_request_envelope_with_generation_options();
     test_session_bind_envelope();
+    test_sl1_authentication_and_envelopes();
     std::cout << "ALL V0.2 PHASE A ENVELOPE AND CONTRACT TESTS PASSED 100%!" << std::endl;
     return 0;
 }

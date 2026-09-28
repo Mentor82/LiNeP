@@ -244,7 +244,7 @@ int main() {
             valid_bind.lease_token = 0xC0FFEE1234ULL;
             std::vector<std::uint8_t> malformed_buf;
             linep::v0_2::encode_session_bind(valid_bind, malformed_buf);
-            malformed_buf[7] = 0x01; // dirty flags (byte 7) -> decode_session_bind fails!
+            malformed_buf[7] = 0x80; // dirty reserved flags (byte 7) -> decode_session_bind fails!
             LINEP_TEST_CHECK(conn->send_frame_raw(malformed_buf.data(), malformed_buf.size()));
 
             std::vector<std::uint8_t> raw;
@@ -420,6 +420,37 @@ int main() {
 
         lease_server.stop();
         std::cout << "  -> Dual-Plane TCP Session Binding tests PASSED (Missing, Invalid, Duplicate, Identity Change & Bound)" << std::endl;
+    }
+
+    // [Edge Test 5] Testing SL1 MAC Authentication & PROFILE_SL1 Conformance (Issue #22)
+    std::cout << "[Edge Test 5] Testing SL1 MAC Authentication & PROFILE_SL1 Conformance (Issue #22)..." << std::endl;
+    {
+        std::vector<std::uint8_t> sl1_key(32, 0x5A);
+
+        linep::v0_2::mock_runtime_config sl1_cfg = cfg;
+        sl1_cfg.require_sl1 = true;
+        sl1_cfg.sl1_key_id = 101;
+        sl1_cfg.sl1_key = sl1_key;
+
+        linep::v0_2::mock_runtime_server sl1_server(sl1_cfg);
+        LINEP_TEST_CHECK(sl1_server.start(0));
+        std::uint16_t sl1_port = sl1_server.get_bound_port();
+
+        linep::v0_2::conformance_runner sl1_runner("127.0.0.1", sl1_port);
+        sl1_runner.set_sl1_credentials(101, sl1_key);
+
+        auto sl1_rep = sl1_runner.run_sl1();
+        for (const auto& r : sl1_rep.results) {
+            std::cout << "  [" << (r.passed ? "PASS" : "FAIL") << "] " << r.test_name << " -> " << r.details << std::endl;
+        }
+        LINEP_TEST_CHECK(sl1_rep.is_all_passed());
+        LINEP_TEST_CHECK(sl1_rep.total_tests == 5);
+        LINEP_TEST_CHECK(sl1_rep.profiles.size() == 1);
+        LINEP_TEST_CHECK(sl1_rep.profiles[0].conformant);
+        LINEP_TEST_CHECK(sl1_rep.profiles[0].profile_name == "PROFILE_SL1");
+
+        sl1_server.stop();
+        std::cout << "  -> SL1 Authentication & PROFILE_SL1 Conformance tests PASSED (Mutual Handshake, Streaming, Rejection & Replay)" << std::endl;
     }
 
     mock_server.stop();

@@ -8,6 +8,27 @@
 
 using namespace linep::v0_2;
 
+static bool parse_hex_key(const std::string& hex, std::vector<std::uint8_t>& out) {
+    if (hex.size() % 2 != 0) return false;
+    out.clear();
+    out.reserve(hex.size() / 2);
+    for (std::size_t i = 0; i < hex.size(); i += 2) {
+        char high = hex[i];
+        char low = hex[i + 1];
+        auto hex_val = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
+        };
+        int h = hex_val(high);
+        int l = hex_val(low);
+        if (h < 0 || l < 0) return false;
+        out.push_back(static_cast<std::uint8_t>((h << 4) | l));
+    }
+    return true;
+}
+
 static void print_usage(const char* prog) {
     std::cout << "LiNeP V0.2 Conformance Test Runner\n"
               << "Usage: " << prog << " [OPTIONS]\n\n"
@@ -15,8 +36,11 @@ static void print_usage(const char* prog) {
               << "  --endpoint <host:port>    Target LiNeP endpoint (default: 127.0.0.1:11435)\n"
               << "  --control <host:port>     UDP control plane (lease issuer) of the endpoint; every suite\n"
               << "                            binds with SESSION_BIND and 'all' adds the dual-plane suites\n"
-              << "  --profile <name>          Profile to verify: generate, chat, embed, dual_plane, all (default: all)\n"
+              << "  --sl1-key <hex>           Hex-encoded SL1 shared secret key (>= 32 bytes / 64 hex digits)\n"
+              << "  --sl1-key-id <id>         SL1 key ID (default: 1)\n"
+              << "  --profile <name>          Profile to verify: generate, chat, embed, dual_plane, sl1, all (default: all)\n"
               << "                            dual_plane needs --control and an endpoint that requires leases\n"
+              << "                            sl1 needs --sl1-key\n"
               << "  --json                    Output report in JSON format\n"
               << "  --output-report <file>    Write report to specified file path\n"
               << "  --help, -h                Show this help message\n";
@@ -110,6 +134,8 @@ int main(int argc, char* argv[]) {
     bool json_output = false;
     std::string report_file;
     std::string control;
+    std::vector<std::uint8_t> sl1_key;
+    std::uint16_t sl1_key_id = 1;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -120,6 +146,14 @@ int main(int argc, char* argv[]) {
             endpoint = argv[++i];
         } else if (arg == "--control" && i + 1 < argc) {
             control = argv[++i];
+        } else if (arg == "--sl1-key" && i + 1 < argc) {
+            std::string hex = argv[++i];
+            if (!parse_hex_key(hex, sl1_key) || sl1_key.size() < 32) {
+                std::cerr << "Error: --sl1-key must be a valid hex string of at least 32 bytes (64 hex characters)\n";
+                return 1;
+            }
+        } else if (arg == "--sl1-key-id" && i + 1 < argc) {
+            sl1_key_id = static_cast<std::uint16_t>(std::stoul(argv[++i]));
         } else if (arg == "--profile" && i + 1 < argc) {
             profile_str = argv[++i];
         } else if (arg == "--json") {
@@ -150,6 +184,9 @@ int main(int argc, char* argv[]) {
         }
         runner.set_control_endpoint(control_host, control_port);
     }
+    if (!sl1_key.empty()) {
+        runner.set_sl1_credentials(sl1_key_id, sl1_key);
+    }
     conformance_report rep{};
 
     if (profile_str == "all") {
@@ -166,8 +203,14 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         rep = runner.run_dual_plane();
+    } else if (profile_str == "sl1") {
+        if (!runner.has_sl1()) {
+            std::cerr << "--profile sl1 needs --sl1-key <hex>\n";
+            return 1;
+        }
+        rep = runner.run_sl1();
     } else {
-        std::cerr << "Unknown profile: " << profile_str << " (expected: generate, chat, embed, dual_plane, all)\n";
+        std::cerr << "Unknown profile: " << profile_str << " (expected: generate, chat, embed, dual_plane, sl1, all)\n";
         return 1;
     }
 

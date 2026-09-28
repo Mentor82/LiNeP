@@ -37,6 +37,9 @@ struct lease_client_config {
     std::uint32_t retransmit_ms{200};      // wait for an INVITE before re-sending NODE_HELLO
     std::uint32_t max_attempts{10};        // NODE_HELLO / LEASE_ACK attempts per acquire()
     std::uint32_t confirm_ms{100};         // LEASE_ACK delivery probe window (0 = no probe)
+    bool enable_sl1{false};                // Request SL1 authentication on the trunk
+    std::uint16_t sl1_key_id{1};           // SL1 key identifier
+    std::vector<std::uint8_t> sl1_key{};   // Pre-shared cluster key (minimum 32 bytes)
 };
 
 class lease_client {
@@ -61,6 +64,12 @@ public:
 
     // SESSION_BIND with the current lease on a trunk connection
     bool bind(envelope_connection& conn) const;
+
+    // SL1 configuration
+    bool enable_sl1() const noexcept { return config_.enable_sl1; }
+    void set_sl1(bool enable, std::uint16_t key_id, std::vector<std::uint8_t> key);
+    const std::vector<std::uint8_t>& sl1_key() const noexcept { return config_.sl1_key; }
+    std::uint16_t sl1_key_id() const noexcept { return config_.sl1_key_id; }
 
     // HEARTBEAT keeps the lease alive on issuers with an idle timeout
     bool send_heartbeat();

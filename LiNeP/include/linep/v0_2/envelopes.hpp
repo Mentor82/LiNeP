@@ -16,6 +16,25 @@ constexpr std::uint8_t LINEP_V02_VERSION_MINOR = 2;
 constexpr std::size_t LINEP_V02_HEADER_SIZE = 32;
 constexpr std::size_t LINEP_V02_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024; // 16 MB max payload limit
 constexpr std::size_t LINEP_V02_SESSION_BIND_PAYLOAD_SIZE = 36; // 8+8+4+8+8 bytes canonical wire size
+constexpr std::size_t LINEP_V02_AUTH_EXTENSION_SIZE = 24; // 4+2+2+16 bytes canonical wire size
+constexpr std::uint8_t LINEP_V02_FLAG_AUTHENTICATED = 1u << 0; // 0x01: wire_auth_extension (SL1) precedes payload
+constexpr std::uint8_t LINEP_V02_BIND_FLAG_SL1       = 1u << 0; // 0x01: SESSION_BIND announces SL1 on this connection
+
+enum class message_direction : std::uint8_t {
+    initiator_to_responder = 1, // Client to server (e.g. REQUEST, CANCEL, client SESSION_BIND)
+    responder_to_initiator = 2, // Server to client (e.g. EVENT, CAPABILITIES)
+};
+
+#pragma pack(push, 1)
+struct wire_auth_extension {
+    std::uint32_t auth_seq{0}; // Monotonically increasing sequence per connection & direction (starts at 1)
+    std::uint16_t key_id{0};   // Key identifier (enables key rotation)
+    std::uint16_t reserved{0}; // Padding/reserved (must be 0)
+    std::uint8_t  mac[16]{};   // 16-byte HMAC-SHA-256 MAC tag
+};
+#pragma pack(pop)
+
+static_assert(sizeof(wire_auth_extension) == 24, "wire_auth_extension must be exactly 24 bytes");
 
 enum class runtime_envelope_type : std::uint8_t {
     unknown = 0,
@@ -162,6 +181,9 @@ struct session_bind_envelope {
     node_endpoint_identity identity{};
     std::uint64_t control_epoch{0};
     std::uint64_t lease_token{0};
+    bool sl1_requested{false};
+    std::uint16_t key_id{1}; // Optional default key_id (default 1)
+    wire_auth_extension auth_ext{};
 
     bool is_valid() const noexcept {
         return identity.node_id != 0 &&
@@ -172,7 +194,9 @@ struct session_bind_envelope {
     bool operator==(const session_bind_envelope& other) const noexcept {
         return identity == other.identity &&
                control_epoch == other.control_epoch &&
-               lease_token == other.lease_token;
+               lease_token == other.lease_token &&
+               sl1_requested == other.sl1_requested &&
+               key_id == other.key_id;
     }
 
     bool operator!=(const session_bind_envelope& other) const noexcept {
@@ -183,6 +207,53 @@ struct session_bind_envelope {
 // Canonical little-endian header encoding and decoding functions
 void encode_header(const wire_envelope_header& hdr, std::vector<std::uint8_t>& out_buf);
 bool decode_header(const std::uint8_t* data, std::size_t size, wire_envelope_header& out_hdr);
+
+// Auth Extension encoding and decoding functions
+void encode_auth_extension(const wire_auth_extension& ext, std::vector<std::uint8_t>& out_buf);
+bool decode_auth_extension(const std::uint8_t* data, std::size_t size, wire_auth_extension& out_ext);
+
+// SL1 MAC computation & verification
+void compute_sl1_mac(
+    const std::uint8_t*          secret_key,
+    std::size_t                  key_len,
+    const wire_envelope_header&  header,
+    const wire_auth_extension&   auth_ext,
+    const session_bind_envelope& binding,
+    message_direction            direction,
+    const std::uint8_t*          payload,
+    std::uint32_t                payload_len,
+    std::uint8_t                 out_mac[16]) noexcept;
+
+bool verify_sl1_mac(
+    const std::uint8_t*          secret_key,
+    std::size_t                  key_len,
+    const wire_envelope_header&  header,
+    const wire_auth_extension&   auth_ext,
+    const session_bind_envelope& binding,
+    message_direction            direction,
+    const std::uint8_t*          payload,
+    std::uint32_t                payload_len) noexcept;
+
+// Helper to sign an envelope buffer [32B Header][Payload] -> [32B Header with FLAG_AUTHENTICATED][24B AuthExt][Payload]
+bool sign_envelope_buffer(
+    std::vector<std::uint8_t>&   in_out_envelope_buf,
+    const session_bind_envelope& binding,
+    message_direction            direction,
+    std::uint32_t                auth_seq,
+    std::uint16_t                key_id,
+    const std::uint8_t*          secret_key,
+    std::size_t                  key_len);
+
+// Helper to verify an envelope buffer [32B Header with FLAG_AUTHENTICATED][24B AuthExt][Payload]
+bool verify_envelope_buffer(
+    const std::uint8_t*          data,
+    std::size_t                  size,
+    const session_bind_envelope& binding,
+    message_direction            direction,
+    const std::uint8_t*          secret_key,
+    std::size_t                  key_len,
+    wire_auth_extension&         out_auth_ext,
+    std::string*                 out_error = nullptr);
 
 // Serialization and deserialization functions
 bool encode_request(const request_envelope& req, std::vector<std::uint8_t>& out_buffer);
