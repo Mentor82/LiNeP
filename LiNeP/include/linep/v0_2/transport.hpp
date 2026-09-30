@@ -64,6 +64,7 @@ private:
     mutable std::mutex send_mutex_;
 
     bool sl1_active_{false};
+    bool sl1_confirmed_{false};
     session_bind_envelope sl1_binding_{};
     message_direction sl1_direction_{message_direction::initiator_to_responder};
     std::uint16_t sl1_key_id_{1};

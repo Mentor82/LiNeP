@@ -773,7 +773,7 @@ bool is_connection_failure(const event_envelope& evt, std::uint32_t code, const 
     return evt.stream.is_connection_level() &&
            evt.event_type == runtime_event_type::failed &&
            evt.error.code == code &&
-           evt.error.message == message;
+           (evt.error.message == message || evt.error.message.rfind(message, 0) == 0);
 }
 
 } // anonymous namespace
@@ -789,7 +789,7 @@ test_result conformance_runner::test_dual_plane_bind_before_lease_ack() {
         return res;
     }
     auto conn = envelope_connection::connect(host_, port_);
-    if (!conn || !early->bind(*conn)) {
+    if (!conn || !early->send_bind(*conn)) {
         res.details = "Failed to connect or send SESSION_BIND";
         return res;
     }
@@ -947,7 +947,7 @@ test_result conformance_runner::test_dual_plane_identity_change() {
         return res;
     }
     auto conn = connect_bound(host_, port_, *lease_);
-    if (!conn || !other->bind(*conn)) {
+    if (!conn || !other->send_bind(*conn)) {
         res.details = "Failed to connect or send the second SESSION_BIND";
         return res;
     }

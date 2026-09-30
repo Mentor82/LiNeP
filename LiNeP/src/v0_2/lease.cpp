@@ -199,6 +199,25 @@ void lease_client::set_sl1(bool enable, std::uint16_t key_id, std::vector<std::u
     config_.sl1_key = std::move(key);
 }
 
+bool lease_client::send_bind(envelope_connection& conn) const {
+    session_bind_envelope b = current_bind();
+    if (!b.is_valid()) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (config_.enable_sl1) {
+        if (config_.sl1_key.size() < 32) {
+            return false; // Minimum key size >= 32 bytes (256 bits)
+        }
+        b.sl1_requested = true;
+        b.key_id = config_.sl1_key_id;
+        conn.set_sl1_auth(b, message_direction::initiator_to_responder, config_.sl1_key_id, config_.sl1_key);
+        return conn.send_session_bind(b);
+    } else {
+        return conn.send_session_bind(b);
+    }
+}
+
 bool lease_client::bind(envelope_connection& conn) const {
     session_bind_envelope b = current_bind();
     if (!b.is_valid()) {

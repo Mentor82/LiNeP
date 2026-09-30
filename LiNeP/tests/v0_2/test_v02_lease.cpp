@@ -288,6 +288,36 @@ int main() {
             LINEP_TEST_CHECK(!conn->receive_envelope_raw(raw)); // Connection closed by server
         }
 
+        // 6.4 send_bind sends bind without waiting for confirmation (Issue #27)
+        {
+            lease_client_config send_lcfg = lcfg;
+            send_lcfg.enable_sl1 = true;
+            send_lcfg.sl1_key_id = 101;
+            send_lcfg.sl1_key = sl1_key;
+            lease_client send_lease(send_lcfg);
+            std::string err;
+            LINEP_TEST_CHECK(send_lease.acquire(&err));
+
+            auto conn = envelope_connection::connect("127.0.0.1", sl1_tcp_port);
+            LINEP_TEST_CHECK(conn != nullptr);
+            LINEP_TEST_CHECK(send_lease.send_bind(*conn)); // Sends signed bind without blocking
+
+            std::vector<std::uint8_t> raw;
+            LINEP_TEST_CHECK(conn->receive_envelope_raw(raw));
+            session_bind_envelope confirm{};
+            LINEP_TEST_CHECK(decode_session_bind(raw.data(), raw.size(), confirm));
+            LINEP_TEST_CHECK(confirm.sl1_requested);
+            conn->close();
+
+            // Negative check: invalid key length (<32 bytes) must fail send_bind
+            send_lcfg.sl1_key = std::vector<std::uint8_t>(16, 0x11);
+            lease_client bad_key_lease(send_lcfg);
+            auto conn2 = envelope_connection::connect("127.0.0.1", sl1_tcp_port);
+            LINEP_TEST_CHECK(conn2 != nullptr);
+            LINEP_TEST_CHECK(!bad_key_lease.send_bind(*conn2));
+            conn2->close();
+        }
+
         sl1_server.stop();
         std::cout << "[PASS] SL1 authenticated session binding over lease" << std::endl;
     }

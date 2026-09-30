@@ -65,6 +65,9 @@ public:
     // SESSION_BIND with the current lease on a trunk connection
     bool bind(envelope_connection& conn) const;
 
+    // Send SESSION_BIND with the current lease without waiting for confirmation
+    bool send_bind(envelope_connection& conn) const;
+
     // SL1 configuration
     bool enable_sl1() const noexcept { return config_.enable_sl1; }
     void set_sl1(bool enable, std::uint16_t key_id, std::vector<std::uint8_t> key);

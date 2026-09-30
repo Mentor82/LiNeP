@@ -528,6 +528,43 @@ int main() {
         std::cout << "  -> SL1 Profile on Lease-Enforcing endpoint PASSED (Lease acquired automatically, 0xC0FFEE not rejected)" << std::endl;
     }
 
+    // [Edge Test 8] Testing Negative Bind Suites under SL1 and Lease Enforcement (Issue #27)
+    std::cout << "[Edge Test 8] Testing Negative Bind Suites under SL1 (Issue #27)..." << std::endl;
+    {
+        std::vector<std::uint8_t> sl1_key(32, 0x5A);
+
+        linep::v0_2::lease_issuer issuer;
+        LINEP_TEST_CHECK(issuer.start(0));
+        std::uint16_t udp_port = issuer.get_bound_port();
+
+        linep::v0_2::mock_runtime_config neg_sl1_cfg = cfg;
+        neg_sl1_cfg.require_lease = true;
+        neg_sl1_cfg.require_sl1 = true;
+        neg_sl1_cfg.sl1_key_id = 101;
+        neg_sl1_cfg.sl1_key = sl1_key;
+
+        linep::v0_2::mock_runtime_server neg_sl1_server(neg_sl1_cfg);
+        neg_sl1_server.set_control_plane_router(&issuer.router());
+        LINEP_TEST_CHECK(neg_sl1_server.start(0));
+        std::uint16_t tcp_port = neg_sl1_server.get_bound_port();
+
+        linep::v0_2::conformance_runner runner("127.0.0.1", tcp_port);
+        runner.set_control_endpoint("127.0.0.1", udp_port);
+        runner.set_sl1_credentials(101, sl1_key);
+
+        auto r_pre = runner.test_dual_plane_bind_before_lease_ack();
+        std::cout << "  [" << (r_pre.passed ? "PASS" : "FAIL") << "] " << r_pre.test_name << " -> " << r_pre.details << std::endl;
+        LINEP_TEST_CHECK(r_pre.passed);
+
+        auto r_id = runner.test_dual_plane_identity_change();
+        std::cout << "  [" << (r_id.passed ? "PASS" : "FAIL") << "] " << r_id.test_name << " -> " << r_id.details << std::endl;
+        LINEP_TEST_CHECK(r_id.passed);
+
+        neg_sl1_server.stop();
+        issuer.stop();
+        std::cout << "  -> Negative Bind Suites under SL1 & Lease Enforcement PASSED" << std::endl;
+    }
+
     mock_server.stop();
     std::cout << "ALL CONFORMANCE AND EDGE MODE TESTS PASSED 100%!" << std::endl;
     return 0;

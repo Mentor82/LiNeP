@@ -232,6 +232,9 @@ void envelope_connection::set_sl1_auth(const session_bind_envelope& binding, mes
     sl1_key_id_ = key_id;
     sl1_key_ = key;
     sl1_active_ = !key.empty();
+    if (direction == message_direction::responder_to_initiator) {
+        sl1_confirmed_ = !key.empty();
+    }
     next_auth_seq_ = 1;
 }
 
@@ -247,6 +250,7 @@ void envelope_connection::set_sl1_key(std::uint16_t key_id, const std::vector<st
 void envelope_connection::clear_sl1_auth() noexcept {
     std::lock_guard<std::mutex> lock(send_mutex_);
     sl1_active_ = false;
+    sl1_confirmed_ = false;
     sl1_key_.clear();
     next_auth_seq_ = 1;
 }
@@ -283,9 +287,13 @@ bool envelope_connection::receive_envelope_raw(std::vector<std::uint8_t>& out_bu
     const bool is_auth = (hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0;
 
     // After successful SL1 bind, all frames must be authenticated (fail-closed against spoofed unsigned 401)
-    if (sl1_active_ && !is_auth) {
+    if (sl1_confirmed_ && !is_auth) {
         close();
         return false;
+    }
+
+    if (hdr.envelope_type == static_cast<std::uint8_t>(runtime_envelope_type::session_bind) && is_auth) {
+        sl1_confirmed_ = true;
     }
 
     const std::size_t auth_ext_len = is_auth ? LINEP_V02_AUTH_EXTENSION_SIZE : 0;
