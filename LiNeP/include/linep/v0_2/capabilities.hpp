@@ -47,6 +47,7 @@ struct runtime_capabilities_descriptor {
     bool supports_cancellation{true};
     bool supports_tool_calling{false};
     bool supports_reasoning_deltas{false};
+    bool supports_structured_messages{false};
     std::vector<std::string> supported_models;
     std::vector<embedding_space_descriptor> supported_embedding_spaces;
 

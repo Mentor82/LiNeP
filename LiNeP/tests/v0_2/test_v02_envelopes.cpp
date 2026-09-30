@@ -271,6 +271,7 @@ void test_capabilities_envelope() {
     caps.descriptor.supports_cancellation = true;
     caps.descriptor.supports_tool_calling = true;
     caps.descriptor.supports_reasoning_deltas = true;
+    caps.descriptor.supports_structured_messages = true;
     caps.descriptor.supported_models = {"llama-3.1-8b", "mistral-7b-instruct"};
 
     embedding_space_descriptor sp{"nomic-embed-v1.5", "nomic-ai", "1.5", 768, embedding_normalization::l2, embedding_distance_metric::cosine};
@@ -286,6 +287,7 @@ void test_capabilities_envelope() {
     LINEP_TEST_CHECK(dec_caps.descriptor.supports_profile(runtime_profile::embed));
     LINEP_TEST_CHECK(dec_caps.descriptor.max_context_tokens == 131072);
     LINEP_TEST_CHECK(dec_caps.descriptor.supports_tool_calling == true);
+    LINEP_TEST_CHECK(dec_caps.descriptor.supports_structured_messages == true);
     LINEP_TEST_CHECK(dec_caps.descriptor.supported_models.size() == 2);
     LINEP_TEST_CHECK(dec_caps.descriptor.supported_embedding_spaces.size() == 1);
     LINEP_TEST_CHECK(dec_caps.descriptor.supported_embedding_spaces[0].dimensions == 768);

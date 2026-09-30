@@ -107,11 +107,20 @@ struct generation_options {
     }
 };
 
+struct chat_message {
+    std::string role; // "system", "user", "assistant"
+    std::string content;
+};
+
+struct structured_chat_payload {
+    std::vector<chat_message> messages;
+};
+
 struct request_envelope {
     stream_identity stream;
     runtime_profile profile{runtime_profile::generate};
     std::string model_id;
-    std::string payload; // Prompt text or messages
+    std::string payload; // Prompt text or JSON messages
     std::uint32_t max_tokens{0};
     float temperature{0.7f};
     bool stream_requested{true};

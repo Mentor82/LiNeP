@@ -720,6 +720,7 @@ bool encode_capabilities(const capabilities_envelope& caps, std::vector<std::uin
     write_u8(payload_buf, desc.supports_cancellation ? 1 : 0);
     write_u8(payload_buf, desc.supports_tool_calling ? 1 : 0);
     write_u8(payload_buf, desc.supports_reasoning_deltas ? 1 : 0);
+    write_u8(payload_buf, desc.supports_structured_messages ? 1 : 0);
 
     write_u16(payload_buf, static_cast<std::uint16_t>(desc.supported_models.size()));
     for (const auto& m : desc.supported_models) {
@@ -790,16 +791,18 @@ bool decode_capabilities(const std::uint8_t* data, std::size_t size, capabilitie
     if (!r.read_u32(desc.max_context_tokens)) return false;
     if (!r.read_u32(desc.max_output_tokens)) return false;
 
-    std::uint8_t s_stream{}, s_cancel{}, s_tool{}, s_reason{};
+    std::uint8_t s_stream{}, s_cancel{}, s_tool{}, s_reason{}, s_struct_msg{};
     if (!r.read_u8(s_stream)) return false;
     if (!r.read_u8(s_cancel)) return false;
     if (!r.read_u8(s_tool)) return false;
     if (!r.read_u8(s_reason)) return false;
+    if (!r.read_u8(s_struct_msg)) return false;
 
     desc.supports_streaming = (s_stream != 0);
     desc.supports_cancellation = (s_cancel != 0);
     desc.supports_tool_calling = (s_tool != 0);
     desc.supports_reasoning_deltas = (s_reason != 0);
+    desc.supports_structured_messages = (s_struct_msg != 0);
 
     std::uint16_t models_count{};
     if (!r.read_u16(models_count)) return false;
