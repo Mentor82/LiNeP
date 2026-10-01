@@ -69,3 +69,9 @@ These mistakes have a high chance of producing implementations that are wire-com
 ❌ Encoder and decoder from the same implementation pass against each other.
 
 ✅ Test reference→implementation, implementation→reference, malformed inputs, live sockets, replay, disconnect, cancel races, multi-output, and dual-plane failure isolation.
+
+## Fragile CAPABILITIES decoding across protocol revisions
+
+❌ Strictly assume either 4 or 5 boolean flags in `CAPABILITIES` without layout fallback.
+
+✅ Support dual-layout decoding: attempt the 5-boolean layout (with `supports_structured_messages`), falling back to the legacy 4-boolean layout (defaulting `supports_structured_messages = false`) while enforcing exact payload consumption (`remaining() == 0`).

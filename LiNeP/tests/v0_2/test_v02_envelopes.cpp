@@ -292,6 +292,48 @@ void test_capabilities_envelope() {
     LINEP_TEST_CHECK(dec_caps.descriptor.supported_embedding_spaces.size() == 1);
     LINEP_TEST_CHECK(dec_caps.descriptor.supported_embedding_spaces[0].dimensions == 768);
 
+    // Issue #29: Test legacy pre-#28 layout (4 booleans, missing supports_structured_messages)
+    // Construct legacy 4-bool buffer by removing the 5th boolean byte and adjusting header payload_len
+    std::size_t bool5_offset = LINEP_V02_HEADER_SIZE + 2 + caps.descriptor.supported_profiles.size() + 4 + 4 + 4;
+    std::vector<std::uint8_t> legacy_buffer = buffer;
+    LINEP_TEST_CHECK(legacy_buffer.size() > bool5_offset);
+    legacy_buffer.erase(legacy_buffer.begin() + static_cast<std::ptrdiff_t>(bool5_offset));
+
+    // Update payload_len in header (little-endian u32 at byte offset 28)
+    std::uint32_t legacy_payload_len = static_cast<std::uint32_t>(legacy_buffer.size() - LINEP_V02_HEADER_SIZE);
+    legacy_buffer[28] = static_cast<std::uint8_t>(legacy_payload_len & 0xFF);
+    legacy_buffer[29] = static_cast<std::uint8_t>((legacy_payload_len >> 8) & 0xFF);
+    legacy_buffer[30] = static_cast<std::uint8_t>((legacy_payload_len >> 16) & 0xFF);
+    legacy_buffer[31] = static_cast<std::uint8_t>((legacy_payload_len >> 24) & 0xFF);
+
+    capabilities_envelope dec_caps_legacy{};
+    LINEP_TEST_CHECK(decode_capabilities(legacy_buffer.data(), legacy_buffer.size(), dec_caps_legacy));
+    LINEP_TEST_CHECK(dec_caps_legacy.descriptor.supports_profile(runtime_profile::chat));
+    LINEP_TEST_CHECK(dec_caps_legacy.descriptor.supports_profile(runtime_profile::embed));
+    LINEP_TEST_CHECK(dec_caps_legacy.descriptor.max_context_tokens == 131072);
+    LINEP_TEST_CHECK(dec_caps_legacy.descriptor.supports_tool_calling == true);
+    LINEP_TEST_CHECK(dec_caps_legacy.descriptor.supports_reasoning_deltas == true);
+    // Legacy pre-#28 frames must decode with supports_structured_messages = false
+    LINEP_TEST_CHECK(dec_caps_legacy.descriptor.supports_structured_messages == false);
+    // Models and embedding spaces must not be shifted by 1 byte
+    LINEP_TEST_CHECK(dec_caps_legacy.descriptor.supported_models.size() == 2);
+    LINEP_TEST_CHECK(dec_caps_legacy.descriptor.supported_models[0] == "llama-3.1-8b");
+    LINEP_TEST_CHECK(dec_caps_legacy.descriptor.supported_models[1] == "mistral-7b-instruct");
+    LINEP_TEST_CHECK(dec_caps_legacy.descriptor.supported_embedding_spaces.size() == 1);
+    LINEP_TEST_CHECK(dec_caps_legacy.descriptor.supported_embedding_spaces[0].dimensions == 768);
+    LINEP_TEST_CHECK(dec_caps_legacy.descriptor.supported_embedding_spaces[0].embedding_space_id == "nomic-embed-v1.5");
+
+    // Strict rejection of trailing garbage on capabilities payload
+    std::vector<std::uint8_t> bad_trailing = buffer;
+    bad_trailing.push_back(0xFF);
+    std::uint32_t bad_len = static_cast<std::uint32_t>(bad_trailing.size() - LINEP_V02_HEADER_SIZE);
+    bad_trailing[28] = static_cast<std::uint8_t>(bad_len & 0xFF);
+    bad_trailing[29] = static_cast<std::uint8_t>((bad_len >> 8) & 0xFF);
+    bad_trailing[30] = static_cast<std::uint8_t>((bad_len >> 16) & 0xFF);
+    bad_trailing[31] = static_cast<std::uint8_t>((bad_len >> 24) & 0xFF);
+    capabilities_envelope bad_caps{};
+    LINEP_TEST_CHECK(!decode_capabilities(bad_trailing.data(), bad_trailing.size(), bad_caps));
+
     std::cout << "  -> Capabilities Envelope Tests PASSED" << std::endl;
 }
 

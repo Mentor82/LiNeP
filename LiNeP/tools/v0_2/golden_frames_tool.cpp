@@ -217,6 +217,7 @@ int do_generate(const std::string& dir) {
     caps.descriptor.supports_cancellation = true;
     caps.descriptor.supports_tool_calling = true;
     caps.descriptor.supports_reasoning_deltas = true;
+    caps.descriptor.supports_structured_messages = true;
     caps.descriptor.supported_models = {"llama3:8b", "qwen2.5:7b"};
     caps.descriptor.supported_embedding_spaces = {
         {"nomic-embed-text-v1.5", "nomic-ai/nomic-embed-text-v1.5", "v1.5", 768, embedding_normalization::l2, embedding_distance_metric::cosine}
@@ -225,6 +226,19 @@ int do_generate(const std::string& dir) {
     std::vector<std::uint8_t> caps_buf;
     if (!encode_capabilities(caps, caps_buf) || !write_file(dir + "/capabilities_cpp.bin", caps_buf)) {
         return 1;
+    }
+
+    // 9b. Capabilities Legacy (pre-#28 4-bool layout)
+    std::size_t bool5_offset = LINEP_V02_HEADER_SIZE + 2 + caps.descriptor.supported_profiles.size() + 4 + 4 + 4;
+    std::vector<std::uint8_t> legacy_caps_buf = caps_buf;
+    if (legacy_caps_buf.size() > bool5_offset) {
+        legacy_caps_buf.erase(legacy_caps_buf.begin() + static_cast<std::ptrdiff_t>(bool5_offset));
+        std::uint32_t leg_len = static_cast<std::uint32_t>(legacy_caps_buf.size() - LINEP_V02_HEADER_SIZE);
+        legacy_caps_buf[28] = static_cast<std::uint8_t>(leg_len & 0xFF);
+        legacy_caps_buf[29] = static_cast<std::uint8_t>((leg_len >> 8) & 0xFF);
+        legacy_caps_buf[30] = static_cast<std::uint8_t>((leg_len >> 16) & 0xFF);
+        legacy_caps_buf[31] = static_cast<std::uint8_t>((leg_len >> 24) & 0xFF);
+        write_file(dir + "/capabilities_legacy_cpp.bin", legacy_caps_buf);
     }
 
     // 10. UDP Control Plane: Node Hello
@@ -490,6 +504,22 @@ int do_verify(const std::string& dir) {
         return 1;
     }
     std::cout << "  -> capabilities_go.bin: PASS" << std::endl;
+
+    // 9b. Verify Go Legacy Capabilities (pre-#28 4-bool layout) if present
+    if (read_file(dir + "/capabilities_legacy_go.bin", buf)) {
+        capabilities_envelope caps_legacy{};
+        if (!decode_capabilities(buf.data(), buf.size(), caps_legacy)) {
+            std::cerr << "C++ FAILED to decode Go legacy capabilities!" << std::endl;
+            return 1;
+        }
+        if (caps_legacy.descriptor.supports_structured_messages != false ||
+            caps_legacy.descriptor.supported_models.size() != 2 ||
+            caps_legacy.descriptor.supported_embedding_spaces.size() != 1) {
+            std::cerr << "C++ legacy capabilities validation mismatch on Go frame!" << std::endl;
+            return 1;
+        }
+        std::cout << "  -> capabilities_legacy_go.bin: PASS" << std::endl;
+    }
 
     // 10. Verify Go UDP Hello Datagram
     if (!read_file(dir + "/udp_hello_go.bin", buf)) return 1;

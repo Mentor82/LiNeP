@@ -38,6 +38,8 @@ from linep.v0_2.constants import (
 from linep.v0_2.envelopes import (
     StreamIdentity,
     WireEnvelopeHeader,
+    ChatMessage,
+    StructuredChatPayload,
     RequestEnvelope,
     GenerationOptions,
     EventEnvelope,
@@ -112,6 +114,8 @@ __all__ = [
     # Envelopes
     "StreamIdentity",
     "WireEnvelopeHeader",
+    "ChatMessage",
+    "StructuredChatPayload",
     "RequestEnvelope",
     "GenerationOptions",
     "EventEnvelope",

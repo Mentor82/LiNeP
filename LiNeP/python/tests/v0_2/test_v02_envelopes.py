@@ -1,5 +1,6 @@
 """Unit tests for LiNeP V0.2 TCP Data Plane Envelopes and Encoders/Decoders."""
 
+import struct
 import pytest
 from linep.v0_2 import (
     LINEP_V02_MAGIC,
@@ -191,6 +192,7 @@ def test_capabilities_roundtrip():
             supports_cancellation=True,
             supports_tool_calling=True,
             supports_reasoning_deltas=True,
+            supports_structured_messages=True,
             supported_models=["llama3:8b", "qwen2.5:7b"],
             supported_embedding_spaces=[
                 EmbeddingSpaceDescriptor(
@@ -209,9 +211,41 @@ def test_capabilities_roundtrip():
     assert decoded is not None
     assert len(decoded.descriptor.supported_profiles) == 3
     assert decoded.descriptor.max_context_tokens == 8192
+    assert decoded.descriptor.supports_structured_messages is True
     assert decoded.descriptor.supported_models == ["llama3:8b", "qwen2.5:7b"]
     assert len(decoded.descriptor.supported_embedding_spaces) == 1
     assert decoded.descriptor.supported_embedding_spaces[0].dimensions == 768
+
+    # Issue #29: Test legacy pre-#28 layout (4 booleans, missing supports_structured_messages)
+    # Remove 5th boolean byte and adjust header payload_len
+    # Header: 32 bytes.
+    # Payload prefix: prof_count (2B) + 3 profiles (3B) + max_ctx (4B) + max_out (4B) + 4 bools (4B) = 17B.
+    # 5th bool is at offset 32 + 17 = 49.
+    bool5_offset = 32 + 2 + len(caps.descriptor.supported_profiles) + 4 + 4 + 4
+    legacy_payload = bytearray(raw)
+    del legacy_payload[bool5_offset]
+    legacy_payload_len = len(legacy_payload) - 32
+    struct.pack_into("<I", legacy_payload, 28, legacy_payload_len)
+
+    decoded_legacy = decode_capabilities(bytes(legacy_payload))
+    assert decoded_legacy is not None
+    assert len(decoded_legacy.descriptor.supported_profiles) == 3
+    assert decoded_legacy.descriptor.max_context_tokens == 8192
+    assert decoded_legacy.descriptor.supports_streaming is True
+    assert decoded_legacy.descriptor.supports_reasoning_deltas is True
+    # Legacy frames must decode with supports_structured_messages = False
+    assert decoded_legacy.descriptor.supports_structured_messages is False
+    # Models and spaces must not be shifted
+    assert decoded_legacy.descriptor.supported_models == ["llama3:8b", "qwen2.5:7b"]
+    assert len(decoded_legacy.descriptor.supported_embedding_spaces) == 1
+    assert decoded_legacy.descriptor.supported_embedding_spaces[0].dimensions == 768
+    assert decoded_legacy.descriptor.supported_embedding_spaces[0].embedding_space_id == "nomic-embed-text-v1.5"
+
+    # Strict rejection of trailing garbage on capabilities payload
+    bad_trailing = bytearray(raw)
+    bad_trailing.append(0xFF)
+    struct.pack_into("<I", bad_trailing, 28, len(bad_trailing) - 32)
+    assert decode_capabilities(bytes(bad_trailing)) is None
 
 
 def test_strict_rejection_of_malformed_and_trailing_data():

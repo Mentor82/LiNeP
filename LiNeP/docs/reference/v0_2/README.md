@@ -298,6 +298,41 @@ Authorization = peer is permitted to use it.
 
 **Capability ≠ Availability ≠ Authorization.**
 
+### Capabilities Envelope Wire Layout & Backward Compatibility
+
+A `CAPABILITIES` envelope (`type = 4`) advertises a node or runtime's supported profiles, models, token limits, and feature flags.
+
+#### Wire Payload Layout
+
+1. **`supported_profiles`**: `prof_count` (`uint16_t`) followed by `prof_count` × `uint8_t` (`runtime_profile`).
+2. **Token Limits**:
+   - `max_context_tokens`: `uint32_t` (Little-Endian)
+   - `max_output_tokens`: `uint32_t` (Little-Endian)
+3. **Feature Boolean Flags**:
+   - **Modern V0.2 Layout (post-#28)**: 5 flags (`uint8_t` each, 0 or 1):
+     1. `supports_streaming`
+     2. `supports_cancellation`
+     3. `supports_tool_calling`
+     4. `supports_reasoning_deltas`
+     5. `supports_structured_messages`
+   - **Legacy V0.2 Layout (pre-#28)**: 4 flags (`uint8_t` each, 0 or 1):
+     1. `supports_streaming`
+     2. `supports_cancellation`
+     3. `supports_tool_calling`
+     4. `supports_reasoning_deltas`
+     *(In legacy payloads, `supports_structured_messages` is absent and implicitly defaults to `false`)*.
+4. **`supported_models`**: `models_count` (`uint16_t`) followed by `models_count` × `string_u16`.
+5. **`supported_embedding_spaces`**: `spaces_count` (`uint16_t`) followed by `spaces_count` × embedding space descriptors.
+
+#### Normative Dual-Layout Decoding Rule
+
+Because commit `b39d183` (#28) introduced `supports_structured_messages` without a protocol version bump, mixed deployments (e.g. newer routers communicating with earlier runtimes or vice-versa) may exchange either the 4-flag or 5-flag layout.
+
+Decoders MUST adhere to the following normative rule:
+1. **Modern Layout Attempt**: Attempt to decode the payload using the 5-boolean layout. If parsing completes successfully AND the entire payload buffer is consumed exactly (`remaining() == 0`), accept the descriptor.
+2. **Legacy Layout Fallback**: If the modern parse fails or leaves unconsumed bytes, rewind to the start of the payload buffer and attempt decoding using the legacy 4-boolean layout, setting `supports_structured_messages = false`. If parsing completes successfully AND the entire payload buffer is consumed exactly (`remaining() == 0`), accept the descriptor.
+3. **Strict Fail-Closed Rejection**: If neither layout parses with exact payload consumption (`remaining() == 0`), reject the frame. Any trailing garbage or malformed length fields MUST cause rejection.
+
 ## Embeddings
 
 Equal vector dimensions do not imply compatible embedding spaces. `embedding_space_id` is part of vector-space identity; implementations must also preserve required model/revision, normalization, metric, dimensions, and related metadata defined by the profile.

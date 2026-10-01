@@ -757,27 +757,12 @@ bool encode_capabilities(const capabilities_envelope& caps, std::vector<std::uin
     return true;
 }
 
-bool decode_capabilities(const std::uint8_t* data, std::size_t size, capabilities_envelope& out_caps) {
-    wire_envelope_header hdr{};
-    if (!decode_header(data, size, hdr)) {
-        return false;
-    }
+namespace {
 
-    if (hdr.magic != LINEP_V02_MAGIC ||
-        hdr.version_major != LINEP_V02_VERSION_MAJOR ||
-        hdr.envelope_type != static_cast<std::uint8_t>(runtime_envelope_type::capabilities)) {
-        return false;
-    }
-
-    const bool is_auth = (hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0;
-    const std::size_t auth_ext_len = is_auth ? LINEP_V02_AUTH_EXTENSION_SIZE : 0;
-
-    if (size < (LINEP_V02_HEADER_SIZE + auth_ext_len + hdr.payload_len)) {
-        return false;
-    }
-
-    buffer_reader r(data + LINEP_V02_HEADER_SIZE + auth_ext_len, hdr.payload_len);
-    auto& desc = out_caps.descriptor;
+bool decode_capabilities_payload(const std::uint8_t* payload, std::size_t payload_len,
+                                 capabilities_envelope& out_caps, bool five_bools) {
+    buffer_reader r(payload, payload_len);
+    runtime_capabilities_descriptor desc{};
 
     std::uint16_t prof_count{};
     if (!r.read_u16(prof_count)) return false;
@@ -791,18 +776,24 @@ bool decode_capabilities(const std::uint8_t* data, std::size_t size, capabilitie
     if (!r.read_u32(desc.max_context_tokens)) return false;
     if (!r.read_u32(desc.max_output_tokens)) return false;
 
-    std::uint8_t s_stream{}, s_cancel{}, s_tool{}, s_reason{}, s_struct_msg{};
+    std::uint8_t s_stream{}, s_cancel{}, s_tool{}, s_reason{};
     if (!r.read_u8(s_stream)) return false;
     if (!r.read_u8(s_cancel)) return false;
     if (!r.read_u8(s_tool)) return false;
     if (!r.read_u8(s_reason)) return false;
-    if (!r.read_u8(s_struct_msg)) return false;
 
     desc.supports_streaming = (s_stream != 0);
     desc.supports_cancellation = (s_cancel != 0);
     desc.supports_tool_calling = (s_tool != 0);
     desc.supports_reasoning_deltas = (s_reason != 0);
-    desc.supports_structured_messages = (s_struct_msg != 0);
+
+    if (five_bools) {
+        std::uint8_t s_struct_msg{};
+        if (!r.read_u8(s_struct_msg)) return false;
+        desc.supports_structured_messages = (s_struct_msg != 0);
+    } else {
+        desc.supports_structured_messages = false;
+    }
 
     std::uint16_t models_count{};
     if (!r.read_u16(models_count)) return false;
@@ -832,7 +823,46 @@ bool decode_capabilities(const std::uint8_t* data, std::size_t size, capabilitie
         return false; // Strict canonical framing: reject trailing garbage
     }
 
+    out_caps.descriptor = std::move(desc);
     return true;
+}
+
+} // anonymous namespace
+
+bool decode_capabilities(const std::uint8_t* data, std::size_t size, capabilities_envelope& out_caps) {
+    wire_envelope_header hdr{};
+    if (!decode_header(data, size, hdr)) {
+        return false;
+    }
+
+    if (hdr.magic != LINEP_V02_MAGIC ||
+        hdr.version_major != LINEP_V02_VERSION_MAJOR ||
+        hdr.envelope_type != static_cast<std::uint8_t>(runtime_envelope_type::capabilities)) {
+        return false;
+    }
+
+    const bool is_auth = (hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0;
+    const std::size_t auth_ext_len = is_auth ? LINEP_V02_AUTH_EXTENSION_SIZE : 0;
+
+    if (size < (LINEP_V02_HEADER_SIZE + auth_ext_len + hdr.payload_len)) {
+        return false;
+    }
+
+    const std::uint8_t* payload_ptr = data + LINEP_V02_HEADER_SIZE + auth_ext_len;
+
+    // Issue #29: Dual layout decoding for backward compatibility.
+    // Try post-#28 layout first (5 boolean flags: streaming, cancellation, tool_calling,
+    // reasoning_deltas, structured_messages).
+    if (decode_capabilities_payload(payload_ptr, hdr.payload_len, out_caps, true)) {
+        return true;
+    }
+
+    // Fall back to legacy pre-#28 layout (4 boolean flags, structured_messages defaults to false).
+    if (decode_capabilities_payload(payload_ptr, hdr.payload_len, out_caps, false)) {
+        return true;
+    }
+
+    return false;
 }
 
 bool encode_session_bind(const session_bind_envelope& bind, std::vector<std::uint8_t>& out_buffer) {

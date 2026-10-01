@@ -1,6 +1,7 @@
 """Cross-Language Binary Golden Frames Interoperability Tests (Python <-> C++ Core)."""
 
 import os
+import struct
 import subprocess
 import tempfile
 from pathlib import Path
@@ -186,7 +187,17 @@ def test_python_decodes_cpp_generated_golden_frames():
         assert caps is not None
         assert len(caps.descriptor.supported_profiles) == 3
         assert caps.descriptor.max_context_tokens == 8192
+        assert caps.descriptor.supports_structured_messages is True
         assert caps.descriptor.supported_models == ["llama3:8b", "qwen2.5:7b"]
+
+        # 9b. Verify C++ Legacy Capabilities Envelope
+        legacy_caps_file = p / "capabilities_legacy_cpp.bin"
+        if legacy_caps_file.exists():
+            leg_caps = decode_capabilities(legacy_caps_file.read_bytes())
+            assert leg_caps is not None
+            assert len(leg_caps.descriptor.supported_profiles) == 3
+            assert leg_caps.descriptor.supports_structured_messages is False
+            assert leg_caps.descriptor.supported_models == ["llama3:8b", "qwen2.5:7b"]
 
         # 10. Verify C++ UDP Hello Datagram
         udp_hello_bytes = (p / "udp_hello_cpp.bin").read_bytes()
@@ -379,6 +390,7 @@ def test_cpp_verifies_python_generated_golden_frames():
                 supports_cancellation=True,
                 supports_tool_calling=True,
                 supports_reasoning_deltas=True,
+                supports_structured_messages=True,
                 supported_models=["llama3.1:8b", "qwen2.5:7b"],
                 supported_embedding_spaces=[
                     EmbeddingSpaceDescriptor(
@@ -392,7 +404,15 @@ def test_cpp_verifies_python_generated_golden_frames():
                 ],
             )
         )
-        (p / "capabilities_go.bin").write_bytes(encode_capabilities(caps))
+        caps_raw = encode_capabilities(caps)
+        (p / "capabilities_go.bin").write_bytes(caps_raw)
+
+        # 9b. Capabilities Legacy Frame (pre-#28 4-bool layout)
+        legacy_caps = bytearray(caps_raw)
+        bool5_offset = 32 + 2 + len(caps.descriptor.supported_profiles) + 4 + 4 + 4
+        del legacy_caps[bool5_offset]
+        struct.pack_into("<I", legacy_caps, 28, len(legacy_caps) - 32)
+        (p / "capabilities_legacy_go.bin").write_bytes(bytes(legacy_caps))
 
         # 10. UDP Hello Datagram
         udp_hello = UdpControlDatagram(

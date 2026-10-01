@@ -193,6 +193,17 @@ class GenerationOptions:
 
 
 @dataclass
+class ChatMessage:
+    role: str = ""  # "system", "user", "assistant"
+    content: str = ""
+
+
+@dataclass
+class StructuredChatPayload:
+    messages: List[ChatMessage] = field(default_factory=list)
+
+
+@dataclass
 class RequestEnvelope:
     stream: StreamIdentity = field(default_factory=StreamIdentity)
     profile: RuntimeProfile = RuntimeProfile.CHAT
@@ -309,6 +320,7 @@ class CapabilitiesDescriptor:
     supports_cancellation: bool = True
     supports_tool_calling: bool = True
     supports_reasoning_deltas: bool = True
+    supports_structured_messages: bool = False
     supported_models: List[str] = field(default_factory=list)
     supported_embedding_spaces: List[EmbeddingSpaceDescriptor] = field(default_factory=list)
 
@@ -698,6 +710,7 @@ def encode_capabilities(caps: CapabilitiesEnvelope) -> bytes:
     pw.write_u8(1 if desc.supports_cancellation else 0)
     pw.write_u8(1 if desc.supports_tool_calling else 0)
     pw.write_u8(1 if desc.supports_reasoning_deltas else 0)
+    pw.write_u8(1 if desc.supports_structured_messages else 0)
 
     pw.write_u16(len(desc.supported_models))
     for m in desc.supported_models:
@@ -727,20 +740,9 @@ def encode_capabilities(caps: CapabilitiesEnvelope) -> bytes:
     return encode_header(hdr) + payload
 
 
-def decode_capabilities(data: bytes) -> Optional[CapabilitiesEnvelope]:
-    hdr = decode_header(data)
-    if (
-        hdr is None
-        or hdr.magic != LINEP_V02_MAGIC
-        or hdr.version_major != LINEP_V02_VERSION_MAJOR
-        or hdr.envelope_type != int(EnvelopeType.CAPABILITIES)
-    ):
-        return None
-    if len(data) < (LINEP_V02_HEADER_SIZE + hdr.payload_len):
-        return None
-
-    r = BufferReader(data[LINEP_V02_HEADER_SIZE : LINEP_V02_HEADER_SIZE + hdr.payload_len])
+def _decode_capabilities_payload(payload: bytes, five_bools: bool) -> Optional[CapabilitiesEnvelope]:
     try:
+        r = BufferReader(payload)
         prof_count = r.read_u16()
         profiles = [RuntimeProfile(r.read_u8()) for _ in range(prof_count)]
         max_ctx = r.read_u32()
@@ -749,6 +751,10 @@ def decode_capabilities(data: bytes) -> Optional[CapabilitiesEnvelope]:
         s_cancel = bool(r.read_u8())
         s_tool = bool(r.read_u8())
         s_reason = bool(r.read_u8())
+        if five_bools:
+            s_struct_msg = bool(r.read_u8())
+        else:
+            s_struct_msg = False
 
         mod_count = r.read_u16()
         models = [r.read_string_u16() for _ in range(mod_count)]
@@ -778,12 +784,42 @@ def decode_capabilities(data: bytes) -> Optional[CapabilitiesEnvelope]:
             supports_cancellation=s_cancel,
             supports_tool_calling=s_tool,
             supports_reasoning_deltas=s_reason,
+            supports_structured_messages=s_struct_msg,
             supported_models=models,
             supported_embedding_spaces=spaces,
         )
         return CapabilitiesEnvelope(descriptor=desc)
     except Exception:
         return None
+
+
+def decode_capabilities(data: bytes) -> Optional[CapabilitiesEnvelope]:
+    hdr = decode_header(data)
+    if (
+        hdr is None
+        or hdr.magic != LINEP_V02_MAGIC
+        or hdr.version_major != LINEP_V02_VERSION_MAJOR
+        or hdr.envelope_type != int(EnvelopeType.CAPABILITIES)
+    ):
+        return None
+
+    is_auth = (hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0
+    auth_ext_len = LINEP_V02_AUTH_EXTENSION_SIZE if is_auth else 0
+
+    if len(data) < (LINEP_V02_HEADER_SIZE + auth_ext_len + hdr.payload_len):
+        return None
+
+    payload = data[LINEP_V02_HEADER_SIZE + auth_ext_len : LINEP_V02_HEADER_SIZE + auth_ext_len + hdr.payload_len]
+
+    # Issue #29: Dual layout decoding for backward compatibility.
+    # Try post-#28 layout first (5 boolean flags: streaming, cancellation, tool_calling,
+    # reasoning_deltas, structured_messages).
+    caps = _decode_capabilities_payload(payload, five_bools=True)
+    if caps is not None:
+        return caps
+
+    # Fall back to legacy pre-#28 layout (4 boolean flags, structured_messages defaults to False).
+    return _decode_capabilities_payload(payload, five_bools=False)
 
 
 def encode_session_bind(bind: SessionBindEnvelope) -> bytes:

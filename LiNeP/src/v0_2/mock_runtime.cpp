@@ -279,6 +279,7 @@ void mock_runtime_server::client_loop(std::shared_ptr<envelope_connection> conn)
             caps.descriptor.supports_streaming = true;
             caps.descriptor.supports_cancellation = true;
             caps.descriptor.supports_reasoning_deltas = config_.enable_reasoning;
+            caps.descriptor.supports_structured_messages = true;
 
             embedding_space_descriptor emb_space{};
             emb_space.embedding_space_id = config_.embedding_space_id;

@@ -299,6 +299,7 @@ class LiNePMockServer:
                             supports_cancellation=True,
                             supports_tool_calling=True,
                             supports_reasoning_deltas=self.config.enable_reasoning,
+                            supports_structured_messages=True,
                             supported_models=[self.config.model_id],
                             supported_embedding_spaces=[
                                 EmbeddingSpaceDescriptor(
