@@ -34,6 +34,7 @@ class EnvelopeType(IntEnum):
     CAPABILITIES = 4
     SESSION_BIND = 5
     RUNTIME_REGISTER = 6
+    SL2_HANDSHAKE = 7
 
 
 class RegistrationOperation(IntEnum):

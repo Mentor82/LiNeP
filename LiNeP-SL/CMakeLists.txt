@@ -8,9 +8,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(BUILD_TESTING "Build LiNeP-SL unit tests" ON)
 option(LINEP_SL_BUILD_V02 "Build experimental LiNeP-SL V0.2 contract" OFF)
 
+find_package(OpenSSL REQUIRED)
+
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../LiNeP/include
+    ${OPENSSL_INCLUDE_DIR}
 )
 
 add_subdirectory(src)

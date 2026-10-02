@@ -354,7 +354,7 @@ runtime_envelope_type peek_envelope_type(const std::uint8_t* data, std::size_t s
     if (hdr.magic != LINEP_V02_MAGIC || hdr.version_major != LINEP_V02_VERSION_MAJOR) {
         return runtime_envelope_type::unknown;
     }
-    if (hdr.envelope_type < 1 || hdr.envelope_type > 5) {
+    if (hdr.envelope_type < 1 || hdr.envelope_type > 7) {
         return runtime_envelope_type::unknown;
     }
     return static_cast<runtime_envelope_type>(hdr.envelope_type);

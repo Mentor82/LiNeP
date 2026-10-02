@@ -44,6 +44,7 @@ enum class runtime_envelope_type : std::uint8_t {
     capabilities = 4,
     session_bind = 5,
     runtime_register = 6,
+    sl2_handshake = 7,
 };
 
 enum class runtime_event_type : std::uint8_t {

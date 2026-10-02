@@ -110,6 +110,12 @@ set_target_properties(benchmark_sl_v02_profiles PROPERTIES
 )
 add_test(NAME benchmark_sl_v02_profiles COMMAND benchmark_sl_v02_profiles)
 
-
-
-
+add_executable(test_sl2_handshake
+    test_sl2_handshake.cpp
+)
+target_link_libraries(test_sl2_handshake PRIVATE linep_sl_v02)
+set_target_properties(test_sl2_handshake PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME test_sl2_handshake COMMAND test_sl2_handshake)
