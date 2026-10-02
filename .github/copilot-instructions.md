@@ -73,3 +73,15 @@ Before merging code or committing payloads generated across different AI chats o
 
 3. **Inspect Interactively:**
    Open the cluster workbench: **`http://192.168.178.161:8088/`** $\rightarrow$ Tab **Live Node Compare**.
+
+---
+
+## 4. C++ Test Suite Standards: No Side-Effects in `assert()`
+- In `RelWithDebInfo` and `Release` builds (the default for cluster packaging), CMake automatically defines `-DNDEBUG`.
+- Standard `<cassert>` `assert(...)` expressions are completely stripped by the preprocessor when `-DNDEBUG` is defined.
+- **Critical rule:** Never place expressions with side-effects or variable-populating calls inside `assert()` (e.g. `assert(auth->sign(input, key, tag));` strips the signing logic, leaving outputs empty and causing null-pointer dereferences / segfaults during subsequent access).
+- **Enforcement:** Always use explicit test macros that remain active regardless of `-DNDEBUG`, such as:
+  ```cpp
+  #define CHECK(x) do { if (!(x)) { std::cerr << "Assertion failed: " << #x << " at " << __FILE__ << ":" << __LINE__ << '\n'; std::exit(1); } } while(0)
+  ```
+  or evaluate the return value into a named local variable before checking it.
