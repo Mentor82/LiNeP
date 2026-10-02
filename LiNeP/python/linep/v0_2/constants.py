@@ -13,6 +13,7 @@ LINEP_V02_SESSION_BIND_PAYLOAD_SIZE: int = 36         # 8+8+4+8+8 bytes
 LINEP_V02_FLAG_AUTHENTICATED: int = 0x01
 LINEP_V02_AUTH_EXTENSION_SIZE: int = 24
 LINEP_V02_MAX_EMBEDDING_DIMS: int = 65536
+LINEP_V02_MAX_REGISTRATION_BYTES: int = 65536
 
 class MessageDirection(IntEnum):
     UNSPECIFIED = 0
@@ -32,6 +33,17 @@ class EnvelopeType(IntEnum):
     CONTROL = 3
     CAPABILITIES = 4
     SESSION_BIND = 5
+    RUNTIME_REGISTER = 6
+
+
+class RegistrationOperation(IntEnum):
+    UNKNOWN = 0
+    REGISTER_RUNTIME = 1
+    RESULT = 2
+    DRAINING = 3
+    DEREGISTER = 4
+    CAPACITY_UPDATE = 5
+    CAPABILITIES_QUERY = 6
 
 class SessionBindingState(IntEnum):
     UNBOUND = 0

@@ -17,9 +17,11 @@ from linep.v0_2.constants import (
     LINEP_V02_FLAG_AUTHENTICATED,
     LINEP_V02_AUTH_EXTENSION_SIZE,
     LINEP_V02_MAX_EMBEDDING_DIMS,
+    LINEP_V02_MAX_REGISTRATION_BYTES,
     MessageDirection,
     RuntimeProfile,
     EnvelopeType,
+    RegistrationOperation,
     EventType,
     ControlType,
     TerminalOutcome,
@@ -314,12 +316,12 @@ class SessionBindEnvelope:
 @dataclass
 class CapabilitiesDescriptor:
     supported_profiles: List[RuntimeProfile] = field(default_factory=list)
-    max_context_tokens: int = 8192
-    max_output_tokens: int = 4096
+    max_context_tokens: int = 0
+    max_output_tokens: int = 0
     supports_streaming: bool = True
     supports_cancellation: bool = True
-    supports_tool_calling: bool = True
-    supports_reasoning_deltas: bool = True
+    supports_tool_calling: bool = False
+    supports_reasoning_deltas: bool = False
     supports_structured_messages: bool = False
     supported_models: List[str] = field(default_factory=list)
     supported_embedding_spaces: List[EmbeddingSpaceDescriptor] = field(default_factory=list)
@@ -328,6 +330,22 @@ class CapabilitiesDescriptor:
 @dataclass
 class CapabilitiesEnvelope:
     descriptor: CapabilitiesDescriptor = field(default_factory=CapabilitiesDescriptor)
+
+
+@dataclass
+class RegistrationExtension:
+    tag: int = 0  # >= 0x8000: optional, preserved; unknown mandatory tags fail
+    value: bytes = field(default_factory=bytes)
+
+
+@dataclass
+class RuntimeRegistrationEnvelope:
+    operation: RegistrationOperation = RegistrationOperation.REGISTER_RUNTIME
+    concurrent_slots: int = 0
+    status_code: int = 0  # result: 200 accepted or 4xx/5xx rejected
+    reason: str = ""
+    capabilities: CapabilitiesEnvelope = field(default_factory=CapabilitiesEnvelope)
+    extensions: List[RegistrationExtension] = field(default_factory=list)
 
 
 def encode_header(hdr: WireEnvelopeHeader) -> bytes:
@@ -988,4 +1006,249 @@ def verify_envelope(
     if not hmac.compare_digest(auth_ext.mac, expected_mac):
         return False, auth_ext, payload, "auth_invalid: MAC verification failed"
     return True, auth_ext, payload, ""
+
+
+def _is_valid_runtime_registration(e: RuntimeRegistrationEnvelope) -> bool:
+    try:
+        op = int(e.operation)
+    except (TypeError, ValueError):
+        return False
+    if op < 1 or op > 6:
+        return False
+
+    reason_bytes = e.reason.encode("utf-8") if isinstance(e.reason, str) else bytes(e.reason)
+    if len(reason_bytes) > 8192:
+        return False
+
+    d = e.capabilities.descriptor if (e.capabilities is not None and e.capabilities.descriptor is not None) else None
+    if d is None:
+        return False
+
+    empty_capabilities = (
+        len(d.supported_models) == 0
+        and len(d.supported_profiles) == 0
+        and len(d.supported_embedding_spaces) == 0
+        and d.max_context_tokens == 0
+        and d.max_output_tokens == 0
+        and d.supports_streaming is True
+        and d.supports_cancellation is True
+        and not d.supports_tool_calling
+        and not d.supports_reasoning_deltas
+        and not d.supports_structured_messages
+    )
+
+    if e.operation == RegistrationOperation.RESULT:
+        return (
+            (e.status_code == 200 or (400 <= e.status_code <= 599))
+            and e.concurrent_slots == 0
+            and empty_capabilities
+        )
+
+    if e.status_code != 0 or len(reason_bytes) != 0:
+        return False
+
+    if e.operation != RegistrationOperation.REGISTER_RUNTIME:
+        return empty_capabilities and (
+            e.operation == RegistrationOperation.CAPACITY_UPDATE or e.concurrent_slots == 0
+        )
+
+    if e.concurrent_slots == 0 or len(d.supported_models) == 0 or len(d.supported_profiles) == 0:
+        return False
+    if len(d.supported_models) > 2048 or len(d.supported_embedding_spaces) > 2048:
+        return False
+
+    total_bytes = 64
+    for m in d.supported_models:
+        total_bytes += len(m.encode("utf-8")) + 2
+    for sp in d.supported_embedding_spaces:
+        sp_id_bytes = sp.embedding_space_id.encode("utf-8")
+        sp_mod_bytes = sp.model_id.encode("utf-8")
+        sp_rev_bytes = sp.model_revision.encode("utf-8")
+        if (
+            not sp.embedding_space_id
+            or not sp.model_id
+            or sp.dimensions == 0
+            or sp.dimensions > LINEP_V02_MAX_EMBEDDING_DIMS
+            or int(sp.normalization) > 1
+            or int(sp.distance_metric) < 1
+            or int(sp.distance_metric) > 3
+            or sp.model_id not in d.supported_models
+            or len(sp_id_bytes) > 8192
+            or len(sp_mod_bytes) > 8192
+            or len(sp_rev_bytes) > 8192
+        ):
+            return False
+        total_bytes += len(sp_id_bytes) + len(sp_mod_bytes) + len(sp_rev_bytes) + 12
+
+    if total_bytes > LINEP_V02_MAX_REGISTRATION_BYTES - 64:
+        return False
+
+    seen_models = set()
+    for m in d.supported_models:
+        m_bytes = m.encode("utf-8")
+        if not m or len(m_bytes) > 8192 or m in seen_models:
+            return False
+        seen_models.add(m)
+
+    seen_profiles = set()
+    for p in d.supported_profiles:
+        v = int(p)
+        if v < 1 or v > 3 or v in seen_profiles:
+            return False
+        seen_profiles.add(v)
+
+    return True
+
+
+def encode_runtime_registration(e: RuntimeRegistrationEnvelope) -> bytes:
+    """Encode RuntimeRegistrationEnvelope into canonical little-endian wire frame."""
+    if not _is_valid_runtime_registration(e):
+        raise ValueError("Invalid RuntimeRegistrationEnvelope")
+
+    b = bytearray([1, 0, int(e.operation), 0])
+
+    def put_field(tag: int, val: bytes):
+        b.extend(struct.pack("<HI", tag, len(val)))
+        b.extend(val)
+
+    if e.operation in (RegistrationOperation.REGISTER_RUNTIME, RegistrationOperation.CAPACITY_UPDATE):
+        put_field(1, struct.pack("<I", e.concurrent_slots))
+
+    if e.operation == RegistrationOperation.RESULT:
+        put_field(2, struct.pack("<I", e.status_code))
+        put_field(3, e.reason.encode("utf-8"))
+
+    if e.operation == RegistrationOperation.REGISTER_RUNTIME:
+        caps_bytes = encode_capabilities(e.capabilities)
+        put_field(4, caps_bytes)
+
+    previous = 0x7FFF
+    for x in e.extensions:
+        if x.tag <= previous or len(x.value) > LINEP_V02_MAX_REGISTRATION_BYTES:
+            raise ValueError(f"Invalid extension tag {x.tag} or length {len(x.value)}")
+        previous = x.tag
+        put_field(x.tag, x.value)
+        if len(b) > LINEP_V02_MAX_REGISTRATION_BYTES:
+            raise ValueError("Registration payload exceeds max allowed bytes")
+
+    if len(b) > LINEP_V02_MAX_REGISTRATION_BYTES:
+        raise ValueError("Registration payload exceeds max allowed bytes")
+
+    hdr = WireEnvelopeHeader(
+        magic=LINEP_V02_MAGIC,
+        version_major=LINEP_V02_VERSION_MAJOR,
+        version_minor=LINEP_V02_VERSION_MINOR,
+        envelope_type=int(EnvelopeType.RUNTIME_REGISTER),
+        flags=0,
+        request_id=0,
+        execution_id=0,
+        output_id=0,
+        payload_len=len(b),
+    )
+    return encode_header(hdr) + bytes(b)
+
+
+def decode_runtime_registration(data: bytes) -> Optional[RuntimeRegistrationEnvelope]:
+    """Decode RuntimeRegistrationEnvelope from canonical wire frame (structural decode only)."""
+    if len(data) < LINEP_V02_HEADER_SIZE:
+        return None
+    hdr = decode_header(data)
+    if (
+        hdr is None
+        or hdr.magic != LINEP_V02_MAGIC
+        or hdr.version_major != LINEP_V02_VERSION_MAJOR
+        or hdr.version_minor != LINEP_V02_VERSION_MINOR
+        or (hdr.flags & ~LINEP_V02_FLAG_AUTHENTICATED) != 0
+        or hdr.envelope_type != int(EnvelopeType.RUNTIME_REGISTER)
+        or hdr.request_id != 0
+        or hdr.execution_id != 0
+        or hdr.output_id != 0
+        or hdr.payload_len < 4
+        or hdr.payload_len > LINEP_V02_MAX_REGISTRATION_BYTES
+    ):
+        return None
+
+    is_auth = (hdr.flags & LINEP_V02_FLAG_AUTHENTICATED) != 0
+    offset = LINEP_V02_HEADER_SIZE + (LINEP_V02_AUTH_EXTENSION_SIZE if is_auth else 0)
+    if len(data) != offset + hdr.payload_len:
+        return None
+
+    if data[offset] != 1 or data[offset + 1] != 0 or data[offset + 3] != 0:
+        return None
+
+    try:
+        op = RegistrationOperation(data[offset + 2])
+    except ValueError:
+        return None
+
+    e = RuntimeRegistrationEnvelope(operation=op)
+    pos = offset + 4
+    end = len(data)
+    previous = 0
+    seen = 0
+
+    while pos < end:
+        if end - pos < 6:
+            return None
+        tag, tlen = struct.unpack_from("<HI", data, pos)
+        pos += 6
+        if tag <= previous or tlen > end - pos:
+            return None
+        previous = tag
+
+        val_bytes = data[pos : pos + tlen]
+        if tag == 1:
+            if tlen != 4:
+                return None
+            e.concurrent_slots = struct.unpack_from("<I", val_bytes, 0)[0]
+        elif tag == 2:
+            if tlen != 4:
+                return None
+            e.status_code = struct.unpack_from("<I", val_bytes, 0)[0]
+        elif tag == 3:
+            if tlen > 8192:
+                return None
+            e.reason = val_bytes.decode("utf-8", errors="replace")
+        elif tag == 4:
+            ch = decode_header(val_bytes)
+            if (
+                ch is None
+                or ch.magic != LINEP_V02_MAGIC
+                or ch.version_major != LINEP_V02_VERSION_MAJOR
+                or ch.version_minor != LINEP_V02_VERSION_MINOR
+                or ch.flags != 0
+                or ch.request_id != 0
+                or ch.execution_id != 0
+                or ch.output_id != 0
+                or ch.envelope_type != int(EnvelopeType.CAPABILITIES)
+                or tlen != LINEP_V02_HEADER_SIZE + ch.payload_len
+            ):
+                return None
+            caps = decode_capabilities(val_bytes)
+            if caps is None:
+                return None
+            # Canonical re-encoding check (reject non-canonical or trailing nested data)
+            canonical = encode_capabilities(caps)
+            if canonical != val_bytes:
+                return None
+            e.capabilities = caps
+        elif tag < 0x8000:
+            return None
+        else:
+            e.extensions.append(RegistrationExtension(tag=tag, value=bytes(val_bytes)))
+
+        if tag <= 4:
+            seen |= (1 << tag)
+        pos += tlen
+
+    expected = (
+        18 if e.operation == RegistrationOperation.REGISTER_RUNTIME
+        else (12 if e.operation == RegistrationOperation.RESULT
+        else (2 if e.operation == RegistrationOperation.CAPACITY_UPDATE
+        else 0))
+    )
+    if seen != expected or not _is_valid_runtime_registration(e):
+        return None
+
+    return e
 
