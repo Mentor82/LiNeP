@@ -14,6 +14,8 @@ LINEP_V02_FLAG_AUTHENTICATED: int = 0x01
 LINEP_V02_AUTH_EXTENSION_SIZE: int = 24
 LINEP_V02_MAX_EMBEDDING_DIMS: int = 65536
 LINEP_V02_MAX_REGISTRATION_BYTES: int = 65536
+LINEP_V02_MAX_VISION_IMAGE_BYTES: int = 16 * 1024 * 1024
+LINEP_V02_MAX_VISION_DETECTIONS: int = 1000
 
 class MessageDirection(IntEnum):
     UNSPECIFIED = 0
@@ -25,6 +27,7 @@ class RuntimeProfile(IntEnum):
     GENERATE = 1
     CHAT = 2
     EMBED = 3
+    VISION = 4
 
 class EnvelopeType(IntEnum):
     UNKNOWN = 0
@@ -65,6 +68,11 @@ class EventType(IntEnum):
     COMPLETED = 10
     CANCELLED = 11
     FAILED = 12
+    VISION_RESULT = 13
+
+class VisionTask(IntEnum):
+    UNSPECIFIED = 0
+    DETECT = 1
 
 class ControlType(IntEnum):
     UNKNOWN = 0

@@ -11,6 +11,7 @@
 #include "linep/v0_2/control_plane.hpp"
 #include "linep/v0_2/mock_runtime.hpp"
 #include "linep/v0_2/conformance.hpp"
+#include "linep/v0_2/vision.hpp"
 
 using namespace linep::v0_2;
 
@@ -108,6 +109,52 @@ void test_golden_frames_roundtrip() {
     LINEP_TEST_CHECK(decoded_req_opts.options.extra_options.size() == 2);
     LINEP_TEST_CHECK(decoded_req_opts.options.extra_options[0].first == "min_p");
     LINEP_TEST_CHECK(decoded_req_opts.options.extra_options[1].first == "mirostat");
+
+    // 1c. Event Vision Detect Result (Issue #32)
+    event_envelope evt_vis{};
+    evt_vis.stream.request_id = 7001;
+    evt_vis.stream.execution_id = 8001;
+    evt_vis.stream.output_id = 0;
+    evt_vis.event_seq = 1;
+    evt_vis.event_type = runtime_event_type::vision_result;
+    evt_vis.timestamp_us = 1700000000123600ULL;
+    evt_vis.vision.task = vision_task::detect;
+    evt_vis.vision.model_id = "yolov8n-detect";
+    evt_vis.vision.model_revision = "v1.0.0";
+    evt_vis.vision.detect.label_set_id = "coco80:v1";
+    evt_vis.vision.detect.original_width = 1920;
+    evt_vis.vision.detect.original_height = 1080;
+    vision_detection d1{};
+    d1.class_id = 0;
+    d1.label = "person";
+    d1.score = 0.92f;
+    d1.box = vision_box_2d{0.1f, 0.2f, 0.5f, 0.8f};
+    vision_detection d2{};
+    d2.class_id = 16;
+    d2.label = "dog";
+    d2.score = 0.85f;
+    d2.box = vision_box_2d{0.6f, 0.3f, 0.85f, 0.75f};
+    evt_vis.vision.detect.detections = {d1, d2};
+
+    std::vector<std::uint8_t> vis_buf;
+    LINEP_TEST_CHECK(encode_event(evt_vis, vis_buf));
+    LINEP_TEST_CHECK(write_file((temp_dir / "event_vision_detect_cpp.bin").string(), vis_buf));
+
+    LINEP_TEST_CHECK(read_file((temp_dir / "event_vision_detect_cpp.bin").string(), read_buf));
+    event_envelope decoded_vis{};
+    LINEP_TEST_CHECK(decode_event(read_buf.data(), read_buf.size(), decoded_vis));
+    LINEP_TEST_CHECK(decoded_vis.event_type == runtime_event_type::vision_result);
+    LINEP_TEST_CHECK(decoded_vis.vision.task == vision_task::detect);
+    LINEP_TEST_CHECK(decoded_vis.vision.model_id == "yolov8n-detect");
+    LINEP_TEST_CHECK(decoded_vis.vision.model_revision == "v1.0.0");
+    LINEP_TEST_CHECK(decoded_vis.vision.detect.label_set_id == "coco80:v1");
+    LINEP_TEST_CHECK(decoded_vis.vision.detect.original_width == 1920);
+    LINEP_TEST_CHECK(decoded_vis.vision.detect.original_height == 1080);
+    LINEP_TEST_CHECK(decoded_vis.vision.detect.detections.size() == 2);
+    LINEP_TEST_CHECK(decoded_vis.vision.detect.detections[0].class_id == 0);
+    LINEP_TEST_CHECK(decoded_vis.vision.detect.detections[0].label == "person");
+    LINEP_TEST_CHECK(decoded_vis.vision.detect.detections[1].class_id == 16);
+    LINEP_TEST_CHECK(decoded_vis.vision.detect.detections[1].label == "dog");
 
     // 2. UDP Control Datagram (Hello)
     udp_control_datagram udp_hello{};

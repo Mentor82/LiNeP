@@ -18,11 +18,14 @@ from linep.v0_2.constants import (
     LINEP_V02_AUTH_EXTENSION_SIZE,
     LINEP_V02_MAX_EMBEDDING_DIMS,
     LINEP_V02_MAX_REGISTRATION_BYTES,
+    LINEP_V02_MAX_VISION_IMAGE_BYTES,
+    LINEP_V02_MAX_VISION_DETECTIONS,
     MessageDirection,
     RuntimeProfile,
     EnvelopeType,
     RegistrationOperation,
     EventType,
+    VisionTask,
     ControlType,
     TerminalOutcome,
     ErrorCategory,
@@ -30,6 +33,13 @@ from linep.v0_2.constants import (
     EmbeddingDistanceMetric,
 )
 from linep.v0_2.control_plane import NodeEndpointIdentity
+from linep.v0_2.vision import (
+    VisionBox2D,
+    VisionDetection,
+    VisionDetectResult,
+    VisionResultPayload,
+    VisionModelDescriptor,
+)
 
 
 class BufferWriter:
@@ -254,6 +264,7 @@ class EventEnvelope:
     outcome: TerminalOutcome = TerminalOutcome.UNSPECIFIED
     error: RuntimeErrorPayload = field(default_factory=RuntimeErrorPayload)
     embedding: EmbeddingPayload = field(default_factory=EmbeddingPayload)
+    vision: VisionResultPayload = field(default_factory=VisionResultPayload)
     timestamp_us: int = 0
 
     def is_valid(self) -> bool:
@@ -265,6 +276,9 @@ class EventEnvelope:
             if not self.embedding.space.embedding_space_id or self.embedding.space.dimensions == 0:
                 return False
             if len(self.embedding.vector) != self.embedding.space.dimensions:
+                return False
+        if self.event_type == EventType.VISION_RESULT:
+            if not self.vision.is_valid():
                 return False
         return True
 
@@ -325,6 +339,16 @@ class CapabilitiesDescriptor:
     supports_structured_messages: bool = False
     supported_models: List[str] = field(default_factory=list)
     supported_embedding_spaces: List[EmbeddingSpaceDescriptor] = field(default_factory=list)
+    supported_vision_models: List[VisionModelDescriptor] = field(default_factory=list)
+
+    def supports_profile(self, profile: RuntimeProfile) -> bool:
+        return profile in self.supported_profiles
+
+    def supports_vision_model(self, model_id: str, task: VisionTask = VisionTask.DETECT) -> bool:
+        for vm in self.supported_vision_models:
+            if vm.model_id == model_id and (task == VisionTask.UNSPECIFIED or vm.task == task):
+                return True
+        return False
 
 
 @dataclass
@@ -572,6 +596,25 @@ def encode_event(evt: EventEnvelope) -> bytes:
         for v in evt.embedding.vector:
             pw.write_float(v)
 
+    elif evt.event_type == EventType.VISION_RESULT:
+        v = evt.vision
+        pw.write_u8(int(v.task))
+        pw.write_string_u16(v.model_id)
+        pw.write_string_u16(v.model_revision)
+        if v.task == VisionTask.DETECT:
+            pw.write_string_u16(v.detect.label_set_id)
+            pw.write_u32(v.detect.original_width)
+            pw.write_u32(v.detect.original_height)
+            pw.write_u32(len(v.detect.detections))
+            for d in v.detect.detections:
+                pw.write_u32(d.class_id)
+                pw.write_float(d.score)
+                pw.write_float(d.box.x_min)
+                pw.write_float(d.box.y_min)
+                pw.write_float(d.box.x_max)
+                pw.write_float(d.box.y_max)
+                pw.write_string_u16(d.label)
+
     payload = pw.to_bytes()
     hdr = WireEnvelopeHeader(
         magic=LINEP_V02_MAGIC,
@@ -612,6 +655,7 @@ def decode_event(data: bytes) -> Optional[EventEnvelope]:
         ts = r.read_u64()
 
         embedding = EmbeddingPayload()
+        vision = VisionResultPayload()
         if ev_type == EventType.EMBEDDING_RESULT:
             space_id = r.read_string_u16()
             model_id = r.read_string_u16()
@@ -638,6 +682,47 @@ def decode_event(data: bytes) -> Optional[EventEnvelope]:
                 ),
                 vector=vector,
             )
+        elif ev_type == EventType.VISION_RESULT:
+            v_task = VisionTask(r.read_u8())
+            v_model_id = r.read_string_u16()
+            v_model_rev = r.read_string_u16()
+            if v_task == VisionTask.DETECT:
+                v_label_set = r.read_string_u16()
+                v_w = r.read_u32()
+                v_h = r.read_u32()
+                det_count = r.read_u32()
+                if det_count > LINEP_V02_MAX_VISION_DETECTIONS:
+                    return None
+                if det_count > (r.remaining() // 26):
+                    return None
+                dets = []
+                for _ in range(det_count):
+                    cid = r.read_u32()
+                    score = r.read_float()
+                    x_min = r.read_float()
+                    y_min = r.read_float()
+                    x_max = r.read_float()
+                    y_max = r.read_float()
+                    lbl = r.read_string_u16()
+                    dets.append(VisionDetection(
+                        class_id=cid,
+                        label=lbl,
+                        score=score,
+                        box=VisionBox2D(x_min=x_min, y_min=y_min, x_max=x_max, y_max=y_max),
+                    ))
+                vision = VisionResultPayload(
+                    task=v_task,
+                    model_id=v_model_id,
+                    model_revision=v_model_rev,
+                    detect=VisionDetectResult(
+                        label_set_id=v_label_set,
+                        original_width=v_w,
+                        original_height=v_h,
+                        detections=dets,
+                    ),
+                )
+            else:
+                return None
 
         if r.remaining() != 0:
             return None  # Reject trailing garbage
@@ -655,6 +740,7 @@ def decode_event(data: bytes) -> Optional[EventEnvelope]:
                 backend_diagnostic=err_diag,
             ),
             embedding=embedding,
+            vision=vision,
             timestamp_us=ts,
         )
         return evt if evt.is_valid() else None
@@ -743,6 +829,18 @@ def encode_capabilities(caps: CapabilitiesEnvelope) -> bytes:
         pw.write_u8(int(sp.normalization))
         pw.write_u8(int(sp.distance_metric))
 
+    if desc.supported_vision_models:
+        pw.write_u16(len(desc.supported_vision_models))
+        for vm in desc.supported_vision_models:
+            pw.write_string_u16(vm.model_id)
+            pw.write_string_u16(vm.model_revision)
+            pw.write_string_u16(vm.label_set_id)
+            pw.write_u8(int(vm.task))
+            pw.write_u32(vm.max_detections)
+            pw.write_u16(len(vm.custom_labels))
+            for lbl in vm.custom_labels:
+                pw.write_string_u16(lbl)
+
     payload = pw.to_bytes()
     hdr = WireEnvelopeHeader(
         magic=LINEP_V02_MAGIC,
@@ -791,6 +889,28 @@ def _decode_capabilities_payload(payload: bytes, five_bools: bool) -> Optional[C
                 )
             )
 
+        vision_models = []
+        if r.remaining() > 0:
+            vm_count = r.read_u16()
+            for _ in range(vm_count):
+                vm_id = r.read_string_u16()
+                vm_rev = r.read_string_u16()
+                v_lbl = r.read_string_u16()
+                v_task = VisionTask(r.read_u8())
+                v_max = r.read_u32()
+                cl_count = r.read_u16()
+                cl_labels = [r.read_string_u16() for _ in range(cl_count)]
+                vision_models.append(
+                    VisionModelDescriptor(
+                        model_id=vm_id,
+                        model_revision=vm_rev,
+                        label_set_id=v_lbl,
+                        task=v_task,
+                        max_detections=v_max,
+                        custom_labels=cl_labels,
+                    )
+                )
+
         if r.remaining() != 0:
             return None
 
@@ -805,6 +925,7 @@ def _decode_capabilities_payload(payload: bytes, five_bools: bool) -> Optional[C
             supports_structured_messages=s_struct_msg,
             supported_models=models,
             supported_embedding_spaces=spaces,
+            supported_vision_models=vision_models,
         )
         return CapabilitiesEnvelope(descriptor=desc)
     except Exception:

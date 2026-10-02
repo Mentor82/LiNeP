@@ -5,6 +5,7 @@
 #include <vector>
 #include "linep/v0_2/runtime_types.hpp"
 #include "linep/v0_2/embedding.hpp"
+#include "linep/v0_2/vision.hpp"
 
 namespace linep::v0_2 {
 
@@ -50,10 +51,20 @@ struct runtime_capabilities_descriptor {
     bool supports_structured_messages{false};
     std::vector<std::string> supported_models;
     std::vector<embedding_space_descriptor> supported_embedding_spaces;
+    std::vector<vision_model_descriptor> supported_vision_models;
 
     bool supports_profile(runtime_profile profile) const noexcept {
         for (auto p : supported_profiles) {
             if (p == profile) return true;
+        }
+        return false;
+    }
+
+    bool supports_vision_model(const std::string& model_id, vision_task task = vision_task::detect) const noexcept {
+        for (const auto& vm : supported_vision_models) {
+            if (vm.model_id == model_id && (task == vision_task::unspecified || vm.task == task)) {
+                return true;
+            }
         }
         return false;
     }

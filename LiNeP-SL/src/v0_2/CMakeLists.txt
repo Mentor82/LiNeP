@@ -12,6 +12,7 @@ add_library(linep_sl_v02 STATIC
     sl2_handshake.cpp
     ${PROJECT_SOURCE_DIR}/../LiNeP/src/v0_2/control_plane.cpp
     ${PROJECT_SOURCE_DIR}/../LiNeP/src/v0_2/envelopes.cpp
+    ${PROJECT_SOURCE_DIR}/../LiNeP/src/v0_2/vision.cpp
     ${PROJECT_SOURCE_DIR}/../LiNeP/src/core/sha256.cpp
     ${PROJECT_SOURCE_DIR}/../LiNeP/src/core/security.cpp
 )

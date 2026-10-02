@@ -17,6 +17,7 @@ enum class runtime_profile : std::uint8_t {
     generate = 1,
     chat = 2,
     embed = 3,
+    vision = 4,
 };
 
 enum class terminal_outcome : std::uint8_t {

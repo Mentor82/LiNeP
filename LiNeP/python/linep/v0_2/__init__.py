@@ -34,8 +34,23 @@ from linep.v0_2.constants import (
     LINEP_V02_FLAG_AUTHENTICATED,
     LINEP_V02_AUTH_EXTENSION_SIZE,
     LINEP_V02_MAX_REGISTRATION_BYTES,
+    LINEP_V02_MAX_VISION_IMAGE_BYTES,
+    LINEP_V02_MAX_VISION_DETECTIONS,
     MessageDirection,
     RegistrationOperation,
+    VisionTask,
+)
+from linep.v0_2.vision import (
+    LABEL_SET_COCO80_V1,
+    LABEL_SET_WIDERFACE_V1,
+    LABEL_SET_VOC20_V1,
+    VisionBox2D,
+    VisionDetection,
+    VisionDetectResult,
+    VisionResultPayload,
+    VisionModelDescriptor,
+    resolve_standard_label,
+    is_valid_label_for_class,
 )
 from linep.v0_2.envelopes import (
     StreamIdentity,
@@ -172,4 +187,18 @@ __all__ = [
     "ConformanceReport",
     "TestResult",
     "ProfileConformanceStatus",
+    # Vision Profile (Phase 1)
+    "VisionTask",
+    "LABEL_SET_COCO80_V1",
+    "LABEL_SET_WIDERFACE_V1",
+    "LABEL_SET_VOC20_V1",
+    "VisionBox2D",
+    "VisionDetection",
+    "VisionDetectResult",
+    "VisionResultPayload",
+    "VisionModelDescriptor",
+    "resolve_standard_label",
+    "is_valid_label_for_class",
+    "LINEP_V02_MAX_VISION_IMAGE_BYTES",
+    "LINEP_V02_MAX_VISION_DETECTIONS",
 ]

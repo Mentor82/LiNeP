@@ -10,6 +10,7 @@
 #include "linep/v0_2/lifecycle.hpp"
 #include "linep/v0_2/envelopes.hpp"
 #include "linep/v0_2/control_plane.hpp"
+#include "linep/v0_2/vision.hpp"
 
 using namespace linep::v0_2;
 
@@ -145,6 +146,37 @@ int do_generate(const std::string& dir) {
 
     std::vector<std::uint8_t> embed_buf;
     if (!encode_event(evt_embed, embed_buf) || !write_file(dir + "/event_embedding_cpp.bin", embed_buf)) {
+        return 1;
+    }
+
+    // 4b. Event Vision Detect Result (Issue #32)
+    event_envelope evt_vis{};
+    evt_vis.stream.request_id = 7001;
+    evt_vis.stream.execution_id = 8001;
+    evt_vis.stream.output_id = 0;
+    evt_vis.event_seq = 1;
+    evt_vis.event_type = runtime_event_type::vision_result;
+    evt_vis.timestamp_us = 1700000000123600ULL;
+    evt_vis.vision.task = vision_task::detect;
+    evt_vis.vision.model_id = "yolov8n-detect";
+    evt_vis.vision.model_revision = "v1.0.0";
+    evt_vis.vision.detect.label_set_id = "coco80:v1";
+    evt_vis.vision.detect.original_width = 1920;
+    evt_vis.vision.detect.original_height = 1080;
+    vision_detection d1{};
+    d1.class_id = 0;
+    d1.label = "person";
+    d1.score = 0.92f;
+    d1.box = vision_box_2d{0.1f, 0.2f, 0.5f, 0.8f};
+    vision_detection d2{};
+    d2.class_id = 16;
+    d2.label = "dog";
+    d2.score = 0.85f;
+    d2.box = vision_box_2d{0.6f, 0.3f, 0.85f, 0.75f};
+    evt_vis.vision.detect.detections = {d1, d2};
+
+    std::vector<std::uint8_t> vis_buf;
+    if (!encode_event(evt_vis, vis_buf) || !write_file(dir + "/event_vision_detect_cpp.bin", vis_buf)) {
         return 1;
     }
 
@@ -437,6 +469,38 @@ int do_verify(const std::string& dir) {
     }
     std::cout << "  -> event_embedding_go.bin: PASS" << std::endl;
 
+    // 4b. Verify Go Vision Detect Result (Issue #32)
+    if (!read_file(dir + "/event_vision_detect_go.bin", buf)) return 1;
+    event_envelope evt_vis{};
+    if (!decode_event(buf.data(), buf.size(), evt_vis)) {
+        std::cerr << "C++ FAILED to decode Go vision detect event!" << std::endl;
+        return 1;
+    }
+    if (evt_vis.event_type != runtime_event_type::vision_result ||
+        evt_vis.stream.request_id != 7001 ||
+        evt_vis.stream.execution_id != 8001 ||
+        evt_vis.vision.task != vision_task::detect ||
+        evt_vis.vision.model_id != "yolov8n-detect" ||
+        evt_vis.vision.model_revision != "v1.0.0" ||
+        evt_vis.vision.detect.label_set_id != "coco80:v1" ||
+        evt_vis.vision.detect.original_width != 1920 ||
+        evt_vis.vision.detect.original_height != 1080 ||
+        evt_vis.vision.detect.detections.size() != 2) {
+        std::cerr << "C++ vision detect validation mismatch on Go frame!" << std::endl;
+        return 1;
+    }
+    const auto& d0 = evt_vis.vision.detect.detections[0];
+    if (d0.class_id != 0 || d0.label != "person" || d0.score < 0.91f || d0.score > 0.93f) {
+        std::cerr << "C++ vision detection[0] mismatch on Go frame!" << std::endl;
+        return 1;
+    }
+    const auto& d1 = evt_vis.vision.detect.detections[1];
+    if (d1.class_id != 16 || d1.label != "dog" || d1.score < 0.84f || d1.score > 0.86f) {
+        std::cerr << "C++ vision detection[1] mismatch on Go frame!" << std::endl;
+        return 1;
+    }
+    std::cout << "  -> event_vision_detect_go.bin: PASS" << std::endl;
+
     // 5. Verify Go Completed
     if (!read_file(dir + "/event_completed_go.bin", buf)) return 1;
     event_envelope evt_comp{};
@@ -723,6 +787,24 @@ int do_verify_cpp(const std::string& dir) {
     }
     std::cout << "  -> event_embedding_cpp.bin: PASS" << std::endl;
 
+    // 4b. Vision Detect (Issue #32)
+    if (!read_file(dir + "/event_vision_detect_cpp.bin", buf)) return 1;
+    event_envelope evt_vis{};
+    if (!decode_event(buf.data(), buf.size(), evt_vis) ||
+        evt_vis.event_type != runtime_event_type::vision_result ||
+        evt_vis.stream.request_id != 7001 ||
+        evt_vis.vision.task != vision_task::detect ||
+        evt_vis.vision.model_id != "yolov8n-detect" ||
+        evt_vis.vision.model_revision != "v1.0.0" ||
+        evt_vis.vision.detect.label_set_id != "coco80:v1" ||
+        evt_vis.vision.detect.original_width != 1920 ||
+        evt_vis.vision.detect.original_height != 1080 ||
+        evt_vis.vision.detect.detections.size() != 2) {
+        std::cerr << "C++ verification failed on event_vision_detect_cpp.bin!" << std::endl;
+        return 1;
+    }
+    std::cout << "  -> event_vision_detect_cpp.bin: PASS" << std::endl;
+
     // 5. Completed
     if (!read_file(dir + "/event_completed_cpp.bin", buf)) return 1;
     event_envelope evt_comp{};
@@ -892,7 +974,7 @@ int do_verify_cpp(const std::string& dir) {
     }
     std::cout << "  -> event_delta_sl1_cpp.bin: PASS" << std::endl;
 
-    std::cout << "[C++ Golden Tool] ALL 19 C++ REFERENCE FRAMES VERIFIED 100%!" << std::endl;
+    std::cout << "[C++ Golden Tool] ALL 20 C++ REFERENCE FRAMES VERIFIED 100%!" << std::endl;
     return 0;
 }
 

@@ -543,6 +543,25 @@ bool encode_event(const event_envelope& evt, std::vector<std::uint8_t>& out_buff
         for (float val : evt.embedding.vector) {
             write_float(payload_buf, val);
         }
+    } else if (evt.event_type == runtime_event_type::vision_result) {
+        write_u8(payload_buf, static_cast<std::uint8_t>(evt.vision.task));
+        write_string_u16(payload_buf, evt.vision.model_id);
+        write_string_u16(payload_buf, evt.vision.model_revision);
+        if (evt.vision.task == vision_task::detect) {
+            write_string_u16(payload_buf, evt.vision.detect.label_set_id);
+            write_u32(payload_buf, evt.vision.detect.original_width);
+            write_u32(payload_buf, evt.vision.detect.original_height);
+            write_u32(payload_buf, static_cast<std::uint32_t>(evt.vision.detect.detections.size()));
+            for (const auto& d : evt.vision.detect.detections) {
+                write_u32(payload_buf, d.class_id);
+                write_float(payload_buf, d.score);
+                write_float(payload_buf, d.box.x_min);
+                write_float(payload_buf, d.box.y_min);
+                write_float(payload_buf, d.box.x_max);
+                write_float(payload_buf, d.box.y_max);
+                write_string_u16(payload_buf, d.label);
+            }
+        }
     }
 
     wire_envelope_header hdr{};
@@ -628,6 +647,39 @@ bool decode_event(const std::uint8_t* data, std::size_t size, event_envelope& ou
         out_evt.embedding.vector.resize(vec_count);
         for (std::uint32_t i = 0; i < vec_count; ++i) {
             if (!r.read_float(out_evt.embedding.vector[i])) return false;
+        }
+    } else if (out_evt.event_type == runtime_event_type::vision_result) {
+        std::uint8_t task_val{};
+        if (!r.read_u8(task_val)) return false;
+        out_evt.vision.task = static_cast<vision_task>(task_val);
+        if (!r.read_string_u16(out_evt.vision.model_id)) return false;
+        if (!r.read_string_u16(out_evt.vision.model_revision)) return false;
+
+        if (out_evt.vision.task == vision_task::detect) {
+            if (!r.read_string_u16(out_evt.vision.detect.label_set_id)) return false;
+            if (!r.read_u32(out_evt.vision.detect.original_width)) return false;
+            if (!r.read_u32(out_evt.vision.detect.original_height)) return false;
+
+            std::uint32_t det_count{};
+            if (!r.read_u32(det_count)) return false;
+
+            // Strict fail-closed DoS protection checks: min 26 bytes per detection
+            if (det_count > LINEP_V02_MAX_VISION_DETECTIONS) return false;
+            if (det_count > (r.remaining() / 26)) return false;
+
+            out_evt.vision.detect.detections.resize(det_count);
+            for (std::uint32_t i = 0; i < det_count; ++i) {
+                auto& d = out_evt.vision.detect.detections[i];
+                if (!r.read_u32(d.class_id)) return false;
+                if (!r.read_float(d.score)) return false;
+                if (!r.read_float(d.box.x_min)) return false;
+                if (!r.read_float(d.box.y_min)) return false;
+                if (!r.read_float(d.box.x_max)) return false;
+                if (!r.read_float(d.box.y_max)) return false;
+                if (!r.read_string_u16(d.label)) return false;
+            }
+        } else {
+            return false;
         }
     }
 
@@ -737,6 +789,21 @@ bool encode_capabilities(const capabilities_envelope& caps, std::vector<std::uin
         write_u8(payload_buf, static_cast<std::uint8_t>(sp.distance_metric));
     }
 
+    if (!desc.supported_vision_models.empty()) {
+        write_u16(payload_buf, static_cast<std::uint16_t>(desc.supported_vision_models.size()));
+        for (const auto& vm : desc.supported_vision_models) {
+            write_string_u16(payload_buf, vm.model_id);
+            write_string_u16(payload_buf, vm.model_revision);
+            write_string_u16(payload_buf, vm.label_set_id);
+            write_u8(payload_buf, static_cast<std::uint8_t>(vm.task));
+            write_u32(payload_buf, vm.max_detections);
+            write_u16(payload_buf, static_cast<std::uint16_t>(vm.custom_labels.size()));
+            for (const auto& lbl : vm.custom_labels) {
+                write_string_u16(payload_buf, lbl);
+            }
+        }
+    }
+
     wire_envelope_header hdr{};
     hdr.magic = LINEP_V02_MAGIC;
     hdr.version_major = LINEP_V02_VERSION_MAJOR;
@@ -817,6 +884,28 @@ bool decode_capabilities_payload(const std::uint8_t* payload, std::size_t payloa
         if (!r.read_u8(dist)) return false;
         sp.normalization = static_cast<embedding_normalization>(norm);
         sp.distance_metric = static_cast<embedding_distance_metric>(dist);
+    }
+
+    if (r.remaining() > 0) {
+        std::uint16_t v_count{};
+        if (!r.read_u16(v_count)) return false;
+        desc.supported_vision_models.resize(v_count);
+        for (std::uint16_t i = 0; i < v_count; ++i) {
+            auto& vm = desc.supported_vision_models[i];
+            if (!r.read_string_u16(vm.model_id)) return false;
+            if (!r.read_string_u16(vm.model_revision)) return false;
+            if (!r.read_string_u16(vm.label_set_id)) return false;
+            std::uint8_t t{};
+            if (!r.read_u8(t)) return false;
+            vm.task = static_cast<vision_task>(t);
+            if (!r.read_u32(vm.max_detections)) return false;
+            std::uint16_t c_labels{};
+            if (!r.read_u16(c_labels)) return false;
+            vm.custom_labels.resize(c_labels);
+            for (std::uint16_t j = 0; j < c_labels; ++j) {
+                if (!r.read_string_u16(vm.custom_labels[j])) return false;
+            }
+        }
     }
 
     if (r.remaining() != 0) {

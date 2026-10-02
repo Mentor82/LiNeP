@@ -50,6 +50,11 @@ from linep.v0_2 import (
     compute_sl1_mac,
     sign_envelope,
     verify_envelope,
+    VisionTask,
+    VisionBox2D,
+    VisionDetection,
+    VisionDetectResult,
+    VisionResultPayload,
 )
 
 
@@ -151,6 +156,38 @@ def test_python_decodes_cpp_generated_golden_frames():
         assert evt_embed.embedding.space.distance_metric == EmbeddingDistanceMetric.COSINE
         assert len(evt_embed.embedding.vector) == 4
         assert abs(evt_embed.embedding.vector[0] - 0.1) < 1e-4
+
+        # 4b. Verify C++ Vision Detect Event (Issue #32)
+        vis_bytes = (p / "event_vision_detect_cpp.bin").read_bytes()
+        evt_vis = decode_event(vis_bytes)
+        assert evt_vis is not None
+        assert evt_vis.stream.request_id == 7001
+        assert evt_vis.stream.execution_id == 8001
+        assert evt_vis.stream.output_id == 0
+        assert evt_vis.event_type == EventType.VISION_RESULT
+        assert evt_vis.vision is not None
+        assert evt_vis.vision.model_id == "yolov8n-detect"
+        assert evt_vis.vision.model_revision == "v1.0.0"
+        assert evt_vis.vision.detect.label_set_id == "coco80:v1"
+        assert evt_vis.vision.detect.original_width == 1920
+        assert evt_vis.vision.detect.original_height == 1080
+        assert len(evt_vis.vision.detect.detections) == 2
+        d0 = evt_vis.vision.detect.detections[0]
+        assert d0.class_id == 0
+        assert d0.label == "person"
+        assert abs(d0.score - 0.92) < 1e-4
+        assert abs(d0.box.x_min - 0.1) < 1e-4
+        assert abs(d0.box.y_min - 0.2) < 1e-4
+        assert abs(d0.box.x_max - 0.5) < 1e-4
+        assert abs(d0.box.y_max - 0.8) < 1e-4
+        d1 = evt_vis.vision.detect.detections[1]
+        assert d1.class_id == 16
+        assert d1.label == "dog"
+        assert abs(d1.score - 0.85) < 1e-4
+        assert abs(d1.box.x_min - 0.6) < 1e-4
+        assert abs(d1.box.y_min - 0.3) < 1e-4
+        assert abs(d1.box.x_max - 0.85) < 1e-4
+        assert abs(d1.box.y_max - 0.75) < 1e-4
 
         # 5. Verify C++ Completed Event
         comp_bytes = (p / "event_completed_cpp.bin").read_bytes()
@@ -338,6 +375,39 @@ def test_cpp_verifies_python_generated_golden_frames():
             embedding=EmbeddingPayload(space=sp, vector=[0.1, -0.25, 0.77, 0.05]),
         )
         (p / "event_embedding_go.bin").write_bytes(encode_event(evt_embed))
+
+        # 4b. Vision Detect Event (Issue #32)
+        evt_vis = EventEnvelope(
+            stream=StreamIdentity(7001, 8001, 0),
+            event_seq=1,
+            event_type=EventType.VISION_RESULT,
+            timestamp_us=1700000000123600,
+            vision=VisionResultPayload(
+                task=VisionTask.DETECT,
+                model_id="yolov8n-detect",
+                model_revision="v1.0.0",
+                detect=VisionDetectResult(
+                    label_set_id="coco80:v1",
+                    original_width=1920,
+                    original_height=1080,
+                    detections=[
+                        VisionDetection(
+                            box=VisionBox2D(0.1, 0.2, 0.5, 0.8),
+                            score=0.92,
+                            class_id=0,
+                            label="person",
+                        ),
+                        VisionDetection(
+                            box=VisionBox2D(0.6, 0.3, 0.85, 0.75),
+                            score=0.85,
+                            class_id=16,
+                            label="dog",
+                        ),
+                    ],
+                ),
+            ),
+        )
+        (p / "event_vision_detect_go.bin").write_bytes(encode_event(evt_vis))
 
         # 5. Completed Event
         evt_comp = EventEnvelope(
