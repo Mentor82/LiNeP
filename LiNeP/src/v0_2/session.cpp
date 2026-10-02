@@ -348,6 +348,7 @@ void session_manager::mark_binding_stale() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (binding_state_ == session_binding_state::bound_current) {
         binding_state_ = session_binding_state::bound_stale;
+        ++binding_generation_;
     }
 }
 
@@ -427,6 +428,7 @@ bool session_manager::process_session_bind(const session_bind_envelope& bind, co
     }
 
     bound_bind_ = bind;
+    ++binding_generation_;
     binding_state_ = session_binding_state::bound_current;
     if (bind.sl1_requested) {
         is_sl1_active_ = true;
@@ -436,6 +438,11 @@ bool session_manager::process_session_bind(const session_bind_envelope& bind, co
         is_sl1_active_ = false;
     }
     return true;
+}
+
+std::uint64_t session_manager::binding_generation() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return binding_generation_;
 }
 
 bool session_manager::add_sl1_key(std::uint16_t key_id, std::vector<std::uint8_t> key) {

@@ -1,4 +1,5 @@
 #include "linep/v0_2/transport.hpp"
+#include "linep/v0_2/registration.hpp"
 #include "socket.hpp"
 #include <cstring>
 
@@ -132,6 +133,18 @@ bool envelope_connection::send_request(const request_envelope& req) {
         if (!sign_envelope_buffer(buf, sl1_binding_, sl1_direction_, next_auth_seq_++, sl1_key_id_, sl1_key_.data(), sl1_key_.size())) {
             return false;
         }
+    }
+    return send_bytes_locked(buf.data(), buf.size());
+}
+
+bool envelope_connection::send_runtime_registration(const runtime_registration_envelope& registration) {
+    std::vector<std::uint8_t> buf;
+    if (!encode_runtime_registration(registration, buf)) return false;
+    std::lock_guard<std::mutex> lock(send_mutex_);
+    if (sl1_active_ && !sl1_key_.empty()) {
+        if (next_auth_seq_ >= 0xFFFFFFFF) return false;
+        if (!sign_envelope_buffer(buf, sl1_binding_, sl1_direction_, next_auth_seq_++,
+                                  sl1_key_id_, sl1_key_.data(), sl1_key_.size())) return false;
     }
     return send_bytes_locked(buf.data(), buf.size());
 }

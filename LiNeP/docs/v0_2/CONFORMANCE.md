@@ -10,6 +10,7 @@ Conformance to LiNeP V0.2 is based strictly on **executed test suite verificatio
 
 | Suite ID | Tested Invariants | Required For |
 |---|---|---|
+| `runtime_registration` (local CTest) | Versioned registration, authorization, inverted directions, cancel/backpressure, draining, re-bind, SL1 and golden frame. See [contract and test scope](RUNTIME_REGISTRATION.md). | Dial-out runtime reference implementation |
 | `CAPABILITIES_HANDSHAKE` | Querying & decoding `capabilities_envelope`, model availability, streaming support. | All Profiles |
 | `BASIC_CHAT_STREAMING` | Request dispatch, sequence monotonicity `1..N`, non-empty delta delivery, terminal `completed` (200). | `PROFILE_GENERATE`, `PROFILE_CHAT` |
 | `REASONING_DELTAS` | Strict ordering: all `reasoning_delta` events must arrive strictly before `content_delta`. | `PROFILE_CHAT` |

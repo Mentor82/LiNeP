@@ -7,6 +7,7 @@ add_library(linep_v02_core OBJECT
     control_plane.cpp
     udp_transport.cpp
     lease.cpp
+    registration.cpp
 )
 
 target_include_directories(linep_v02_core PUBLIC

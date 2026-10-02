@@ -14,6 +14,8 @@
 
 namespace linep::v0_2 {
 
+struct runtime_registration_envelope;
+
 class envelope_connection {
 public:
     envelope_connection();
@@ -35,6 +37,7 @@ public:
     bool send_control(const control_envelope& ctrl);
     bool send_capabilities(const capabilities_envelope& caps);
     bool send_session_bind(const session_bind_envelope& bind);
+    bool send_runtime_registration(const runtime_registration_envelope& registration);
     bool send_frame_raw(const std::uint8_t* data, std::size_t len);
 
     // Receive the next binary envelope from the TCP stream (blocking)

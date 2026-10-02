@@ -108,6 +108,7 @@ public:
     bool process_session_bind(const session_bind_envelope& bind, const control_plane_router* router, runtime_error& out_err);
     void mark_binding_stale();
     session_bind_envelope bound_session() const;
+    std::uint64_t binding_generation() const;
 
     // SL1 configuration & key management
     bool require_sl1() const noexcept { return descriptor_.require_sl1; }
@@ -146,6 +147,7 @@ private:
     std::unordered_map<stream_identity, active_stream_state, stream_identity_hash> active_streams_;
     session_binding_state binding_state_{session_binding_state::unbound};
     session_bind_envelope bound_bind_{};
+    std::uint64_t binding_generation_{0};
     bool is_sl1_active_{false};
     std::uint32_t next_outbound_auth_seq_{1};
     std::uint32_t expected_inbound_auth_seq_{1};
