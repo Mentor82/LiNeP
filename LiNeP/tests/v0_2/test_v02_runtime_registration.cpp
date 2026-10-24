@@ -82,6 +82,41 @@ void lifecycle_tests() {
     runtime_registration_session default_deny(denied); v=encode(registration());
     CHECK(!default_deny.receive_worker_frame(v.data(),v.size(),reply,err)); CHECK(reply.status_code==403);
 }
+void vision_registration_tests() {
+    auto e=registration();
+    e.capabilities.descriptor.supported_profiles={runtime_profile::vision};
+    vision_model_descriptor model;
+    model.model_id="test-model"; model.model_revision="v1";
+    model.label_set_id="coco80:v1"; model.task=vision_task::detect;
+    e.capabilities.descriptor.supported_vision_models={model};
+    auto bytes=encode(e); runtime_registration_envelope decoded;
+    CHECK(decode_runtime_registration(bytes.data(),bytes.size(),decoded));
+    CHECK(decoded.capabilities.descriptor.supported_vision_models.front()==model);
+    CHECK(encode(decoded)==bytes);
+    for (std::size_t n=0;n<bytes.size();++n)
+        CHECK(!decode_runtime_registration(bytes.data(),n,decoded));
+    session_manager session; runtime_error err; CHECK(session.process_session_bind(bind(),err));
+    runtime_registration_session router(session,allow); runtime_registration_envelope reply;
+    CHECK(router.receive_worker_frame(bytes.data(),bytes.size(),reply,err)); CHECK(reply.status_code==200);
+    const auto rejects=[&](runtime_registration_envelope bad) {
+        std::vector<std::uint8_t> out; CHECK(!encode_runtime_registration(bad,out));
+    };
+    auto bad=e; bad.capabilities.descriptor.supported_profiles={runtime_profile::chat}; rejects(bad);
+    bad=e; bad.capabilities.descriptor.supported_vision_models.clear(); rejects(bad);
+    bad=e; bad.capabilities.descriptor.supported_vision_models.front().model_id="unadvertised"; rejects(bad);
+    bad=e; bad.capabilities.descriptor.supported_vision_models.front().task=static_cast<vision_task>(2); rejects(bad);
+    bad=e; bad.capabilities.descriptor.supported_vision_models.front().max_detections=1001; rejects(bad);
+    bad=e; bad.capabilities.descriptor.supported_vision_models.front().max_detections=0; rejects(bad);
+    bad=e; bad.capabilities.descriptor.supported_vision_models.push_back(model); rejects(bad);
+    bad=e; bad.capabilities.descriptor.supported_vision_models.front().custom_labels={std::string(257,'x')}; rejects(bad);
+    bad=e; bad.capabilities.descriptor.supported_vision_models.front().label_set_id.clear(); rejects(bad);
+    bad={}; bad.operation=registration_operation::draining;
+    bad.capabilities.descriptor.supported_vision_models={model}; rejects(bad);
+    bad.operation=registration_operation::result; bad.status_code=200; rejects(bad);
+    // A valid outer TLV structure must not bypass the profile/descriptor relation.
+    bytes[86]=static_cast<std::uint8_t>(runtime_profile::chat);
+    CHECK(!decode_runtime_registration(bytes.data(),bytes.size(),decoded));
+}
 void sl1_tests() {
     std::vector<std::uint8_t> key(32,0x42); session_descriptor d; d.require_sl1=true; d.sl1_keys[1]=key;
     session_manager m(d); auto b=bind(); b.sl1_requested=true; b.auth_ext.auth_seq=1; b.auth_ext.key_id=1;
@@ -120,4 +155,4 @@ void socket_test() {
     CHECK(c->send_runtime_registration(result));
     CHECK(router.receive_worker(*c,result,err)); CHECK(router.draining()); worker.join();
 }
-int main() { wire_tests(); lifecycle_tests(); sl1_tests(); socket_test(); std::cout << "runtime_registration conformance passed\n"; }
+int main() { wire_tests(); lifecycle_tests(); vision_registration_tests(); sl1_tests(); socket_test(); std::cout << "runtime_registration conformance passed\n"; }
