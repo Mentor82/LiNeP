@@ -930,6 +930,9 @@ bool decode_capabilities_payload(const std::uint8_t* payload, std::size_t payloa
     if (r.remaining() > 0) {
         std::uint16_t d_count{};
         if (!r.read_u16(d_count)) return false;
+        if (d_count > LINEP_V02_MAX_DECISION_MODELS || d_count > (r.remaining() / 6)) {
+            return false;
+        }
         desc.supported_decision_models.resize(d_count);
         for (std::uint16_t i = 0; i < d_count; ++i) {
             auto& dm = desc.supported_decision_models[i];
