@@ -789,7 +789,26 @@ bool encode_capabilities(const capabilities_envelope& caps, std::vector<std::uin
         write_u8(payload_buf, static_cast<std::uint8_t>(sp.distance_metric));
     }
 
-    if (!desc.supported_vision_models.empty()) {
+    if (!desc.supported_decision_models.empty()) {
+        write_u16(payload_buf, static_cast<std::uint16_t>(desc.supported_vision_models.size()));
+        for (const auto& vm : desc.supported_vision_models) {
+            write_string_u16(payload_buf, vm.model_id);
+            write_string_u16(payload_buf, vm.model_revision);
+            write_string_u16(payload_buf, vm.label_set_id);
+            write_u8(payload_buf, static_cast<std::uint8_t>(vm.task));
+            write_u32(payload_buf, vm.max_detections);
+            write_u16(payload_buf, static_cast<std::uint16_t>(vm.custom_labels.size()));
+            for (const auto& lbl : vm.custom_labels) {
+                write_string_u16(payload_buf, lbl);
+            }
+        }
+        write_u16(payload_buf, static_cast<std::uint16_t>(desc.supported_decision_models.size()));
+        for (const auto& dm : desc.supported_decision_models) {
+            write_string_u16(payload_buf, dm.model_id);
+            write_string_u16(payload_buf, dm.model_revision);
+            write_string_u16(payload_buf, dm.decision_type);
+        }
+    } else if (!desc.supported_vision_models.empty()) {
         write_u16(payload_buf, static_cast<std::uint16_t>(desc.supported_vision_models.size()));
         for (const auto& vm : desc.supported_vision_models) {
             write_string_u16(payload_buf, vm.model_id);
@@ -905,6 +924,18 @@ bool decode_capabilities_payload(const std::uint8_t* payload, std::size_t payloa
             for (std::uint16_t j = 0; j < c_labels; ++j) {
                 if (!r.read_string_u16(vm.custom_labels[j])) return false;
             }
+        }
+    }
+
+    if (r.remaining() > 0) {
+        std::uint16_t d_count{};
+        if (!r.read_u16(d_count)) return false;
+        desc.supported_decision_models.resize(d_count);
+        for (std::uint16_t i = 0; i < d_count; ++i) {
+            auto& dm = desc.supported_decision_models[i];
+            if (!r.read_string_u16(dm.model_id)) return false;
+            if (!r.read_string_u16(dm.model_revision)) return false;
+            if (!r.read_string_u16(dm.decision_type)) return false;
         }
     }
 

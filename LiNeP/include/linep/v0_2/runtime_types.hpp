@@ -18,6 +18,7 @@ enum class runtime_profile : std::uint8_t {
     chat = 2,
     embed = 3,
     vision = 4,
+    decision = 5,
 };
 
 enum class terminal_outcome : std::uint8_t {

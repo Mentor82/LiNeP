@@ -1,4 +1,5 @@
 #include "linep/v0_2/registration.hpp"
+#include "linep/v0_2/decision.hpp"
 #include "linep/v0_2/transport.hpp"
 #include <algorithm>
 #include <set>
@@ -29,7 +30,7 @@ bool valid(const runtime_registration_envelope& e) {
     if (op < 1 || op > 6 || e.reason.size() > 8192) return false;
     const auto& d = e.capabilities.descriptor;
     const bool empty_capabilities = d.supported_models.empty() && d.supported_profiles.empty() &&
-        d.supported_embedding_spaces.empty() && d.supported_vision_models.empty() &&
+        d.supported_embedding_spaces.empty() && d.supported_vision_models.empty() && d.supported_decision_models.empty() &&
         !d.max_context_tokens && !d.max_output_tokens &&
         d.supports_streaming && d.supports_cancellation && !d.supports_tool_calling &&
         !d.supports_reasoning_deltas && !d.supports_structured_messages;
@@ -42,7 +43,7 @@ bool valid(const runtime_registration_envelope& e) {
                (e.operation == registration_operation::capacity_update || e.concurrent_slots == 0);
     if (!e.concurrent_slots || d.supported_models.empty() || d.supported_profiles.empty()) return false;
     if (d.supported_models.size()>2048 || d.supported_embedding_spaces.size()>2048 ||
-        d.supported_vision_models.size()>2048) return false;
+        d.supported_vision_models.size()>2048 || d.supported_decision_models.size()>2048) return false;
     std::size_t bytes=64;
     for (const auto& m : d.supported_models) bytes+=m.size()+2;
     for (const auto& sp : d.supported_embedding_spaces) {
@@ -74,13 +75,27 @@ bool valid(const runtime_registration_envelope& e) {
             bytes+=label.size()+2;
         }
     }
+    const bool decision_profile = std::find(d.supported_profiles.begin(), d.supported_profiles.end(),
+                                             runtime_profile::decision) != d.supported_profiles.end();
+    if (decision_profile != !d.supported_decision_models.empty()) return false;
+    std::set<std::string> decision_models;
+    for (const auto& dm : d.supported_decision_models) {
+        if (dm.model_id.empty() || dm.model_id.size() > LINEP_V02_MAX_DECISION_STRING_BYTES ||
+            dm.model_revision.size() > LINEP_V02_MAX_DECISION_STRING_BYTES ||
+            dm.decision_type.empty() || dm.decision_type.size() > LINEP_V02_MAX_DECISION_STRING_BYTES ||
+            !decision_models.insert(dm.model_id).second ||
+            std::find(d.supported_models.begin(), d.supported_models.end(), dm.model_id) == d.supported_models.end())
+            return false;
+        bytes += dm.model_id.size() + dm.model_revision.size() + dm.decision_type.size() + 6;
+    }
+
     if (bytes>max_registration_bytes-64) return false;
     std::set<std::string> models;
     for (const auto& m : d.supported_models) if (m.empty() || m.size() > 8192 || !models.insert(m).second) return false;
     std::set<unsigned> profiles;
     for (auto p : d.supported_profiles) {
         const auto v = static_cast<unsigned>(p);
-        if (v < 1 || v > 4 || !profiles.insert(v).second) return false;
+        if (v < 1 || v > 5 || !profiles.insert(v).second) return false;
     }
     return true;
 }

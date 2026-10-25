@@ -7,6 +7,7 @@
 #include "linep/v0_2/capabilities.hpp"
 #include "linep/v0_2/embedding.hpp"
 #include "linep/v0_2/vision.hpp"
+#include "linep/v0_2/decision.hpp"
 #include "linep/v0_2/lifecycle.hpp"
 
 namespace linep::v0_2 {
@@ -63,6 +64,7 @@ enum class runtime_event_type : std::uint8_t {
     cancelled = 11,
     failed = 12,
     vision_result = 13,
+    decision_result = 14,
 };
 
 enum class runtime_control_type : std::uint8_t {
@@ -164,6 +166,11 @@ struct event_envelope {
         }
         if (event_type == runtime_event_type::vision_result && !vision.is_valid()) {
             return false;
+        }
+        if (event_type == runtime_event_type::decision_result) {
+            if (is_terminal() || payload.empty()) {
+                return false;
+            }
         }
         return true;
     }

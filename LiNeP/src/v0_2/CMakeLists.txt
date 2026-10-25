@@ -9,6 +9,7 @@ add_library(linep_v02_core OBJECT
     lease.cpp
     registration.cpp
     vision.cpp
+    decision.cpp
 )
 
 target_include_directories(linep_v02_core PUBLIC

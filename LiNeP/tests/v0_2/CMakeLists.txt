@@ -31,4 +31,4 @@ linep_v02_add_test(test_v02_lease                          test_v02_lease.cpp)
 linep_v02_add_test(test_v02_mock_output_id                 test_v02_mock_output_id.cpp)
 linep_v02_add_test(test_v02_runtime_registration           test_v02_runtime_registration.cpp)
 linep_v02_add_test(test_v02_vision                         test_v02_vision.cpp)
-
+linep_v02_add_test(test_v02_decision                       test_v02_decision.cpp)
