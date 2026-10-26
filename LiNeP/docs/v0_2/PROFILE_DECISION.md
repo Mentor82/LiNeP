@@ -2,7 +2,7 @@
 
 Status: **Normative Specification Baseline** (Gate C2/C3 Decision Extension).  
 Governing Standard: `equorus-value-v1`, LiNeP V0.2 Protocol Specifications.  
-Compatibility Target: Fully interoperable with `PROFILE_VISION.md` (Profile 4, Event 13) and baseline V0.2 profiles.
+Compatibility Target: Interoperable with `PROFILE_VISION.md` (Profile 4, Event 13) and baseline V0.2 profiles.
 
 ---
 
@@ -12,13 +12,13 @@ Compatibility Target: Fully interoperable with `PROFILE_VISION.md` (Profile 4, E
 
 ### Architectural Invariants:
 1. **Separation of Concerns:**
-   - **Text Generation Runtimes:** Serve `PROFILE_CHAT` (1) and `PROFILE_GENERATE` (2) for free-form streaming auto-regressive token generation.
+   - **Text Generation Runtimes:** Serve `PROFILE_GENERATE` (1) and `PROFILE_CHAT` (2) for auto-regressive token streaming.
    - **Embedding Runtimes:** Serve `PROFILE_EMBED` (3) for dense vector space transformations.
-   - **Vision Accelerators:** Serve `PROFILE_VISION` (4, Event 13) for 2D/3D perception and spatial object detection.
-   - **Decision Runtimes:** Serve `PROFILE_DECISION` (5, Event 14) for bounded, deterministic choice evaluation, confidence scoring, criteria weighting, and noul probability estimation over discrete hypothesis spaces.
-2. **Deterministic Non-Streaming Result Delivery:**
-   - Unlike auto-regressive text streaming, decision inference produces structured result payloads delivered in a single `runtime_event_type::decision_result` (14) DATA event per item or question batch, followed by canonical `terminal_outcome::completed` terminal envelope.
-3. **Hardware & Execution Independence:**
+   - **Vision Accelerators:** Serve `PROFILE_VISION` (4, Event 13) for 2D spatial perception and object detection.
+   - **Decision Runtimes:** Serve `PROFILE_DECISION` (5, Event 14) for bounded choice evaluation, scoring, rubric rating, and noul likelihood estimation over discrete hypothesis spaces.
+2. **Deterministic Event Delivery Lifecycle:**
+   - Decision inference produces structured answer payloads delivered in a single `runtime_event_type::decision_result` (14) DATA event per evaluated request, followed by a standard terminal event (`runtime_event_type::completed`, value 10).
+3. **Execution Decoupling:**
    - The wire protocol operates identically across standalone C++ engine servers (`linep-llama-server`), in-process Go client adapters (`LiNeP-Ollama`), and trunk multiplexers/routers (`liara-noded 1.18.0`).
 
 ---
@@ -27,45 +27,52 @@ Compatibility Target: Fully interoperable with `PROFILE_VISION.md` (Profile 4, E
 
 | Identifier | Type | Wire Value | Meaning |
 | :--- | :--- | :--- | :--- |
-| `runtime_profile::decision` | `uint8_t` | `5` | Profile identifier for decision / scoring runtimes |
-| `runtime_event_type::decision_result` | `uint8_t` | `14` | Non-terminal DATA event containing structured decision answers |
-| `runtime_profile::vision` | `uint8_t` | `4` | Co-existing computer vision runtime profile |
-| `runtime_event_type::vision_result` | `uint8_t` | `13` | Co-existing computer vision event type |
+| `runtime_profile::generate` | `uint8_t` | `1` | Text completion / generation profile |
+| `runtime_profile::chat` | `uint8_t` | `2` | Interactive chat profile |
+| `runtime_profile::embed` | `uint8_t` | `3` | Dense embedding space profile |
+| `runtime_profile::vision` | `uint8_t` | `4` | Computer vision profile |
+| `runtime_profile::decision` | `uint8_t` | `5` | Decision / scoring runtime profile |
+| `runtime_event_type::completed` | `uint8_t` | `10` | Stream finalization terminal event |
+| `runtime_event_type::cancelled` | `uint8_t` | `11` | Client cancellation terminal event |
+| `runtime_event_type::failed` | `uint8_t` | `12` | Runtime error terminal event |
+| `runtime_event_type::vision_result` | `uint8_t` | `13` | Structured vision result event |
+| `runtime_event_type::decision_result` | `uint8_t` | `14` | Structured decision result DATA event |
 
 ---
 
-## 3. Framing Budgets & Bounds (Fail-Closed)
+## 3. Framing Budgets & Decoder Bounds (Fail-Closed)
 
-To prevent resource exhaustion and buffer denial-of-service across distributed micro-nodes and edge devices, all implementations strictly enforce the following normative limits:
+### A. Normative Decoder Wire Bounds
+To prevent resource exhaustion across distributed nodes, decoders in C++, Go, and Rust enforce the following normative validation boundaries on wire capabilities frames:
+- `LINEP_V02_MAX_DECISION_STRING_BYTES = 256` bytes: Upper bound on string lengths for `model_id`, `model_revision`, and `decision_type`.
+- `LINEP_V02_MAX_DECISION_MODELS = 1024`: Maximum decision models allowed in a single capabilities envelope.
+- **Pre-Allocation DoS Guard:** Decoders must verify $D \le 1024 \land D \le (\text{remaining\_bytes} / 6)$ before allocating descriptor vectors.
+- **Strict Canonical Framing:** Capabilities and envelopes must consume all declared bytes; trailing unparsed garbage causes immediate decoding failure (`return false`).
 
-| Constant | Value | Description |
-| :--- | :--- | :--- |
-| `LINEP_V02_MAX_DECISION_STRING_BYTES` | `256` bytes | Maximum length for identifiers (`model_id`, `model_revision`, `decision_type`) |
-| `LINEP_V02_MAX_DECISION_MODELS` | `1024` | Maximum models advertised in a single capabilities envelope |
-| `LINEP_V02_DECISION_FRAME_CEILING` | `1,044,480` bytes | Strict maximum envelope frame size ($1\text{ MiB} - 4\text{ KiB}$) |
-| `LINEP_V02_DECISION_BODY_BUDGET_SL1` | `1,044,393` bytes | Maximum JSON payload body budget under SL1 authenticated sessions |
-| `LINEP_V02_DECISION_BODY_BUDGET_PLAIN` | `1,044,417` bytes | Maximum JSON payload body budget under SL0 unauthenticated sessions |
-
-Any frame exceeding these limits or containing truncated strings MUST be rejected fail-closed without parsing or memory pre-allocation.
+### B. Protocol Framing Budgets (Payload Sizing)
+The following constants define protocol-level framing envelopes:
+- `LINEP_V02_DECISION_FRAME_CEILING = 1,044,480` bytes ($1\text{ MiB} - 4\text{ KiB}$ maximum envelope frame size).
+- `LINEP_V02_DECISION_BODY_BUDGET_SL1 = 1,044,393` bytes: Usable JSON payload budget under SL1 authenticated sessions.
+- `LINEP_V02_DECISION_BODY_BUDGET_PLAIN = 1,044,417` bytes: Usable JSON payload budget under SL0 unauthenticated sessions.
 
 ---
 
 ## 4. Input Contract (REQUEST Envelope 1)
 
 A client initiates decision inference using a standard `request_envelope`:
-- `profile`: `runtime_profile::decision` (`5`)
-- `model_id`: Identifier of the advertised decision model (e.g. `"clef-decision:test"`, `"laya-322m"`, `"lfm2-d1-omni"`)
-- `stream`: Explicit `stream_identity` (`request_id`, `execution_id`, `output_id`)
-- `payload`: UTF-8 encoded JSON payload conforming to the SystemOne decision schema:
-  - `model`: Model identifier string matching `model_id`.
-  - `state`: Optional session state object (e.g. `{"session_id": "test-c1-001"}`).
-  - `questions`: Map of question IDs to question definitions:
-    - `type`: `"choice"`, `"score"`, or `"noul"`.
-    - `instructions`: Natural language question or scenario prompt.
-    - `criteria`: Map of candidate choices / criteria to null or option configs.
-- Options:
-  - Auto-regressive token sampling options (`temperature`, `top_p`, `top_k`) are ignored or constrained to $0.0$.
-  - `max_tokens` is bounded by the backend KV context window ($8192$ tokens for SystemOne).
+- `profile`: `runtime_profile::decision` (`5`).
+- `model_id`: Identifier of the decision model (e.g. `"laya:322m-multilingual-bf16"`, `"clef-decision:test"`, or path string).
+- `stream`: Explicit `stream_identity` (`request_id`, `execution_id`, `output_id`).
+- `payload`: UTF-8 encoded JSON payload adhering to the SystemOne schema:
+  - `model`: String identifier matching or aliased to `model_id`.
+  - `state`: Optional string or object describing the problem context / session state.
+  - `questions`: Map of question IDs (`"q1"`, `"q2"`, ...) to question specifications:
+    - `"type": "choice"`: Discrete option selection. Requires `instructions` (string) and `criteria` (map of option keys to descriptive labels, e.g. `{"A": "Option 1", "B": "Option 2"}`).
+    - `"type": "score"`: Rubric/rating evaluation. Requires `instructions` (string) and `criteria` (ordered JSON array of grade labels, e.g. `["low", "medium", "high", "critical"]`).
+    - `"type": "noul"`: Direct probability/likelihood evaluation. Requires `instructions` (string).
+- Token Context Window:
+  - Context size is architecture-dependent (e.g. 8192 tokens for Laya ModernBERT, 16384 tokens for d1-omni) and declared in runtime capabilities.
+  - Generative sampling options (`temperature`, `top_p`, `top_k`) are not applicable to scoring and are ignored or fixed to $0.0$.
 
 ---
 
@@ -75,86 +82,108 @@ Decision results are returned over the event stream associated with the request'
 
 ### A. Non-Terminal Event Invariants
 1. `event_type == runtime_event_type::decision_result` (`14`).
-2. `is_terminal() == false`: The `decision_result` event is strictly a DATA event. It MUST NOT carry `terminal_outcome::completed` or terminate the stream.
-3. Payload MUST NOT be empty (`payload.empty()` is invalid and rejected fail-closed).
-4. Timestamp MUST be monotonic microsecond epoch (`timestamp_us > 0`).
+2. `is_terminal() == false`: `decision_result` is strictly a non-terminal DATA event. Envelopes where `event_type == 14` must have `is_terminal() == false` (terminal events are exclusively types 10, 11, and 12).
+3. Payload must not be empty (`payload.empty()` is invalid and rejected fail-closed).
 
-### B. Payload Structure (JSON)
-The event payload contains a serialized JSON object:
-- `model`: Evaluated model identifier string.
-- `answers`: Map of question IDs matching the input request to result objects:
-  - `choice`: Selected string key from input criteria with highest softmax probability.
-  - `score`: Normalized float confidence score $\in [0.0, 1.0]$.
-  - `noul`: In noul mode, calibrated continuous float metric $\in [0.0, 1.0]$.
-- `usage`: Token consumption metrics:
-  - `input_tokens`: uint32 prompt / context token count.
-  - `output_tokens`: uint32 evaluation token count.
+### B. Result Payload Schema (JSON)
+The event payload contains a single JSON object:
+- `model`: String identifier of the serving engine / model blob.
+- `answers`: Map of question IDs matching the input request:
+  - For `"choice"`:
+    - `"type": "choice"`
+    - `"choice"`: Key of the winning candidate (highest softmax score).
+    - `"probabilities"`: Map of candidate keys to softmax probabilities $\in [0.0, 1.0]$.
+    - `"confidence"`: Probability margin / confidence gap ($P_{\text{best}} - P_{\text{second}}$).
+  - For `"score"`:
+    - `"type": "score"`
+    - `"score"`: Expected rubric score $\sum_{i} i \cdot P(i)$ computed over the rubric levels (e.g. $1.5529$ for a 4-level scale $0 \dots 3$).
+    - `"legend"`: Map of level indices (`"0"`, `"1"`, ...) to rubric labels.
+    - `"probabilities"`: Map of level indices to softmax probabilities.
+    - `"confidence"`: Confidence metric across the distribution.
+  - For `"noul"`:
+    - `"type": "noul"`
+    - `"noul"`: Direct float probability / confidence metric $\in [0.0, 1.0]$.
+- `usage`:
+  - `input_tokens`: Prompt / context tokens processed.
+  - `output_tokens`: Output tokens produced (typically 0 for pure classification/scoring).
 
-### C. Stream Finalization
-Following the transmission of all `decision_result` events, the provider MUST emit a final terminal event (`event_type == completed` or outcome set) to close the `stream_identity` lifecycle.
+### C. Stream Lifecycle Finalization
+After the single `decision_result` event is delivered, the provider MUST finalize the stream by emitting a terminal `event_envelope` with `event_type == runtime_event_type::completed` (`10`).
 
 ---
 
 ## 6. Model Capabilities Declaration (Envelope 4 Capabilities - Positional Pfad A)
 
-LiNeP V0.2 declares specialized capabilities using canonical positional extensions at the end of `capabilities_envelope`. This guarantees zero-copy backward compatibility with V0.1 and baseline V0.2 peers.
+Capabilities declare decision support using canonical positional extension framing at the end of `capabilities_envelope`:
 
 ### A. Positional Sequencing
 ```
-[Baseline Capabilities V0.2 (profiles, models, spaces, limits)]
-  [supported_vision_models_count: uint16_le]  = V
-  [V vision_model_descriptors...]
-    [supported_decision_models_count: uint16_le] = D
-    [D decision_model_descriptors...]
+[Baseline Capabilities V0.2]
+  [supported_vision_models_count: uint16_le = V]
+  [V x vision_model_descriptor...]
+    [supported_decision_models_count: uint16_le = D]
+    [D x decision_model_descriptor...]
 ```
 
 ### B. Positional Anchor Rule (Pfad A Invariant)
-1. **Both Present:** $V > 0$ vision models are serialized, followed immediately by $D > 0$ decision models.
-2. **Decision Only ($V = 0$):** If a runtime supports decision models but no vision models, it MUST write `0u16` for the vision count as an explicit positional anchor, followed by $D > 0$ decision models.
-3. **Vision Only ($D = 0$):** If a runtime supports vision models but no decision models, the frame terminates after the vision descriptors. No trailing decision count is written.
-4. **Baseline Only ($V = 0 \land D = 0$):** The payload terminates after the baseline embedding space descriptors. Neither vision nor decision bytes are written.
+1. **Both Present ($V > 0 \land D > 0$):** $V$ vision models are serialized first, followed immediately by $D$ decision models.
+2. **Decision Only ($V = 0 \land D > 0$):** An explicit `0u16` is written as the vision count positional anchor, followed by $D$ decision models.
+3. **Vision Only ($V > 0 \land D = 0$):** $V$ vision models are serialized. No decision bytes are appended.
+4. **Baseline Only ($V = 0 \land D = 0$):** Payload terminates after baseline descriptors. Neither vision nor decision bytes are appended.
 
 ### C. Decision Model Descriptor Wire Format
 For each of the $D$ decision models:
 ```
 [model_id_len: uint16_le]       = length of model_id string (1 .. 256)
 [model_id: bytes]               = UTF-8 string
-[model_rev_len: uint16_le]      = length of model_revision string (0 .. 256)
+[model_rev_len: uint16_le]      = length of model_revision string (0 .. 256, may be empty)
 [model_rev: bytes]              = UTF-8 string
 [decision_type_len: uint16_le]  = length of decision_type string (1 .. 256)
-[decision_type: bytes]          = UTF-8 string (e.g. "choice,score,noul" or GGUF metadata)
+[decision_type: bytes]          = UTF-8 string (e.g. "laya", "lfm2-d1-omni", or GGUF decision.type)
 ```
-
-### D. Security & Pre-Allocation Guard
-Decoders MUST validate:
-$$D \le \text{LINEP\_V02\_MAX\_DECISION\_MODELS}\ (1024) \quad \text{and} \quad D \le \frac{\text{remaining\_bytes}}{6}$$
-Buffers failing this check MUST be rejected immediately to prevent heap exhaustion.
 
 ---
 
 ## 7. Authentication, Sessions & Lease Contract (SL0 / SL1)
 
-1. **SL0 (Plain Mode):**
-   - Allowed on loopback (`127.0.0.1`) for local orchestrator-to-runner connections without authentication headers.
-2. **SL1 (Authenticated Mode):**
-   - For network and routed hops, frames carry `wire_auth_extension` signed with HMAC-SHA256 over the canonical 80-byte header prefix:
-     `magic` (4B) + `version` (2B) + `envelope_type` (1B) + `auth_flag` (1B) + `stream_identity` (24B) + `length` (4B) + `auth_seq` (8B) + `key_id` (4B) + `timestamp` (8B) + `control_epoch` (8B) + `lease_token` (8B) + `reserved` (8B).
-3. **Lease Enforcement & Process Ownership:**
-   - Native decision runners bind to an active `lease_token` issued via `session_bind` (Envelope 8).
-   - In single-slot mode (`--slots 1`), requests with mismatched lease tokens or concurrent leases are rejected fail-closed.
+### A. Transport Security Levels
+1. **SL0 (Plain Mode):** Permitted on loopback (`127.0.0.1`) for local IPC and container-internal multiplexing without cryptographic MACs.
+2. **SL1 (Authenticated Mode):** Required across network and inter-node boundaries.
+
+### B. Canonical SL1 Cryptographic MAC Construction
+Under SL1, envelopes carry a 16-byte MAC calculated as the truncated first 16 bytes of HMAC-SHA256 over a canonical authentication context buffer (80-byte prefix followed by payload):
+1. **Envelope Header** (32 bytes Little-Endian with `FLAG_AUTHENTICATED` asserted)
+2. **AuthExt Prefix** (8 bytes Little-Endian):
+   - `auth_seq` (4 bytes, `uint32_t`)
+   - `key_id` (2 bytes, `uint16_t`)
+   - `reserved` (2 bytes, `uint16_t`, must be 0)
+3. **Bound Identity & Lease Scope** (36 bytes Little-Endian):
+   - `node_id` (8 bytes, `uint64_t`)
+   - `runtime_id` (8 bytes, `uint64_t`)
+   - `endpoint_id` (4 bytes, `uint32_t`)
+   - `control_epoch` (8 bytes, `uint64_t`)
+   - `lease_token` (8 bytes, `uint64_t`)
+4. **Direction** (4 bytes):
+   - `direction` (1 byte: `0x01` initiator $\to$ responder, `0x02` responder $\to$ initiator)
+   - Zero padding (3 bytes, `0x00, 0x00, 0x00`)
+5. **Payload** ($N$ bytes, `payload_len` length)
+
+### C. Session Binding & Lease Scope
+- Mutual key confirmation is established via signed `SESSION_BIND` (Envelope 5).
+- Native decision engine runners enforce process and lease ownership (`lease_token` validation), ensuring requests match the granted session scope.
 
 ---
 
-## 8. OldPeer Compatibility & Cross-Runtime Routing Matrix
+## 8. OldPeer Compatibility & Cross-Runtime Routing
 
-| Peer Version | Capabilities Behavior | Routing / Admission Behavior |
-| :--- | :--- | :--- |
-| **V0.2 Legacy (1.16)** | Does not parse vision or decision; treats payload ending at base descriptors as complete. | Does not advertise Profile 5; requests to Profile 5 fail with `UNSUPPORTED_PROFILE`. |
-| **V0.2 Vision (1.17)** | Parses $V$ vision models; ignores or rejects unconsumed trailing bytes if strict. | Profile 4 supported; Profile 5 rejected as unknown profile. |
-| **V0.2 Full (1.18+)** | Parses both $V$ and $D$ via Positional Pfad A; validates DoS bounds and trailing garbage. | Full dual-stack support for Profile 4 (`VISION`) and Profile 5 (`DECISION`). |
+### A. OldPeer Behavior (Strict Fail-Closed)
+Because canonical LiNeP V0.2 framing rejects unconsumed trailing bytes:
+- **Peers without Decision Extension (e.g. baseline 1.16 or vision-only 1.17):** Fail-closed reject capabilities envelopes containing decision extensions due to trailing garbage checks.
+- Old peers do not advertise Profile 5; requests to Profile 5 on unextended nodes are rejected with `error_category::unsupported`.
 
-### Strict Router Invariant (`liara-noded 1.18.0`):
-Typed profiles (`PROFILE_VISION` and `PROFILE_DECISION`) are **strictly excluded** from generic wildcard (`any_model`) fallbacks. A decision request is routed ONLY to runtimes explicitly advertising `PROFILE_DECISION` (5) and matching the requested `model_id`.
+### B. Router Invariant (`liara-noded 1.18.0`)
+- **Typed Profile Routing:** Requests for `PROFILE_DECISION` (5) are routed strictly to runtimes that explicitly advertise Profile 5 and declare the requested model in `supported_decision_models` with a matching `decision_type`.
+- **Wildcard Exclusion:** Typed profiles (both `VISION` and `DECISION`) are **strictly excluded** from generic `any_model` wildcard fallbacks.
 
 ---
 
@@ -162,7 +191,7 @@ Typed profiles (`PROFILE_VISION` and `PROFILE_DECISION`) are **strictly excluded
 
 ### Golden Vector 1: Standard Choice Question Request (Plain, 307 Bytes)
 - **Envelope:** `request_envelope` (Envelope 1), Profile: 5 (`decision`), Model: `"clef-decision:test"`
-- **Stream:** `request_id = 1`, `execution_id = 1`, `output_id = 1`
+- **Stream Identity:** `request_id = 1`, `execution_id = 1`, `output_id = 1`
 - **Wire Hex (307 Bytes):**
   ```
   324C4E5000020100010000000000000001000000000000000100000013010000051200636C65662D6465636973696F6E3A74657374F100
@@ -174,9 +203,13 @@ Typed profiles (`PROFILE_VISION` and `PROFILE_DECISION`) are **strictly excluded
   ```
 
 ### Golden Vector 2: Noul Probability Event (SL1 Authenticated, 211 Bytes)
-- **Envelope:** `event_envelope` (Envelope 2), Event Type: 14 (`decision_result`), Outcome: `unknown` (DATA)
-- **Stream:** `request_id = 1`, `execution_id = 1`, `output_id = 1`, `event_seq = 1`
-- **SL1 Security:** `key_id = 0x0100`, `auth_seq = 1`, Direction: Responder $\rightarrow$ Initiator
+- **Envelope:** `event_envelope` (Envelope 2), Event Type: 14 (`decision_result`), Outcome: `unknown` (0)
+- **Stream Identity:** `request_id = 1`, `execution_id = 1`, `output_id = 1`, `event_seq = 1`
+- **SL1 Security Parameters:**
+  - Pre-Shared Key (Fixture): 32 bytes `0x42`
+  - Bound Scope: `node_id = 1`, `runtime_id = 2`, `endpoint_id = 3`, `control_epoch = 4`, `lease_token = 5`
+  - Auth Extension: `key_id = 0x0100`, `auth_seq = 1`, Direction: Responder $\to$ Initiator (`0x02`)
+  - Timestamp: `1729876800000000` $\mu\text{s}$
 - **Wire Hex (211 Bytes):**
   ```
   324C4E500002020101000000000000000100000000000000010000009B0000000100000000010000152FE0ECB29AEA0114A2E4D3A52B60
@@ -187,14 +220,14 @@ Typed profiles (`PROFILE_VISION` and `PROFILE_DECISION`) are **strictly excluded
 
 ---
 
-## 10. Error Codes & Failure Modes
+## 10. Error Handling & Categories
 
-| Error Category | Code / Reason | Trigger Condition |
+Implementations convey failure conditions using the standard V0.2 `error_category` enumeration within `event_envelope` (Envelope 2):
+
+| Error Category | Value | Application Condition (Illustrative Diagnostic Mappings) |
 | :--- | :--- | :--- |
-| `error_category::unsupported` | `"DECISION_UNSUPPORTED_PROFILE"` | Node or runtime does not support Profile 5 |
-| `error_category::unsupported` | `"DECISION_MODEL_NOT_FOUND"` | Requested `model_id` is not advertised in `supported_decision_models` |
-| `error_category::bad_request` | `"DECISION_INVALID_PAYLOAD"` | Payload is empty, not valid JSON, or exceeds framing budget |
-| `error_category::bad_request` | `"DECISION_EMPTY_QUESTIONS"` | JSON payload contains no questions to evaluate |
-| `error_category::security_violation` | `"DECISION_AUTH_MISMATCH"` | Missing SL1 MAC or invalid session/lease signature |
-| `error_category::resource_exhausted` | `"DECISION_BUFFER_OVERFLOW"` | Payload exceeds `LINEP_V02_DECISION_FRAME_CEILING` |
-| `error_category::internal_error` | `"DECISION_EVALUATION_FAILED"` | Backend forward-pass error or NaN output in softmax normalization |
+| `error_category::unsupported` | `6` | Profile 5 not supported by node, or requested `model_id` not advertised |
+| `error_category::bad_request` | `2` | Malformed JSON payload, missing questions, or invalid criteria format |
+| `error_category::unauthorized` | `3` | Missing or invalid SL1 HMAC, expired lease, or unauthenticated session bind |
+| `error_category::resource_exhausted` | `4` | Payload exceeds framing ceiling or system slot capacity |
+| `error_category::internal` | `7` | Inference engine forward-pass failure or numerical softmax anomaly |
