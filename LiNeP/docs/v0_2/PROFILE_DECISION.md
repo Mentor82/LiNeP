@@ -19,7 +19,7 @@ Compatibility Target: Interoperable with `PROFILE_VISION.md` (Profile 4, Event 1
 2. **Deterministic Event Delivery Lifecycle:**
    - Decision inference produces structured answer payloads delivered in a single `runtime_event_type::decision_result` (14) DATA event per evaluated request, followed by a standard terminal event (`runtime_event_type::completed`, value 10).
 3. **Execution Decoupling:**
-   - The wire protocol operates identically across standalone C++ engine servers (`linep-llama-server`), in-process Go client adapters (`LiNeP-Ollama`), and trunk multiplexers/routers (`liara-noded 1.18.0`).
+   - The wire protocol operates identically across the main trunk daemon `linepd` (shipped in package `liara-noded 1.18.0`) and backend runtime adapters behind `linepd`, including standalone C++ engine servers (`linep-llama-server`) and Go runtime adapters (`LiNeP-Ollama`).
 
 ---
 
@@ -180,15 +180,15 @@ Under SL1, envelopes carry a 16-byte MAC calculated as the truncated first 16 by
 ### C. Session Binding & Per-Leg Security Architecture
 Mutual session state and key confirmation are established via `SESSION_BIND` (Envelope 5). Because LiNeP operates across segmented network and IPC topologies, authentication and lease enforcement are evaluated independently per transport leg rather than through an architectural blanket policy:
 
-1. **Client $\to$ Trunk Leg (e.g. Clef / Client to `liara-noded`):**
+1. **Client $\to$ Trunk Leg (e.g. Clef / Client to `linepd (Paket liara-noded 1.18.0)`):**
    - **Configuration:** Managed in the node's LiNeP registry (`/etc/liara/linep.toml`, defined by `LINEP_REGISTRY_PATH` in `main.rs:38`, under the `[trunk]` section).
    - **Authentication:** `auth = "off" | "optional" | "required"`. When set to `required`, unsigned connections are rejected with 401 `auth_required`. When SL1 is active, the trunk verifies and strips MACs on incoming client frames (`sl1_verify_inbound`) and signs outbound responses (`send_to_client`).
    - **Lease Enforcement:** `require_lease = true | false` (code default is `false` in `ports.trunk_require_lease`, whereas the shipped `configs/linep.toml` sets `require_lease = true` per Mentor82/LiNeP#18). When enabled, every client `REQUEST` requires an active binding with a valid control-plane lease (`Binding::Current`). If stale, the request is rejected with 401 `stale_binding`; if unbound, with 401 `unbound: SESSION_BIND required before REQUEST`.
 
-2. **Trunk $\to$ Runtime Leg (e.g. `liara-noded` to `linep-llama-server` or `LiNeP-Ollama`):**
+2. **Trunk $\to$ Runtime Leg (e.g. `linepd (Paket liara-noded 1.18.0)` to backend adapters such as `linep-llama-server` or `LiNeP-Ollama`):**
    - **Configuration:** Defined per backend under `[runtimes.<name>]` via `DataTarget::Tcp` (e.g. `127.0.0.1:11435`) or `DataTarget::Unix` (e.g. `/run/liara/linep/llama.sock`).
    - **Framing & Relay:** The trunk establishes local adapter connections, forwards plain decoded request frames (`forward(idx, frame)`), and relays plain event frames (`relay()`).
-   - **Runtime Server Enforcement:** Standalone engine runners (`linep-llama-server`) provide CLI flags `--require-sl1` and `--require-lease` (defaulting to `false` in `src/main.cpp:66-67` for loopback plain/dev operation). When placed behind `liara-noded` on localhost or Unix sockets, runtimes typically operate in plain mode (SL0) without requiring double MAC wrapping. If exposed directly across a network boundary or configured as an independent worker, `--require-sl1` and `--require-lease` can be enabled independently.
+   - **Runtime Server Enforcement:** Standalone engine runners (`linep-llama-server`) provide CLI flags `--require-sl1` and `--require-lease` (defaulting to `false` in `src/main.cpp:66-67` for loopback plain/dev operation). When placed behind `linepd (Paket liara-noded 1.18.0)` on localhost or Unix sockets, runtimes typically operate in plain mode (SL0) without requiring double MAC wrapping. If exposed directly across a network boundary or configured as an independent worker, `--require-sl1` and `--require-lease` can be enabled independently.
 
 3. **Normative Invariant:** The wire specification defines framing, HMAC calculations, and state transitions; it does not derive or mandate topology-wide operator policies. Each leg enforces authentication and leases strictly according to its configured transport boundary and local runtime flags.
 
@@ -201,7 +201,7 @@ Because canonical LiNeP V0.2 framing rejects unconsumed trailing bytes:
 - **Peers without Decision Extension (e.g. baseline 1.16 or vision-only 1.17):** Fail-closed reject capabilities envelopes containing decision extensions due to trailing garbage checks.
 - Old peers do not advertise Profile 5; requests targeting Profile 5 on unextended nodes are rejected fail-closed (or terminate with `error_category::unsupported` where explicit profile validation is implemented).
 
-### B. Router Invariant (`liara-noded 1.18.0`)
+### B. Router Invariant (`linepd (Paket liara-noded 1.18.0)`)
 - **Typed Profile Routing:** In `trunk_router.rs`, requests for `PROFILE_DECISION` (5) are routed strictly to runtimes that advertise Profile 5 and match the requested `model_id` via `model_matches(&dm.model_id, requested_model)` over their declared `supported_decision_models`.
 - **Capability vs Request Scope:** Wire requests do not carry `decision_type`; `decision_type` is an advertised capability property verified by clients or providers during capability negotiation.
 - **Independent Descriptor Lists:** Typed DECISION routing requires only matching entries in `supported_decision_models`; an entry in the generic `supported_models` list is not required.
