@@ -181,9 +181,9 @@ Under SL1, envelopes carry a 16-byte MAC calculated as the truncated first 16 by
 Mutual session state and key confirmation are established via `SESSION_BIND` (Envelope 5). Because LiNeP operates across segmented network and IPC topologies, authentication and lease enforcement are evaluated independently per transport leg rather than through an architectural blanket policy:
 
 1. **Client $\to$ Trunk Leg (e.g. Clef / Client to `liara-noded`):**
-   - **Configuration:** Managed in node configuration (`[trunk]` section in `liara-noded.conf`).
+   - **Configuration:** Managed in the node's LiNeP registry (`/etc/liara/linep.toml`, defined by `LINEP_REGISTRY_PATH` in `main.rs:38`, under the `[trunk]` section).
    - **Authentication:** `auth = "off" | "optional" | "required"`. When set to `required`, unsigned connections are rejected with 401 `auth_required`. When SL1 is active, the trunk verifies and strips MACs on incoming client frames (`sl1_verify_inbound`) and signs outbound responses (`send_to_client`).
-   - **Lease Enforcement:** `require_lease = true | false` (default `false` in `ports.trunk_require_lease`). When enabled, every client `REQUEST` requires an active binding with a valid control-plane lease (`Binding::Current`). If stale, the request is rejected with 401 `stale_binding`; if unbound, with 401 `unbound: SESSION_BIND required before REQUEST`.
+   - **Lease Enforcement:** `require_lease = true | false` (code default is `false` in `ports.trunk_require_lease`, whereas the shipped `configs/linep.toml` sets `require_lease = true` per Mentor82/LiNeP#18). When enabled, every client `REQUEST` requires an active binding with a valid control-plane lease (`Binding::Current`). If stale, the request is rejected with 401 `stale_binding`; if unbound, with 401 `unbound: SESSION_BIND required before REQUEST`.
 
 2. **Trunk $\to$ Runtime Leg (e.g. `liara-noded` to `linep-llama-server` or `LiNeP-Ollama`):**
    - **Configuration:** Defined per backend under `[runtimes.<name>]` via `DataTarget::Tcp` (e.g. `127.0.0.1:11435`) or `DataTarget::Unix` (e.g. `/run/liara/linep/llama.sock`).
