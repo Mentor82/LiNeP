@@ -94,19 +94,24 @@ The event payload contains a single JSON object:
     - `"type": "choice"`
     - `"choice"`: Key of the winning candidate (highest softmax score).
     - `"probabilities"`: Map of candidate keys to softmax probabilities $\in [0.0, 1.0]$.
-    - `"confidence"`: Probability margin / confidence gap ($P_{\text{best}} - P_{\text{second}}$).
+    - `"confidence"`: Calibrated decision confidence $\in [0.0, 1.0]$. In standard models (TypeSafe definition):
+      $$\text{confidence} = \max\left(0.0, \frac{p_{\max} - \frac{1}{n}}{1.0 - \frac{1}{n}}\right)$$
+      where $n$ is the option count and $p_{\max} = \max_i P(i)$. For entropy-based architectures (`vllm-decision2`, `vllm-d3`), normalized entropy $1 - \frac{H}{\ln n}$ is used ($H = -\sum p_i \ln p_i$).
   - For `"score"`:
     - `"type": "score"`
-    - `"score"`: Expected rubric score $\sum_{i} i \cdot P(i)$ computed over the rubric levels (e.g. $1.5529$ for a 4-level scale $0 \dots 3$).
+    - `"score"`: Expected rubric score $\sum_{i=0}^{n-1} i \cdot P(i)$ computed over the rubric levels (e.g. $1.5529$ for a 4-level scale $0 \dots 3$).
     - `"legend"`: Map of level indices (`"0"`, `"1"`, ...) to rubric labels.
     - `"probabilities"`: Map of level indices to softmax probabilities.
-    - `"confidence"`: Confidence metric across the distribution.
+    - `"confidence"`: Mean distance to the mode relative to a uniform distribution:
+      $$\text{dist} = \sum_{i=0}^{n-1} P(i) \cdot |i - \text{mode}|,\quad \text{dist}_{\text{uniform}} = \frac{1}{n}\sum_{i=0}^{n-1} \left|i - \frac{n-1}{2}\right|$$
+      $$\text{confidence} = \max\left(0.0, 1.0 - \frac{\text{dist}}{\text{dist}_{\text{uniform}}}\right)$$
   - For `"noul"`:
     - `"type": "noul"`
-    - `"noul"`: Direct float probability / confidence metric $\in [0.0, 1.0]$.
+    - `"noul"`: Probability of truth $P(\text{"true"})\in [0.0, 1.0]$. For ordinal rating scales (such as `LEV` with $n=9$ levels $0 \dots 8$), expected normalized rating $\sum_{i=0}^{n-1} \frac{P(i) \cdot i}{n - 1}$. Note: `noul` produces no separate `confidence` field.
 - `usage`:
   - `input_tokens`: Prompt / context tokens processed.
   - `output_tokens`: Output tokens produced (typically 0 for pure classification/scoring).
+- *Permissible Implementation / Wrapper Fields:* Engine wrappers and test harnesses may include additional diagnostic or compatibility fields (such as `id`, `question_id`, `options`, `answers_list`, `choice.score`, or detailed usage breakdowns); consumers MUST ignore unknown fields.
 
 ### C. Stream Lifecycle Finalization
 1. **Successful Inference:** Exactly one non-terminal `decision_result` (14) event is emitted, immediately followed by a terminal `event_envelope` with `event_type == runtime_event_type::completed` (`10`) and outcome `terminal_outcome::completed`.
@@ -174,7 +179,7 @@ Under SL1, envelopes carry a 16-byte MAC calculated as the truncated first 16 by
 ### C. Session Binding & Lease Scope
 - Mutual key confirmation is established via signed `SESSION_BIND` (Envelope 5).
 - Standalone C++ engine runners (`linep-llama-server`) support configurable security enforcement via CLI flags: `--require-sl1` and `--require-lease` (defaulting to `false` for loopback plain/dev operation).
-- In authenticated D1 topologies and production environments, operator policy mandates `--require-sl1` and `--require-lease`, enforcing process and lease ownership (`lease_token` validation) to ensure requests match the authorized session scope.
+- In authenticated D1 topologies and production environments, operator policy mandates `--require-sl1` and `--require-lease`, enforcing that incoming connections establish a valid `SESSION_BIND` and maintain active session state (`bound_current`) before serving requests.
 
 ---
 
@@ -183,7 +188,7 @@ Under SL1, envelopes carry a 16-byte MAC calculated as the truncated first 16 by
 ### A. OldPeer Behavior (Strict Fail-Closed)
 Because canonical LiNeP V0.2 framing rejects unconsumed trailing bytes:
 - **Peers without Decision Extension (e.g. baseline 1.16 or vision-only 1.17):** Fail-closed reject capabilities envelopes containing decision extensions due to trailing garbage checks.
-- Old peers do not advertise Profile 5; requests to Profile 5 on unextended nodes are rejected with `error_category::unsupported`.
+- Old peers do not advertise Profile 5; requests targeting Profile 5 on unextended nodes are rejected fail-closed (or terminate with `error_category::unsupported` where explicit profile validation is implemented).
 
 ### B. Router Invariant (`liara-noded 1.18.0`)
 - **Typed Profile Routing:** In `trunk_router.rs`, requests for `PROFILE_DECISION` (5) are routed strictly to runtimes that advertise Profile 5 and match the requested `model_id` via `model_matches(&dm.model_id, requested_model)` over their declared `supported_decision_models`.
