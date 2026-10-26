@@ -177,10 +177,20 @@ Under SL1, envelopes carry a 16-byte MAC calculated as the truncated first 16 by
    - Zero padding (3 bytes, `0x00, 0x00, 0x00`)
 5. **Payload** ($N$ bytes, `payload_len` length)
 
-### C. Session Binding & Lease Scope
-- Mutual key confirmation is established via signed `SESSION_BIND` (Envelope 5).
-- Standalone C++ engine runners (`linep-llama-server`) support configurable security enforcement via CLI flags: `--require-sl1` and `--require-lease` (defaulting to `false` for loopback plain/dev operation).
-- In authenticated D1 topologies and production environments, operator policy mandates `--require-sl1` and `--require-lease`, enforcing that incoming connections establish a valid `SESSION_BIND` and maintain active session state (`bound_current`) before serving requests.
+### C. Session Binding & Per-Leg Security Architecture
+Mutual session state and key confirmation are established via `SESSION_BIND` (Envelope 5). Because LiNeP operates across segmented network and IPC topologies, authentication and lease enforcement are evaluated independently per transport leg rather than through an architectural blanket policy:
+
+1. **Client $\to$ Trunk Leg (e.g. Clef / Client to `liara-noded`):**
+   - **Configuration:** Managed in node configuration (`[trunk]` section in `liara-noded.conf`).
+   - **Authentication:** `auth = "off" | "optional" | "required"`. When set to `required`, unsigned connections are rejected with 401 `auth_required`. When SL1 is active, the trunk verifies and strips MACs on incoming client frames (`sl1_verify_inbound`) and signs outbound responses (`send_to_client`).
+   - **Lease Enforcement:** `require_lease = true | false` (default `false` in `ports.trunk_require_lease`). When enabled, every client `REQUEST` requires an active binding with a valid control-plane lease (`Binding::Current`). If stale, the request is rejected with 401 `stale_binding`; if unbound, with 401 `unbound: SESSION_BIND required before REQUEST`.
+
+2. **Trunk $\to$ Runtime Leg (e.g. `liara-noded` to `linep-llama-server` or `LiNeP-Ollama`):**
+   - **Configuration:** Defined per backend under `[runtimes.<name>]` via `DataTarget::Tcp` (e.g. `127.0.0.1:11435`) or `DataTarget::Unix` (e.g. `/run/liara/linep/llama.sock`).
+   - **Framing & Relay:** The trunk establishes local adapter connections, forwards plain decoded request frames (`forward(idx, frame)`), and relays plain event frames (`relay()`).
+   - **Runtime Server Enforcement:** Standalone engine runners (`linep-llama-server`) provide CLI flags `--require-sl1` and `--require-lease` (defaulting to `false` in `src/main.cpp:66-67` for loopback plain/dev operation). When placed behind `liara-noded` on localhost or Unix sockets, runtimes typically operate in plain mode (SL0) without requiring double MAC wrapping. If exposed directly across a network boundary or configured as an independent worker, `--require-sl1` and `--require-lease` can be enabled independently.
+
+3. **Normative Invariant:** The wire specification defines framing, HMAC calculations, and state transitions; it does not derive or mandate topology-wide operator policies. Each leg enforces authentication and leases strictly according to its configured transport boundary and local runtime flags.
 
 ---
 
