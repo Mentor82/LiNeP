@@ -105,6 +105,7 @@ The event payload contains a single JSON object:
     - `"confidence"`: Mean distance to the mode relative to a uniform distribution:
       $$\text{dist} = \sum_{i=0}^{n-1} P(i) \cdot |i - \text{mode}|,\quad \text{dist}_{\text{uniform}} = \frac{1}{n}\sum_{i=0}^{n-1} \left|i - \frac{n-1}{2}\right|$$
       $$\text{confidence} = \max\left(0.0, 1.0 - \frac{\text{dist}}{\text{dist}_{\text{uniform}}}\right)$$
+      (For entropy-based architectures such as `vllm-decision2` and `vllm-d3`, normalized entropy $1 - \frac{H}{\ln n}$ applies across both choice and score question types).
   - For `"noul"`:
     - `"type": "noul"`
     - `"noul"`: Probability of truth $P(\text{"true"})\in [0.0, 1.0]$. For ordinal rating scales (such as `LEV` with $n=9$ levels $0 \dots 8$), expected normalized rating $\sum_{i=0}^{n-1} \frac{P(i) \cdot i}{n - 1}$. Note: `noul` produces no separate `confidence` field.
