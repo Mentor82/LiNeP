@@ -61,18 +61,19 @@ The following constants define protocol-level framing envelopes:
 
 A client initiates decision inference using a standard `request_envelope`:
 - `profile`: `runtime_profile::decision` (`5`).
-- `model_id`: Identifier of the decision model (e.g. `"laya:322m-multilingual-bf16"`, `"clef-decision:test"`, or path string).
+- `model_id`: Identifier of the decision model (e.g. `"laya:322m-multilingual-bf16"`, `"clef-decision:test"`, or concrete model path).
 - `stream`: Explicit `stream_identity` (`request_id`, `execution_id`, `output_id`).
 - `payload`: UTF-8 encoded JSON payload adhering to the SystemOne schema:
   - `model`: String identifier matching or aliased to `model_id`.
-  - `state`: Optional string or object describing the problem context / session state.
-  - `questions`: Map of question IDs (`"q1"`, `"q2"`, ...) to question specifications:
-    - `"type": "choice"`: Discrete option selection. Requires `instructions` (string) and `criteria` (map of option keys to descriptive labels, e.g. `{"A": "Option 1", "B": "Option 2"}`).
-    - `"type": "score"`: Rubric/rating evaluation. Requires `instructions` (string) and `criteria` (ordered JSON array of grade labels, e.g. `["low", "medium", "high", "critical"]`).
-    - `"type": "noul"`: Direct probability/likelihood evaluation. Requires `instructions` (string).
+  - `state`: **Mandatory and not-null** (`"state"` must be provided). Describes the problem context, conversation history, or session state. If passed as a JSON string, it is used verbatim; if passed as a structured JSON object or array, it is serialized to string representation (e.g. via `dump()`).
+  - `questions`: Non-empty map of question IDs (`"q1"`, `"q2"`, ...) to question specifications:
+    - `"type": "choice"`: Discrete candidate selection (2 to 255 options). Requires `instructions` (non-empty string). Options are supplied either via `criteria` (map of option keys to descriptive labels, e.g. `{"A": "Option 1", "B": "Option 2"}`) or via `options` (array of option key strings).
+    - `"type": "score"`: Rubric/rating evaluation (2 to 10 discrete levels). Requires `instructions` (non-empty string). Levels are supplied either via `criteria` (ordered array of level descriptors, e.g. `["low", "medium", "high", "critical"]`) or via `options` (array of 2 to 10 level labels).
+    - `"type": "noul"`: Direct binary hypothesis / probability estimation over boolean outcomes (`"false"`, `"true"`). Requires `instructions` (non-empty string). Optionally accepts `criteria` describing the binary outcomes.
+  - *Note on Schema Flexibility:* The listed schemas represent the minimal normative wire baseline; backends accept canonical `criteria` mappings as well as compatibility `options` arrays.
 - Token Context Window:
-  - Context size is architecture-dependent (e.g. 8192 tokens for Laya ModernBERT, 16384 tokens for d1-omni) and declared in runtime capabilities.
-  - Generative sampling options (`temperature`, `top_p`, `top_k`) are not applicable to scoring and are ignored or fixed to $0.0$.
+  - Context size is bounded by the runtime's engine budget configuration (e.g. 8,192 tokens for Laya ModernBERT or 16,384 tokens for d1-omni as reference deployments, rather than a fixed architectural ceiling).
+  - Generative sampling options (`temperature`, `top_p`, `top_k`) are not applicable to deterministic decision scoring and are ignored or fixed to $0.0$.
 
 ---
 
@@ -108,7 +109,9 @@ The event payload contains a single JSON object:
   - `output_tokens`: Output tokens produced (typically 0 for pure classification/scoring).
 
 ### C. Stream Lifecycle Finalization
-After the single `decision_result` event is delivered, the provider MUST finalize the stream by emitting a terminal `event_envelope` with `event_type == runtime_event_type::completed` (`10`).
+1. **Successful Inference:** Exactly one non-terminal `decision_result` (14) event is emitted, immediately followed by a terminal `event_envelope` with `event_type == runtime_event_type::completed` (`10`) and outcome `terminal_outcome::completed`.
+2. **Early Abort / Failure:** If request validation fails, resources are exhausted, or an inference error occurs, the provider MUST terminate the stream directly with `event_type == runtime_event_type::failed` (`12`) and the corresponding `error_category` without emitting an intermediate `decision_result` (14) event.
+3. **Client Cancellation:** If cancelled by the client, the stream terminates directly with `event_type == runtime_event_type::cancelled` (`11`).
 
 ---
 
@@ -170,7 +173,8 @@ Under SL1, envelopes carry a 16-byte MAC calculated as the truncated first 16 by
 
 ### C. Session Binding & Lease Scope
 - Mutual key confirmation is established via signed `SESSION_BIND` (Envelope 5).
-- Native decision engine runners enforce process and lease ownership (`lease_token` validation), ensuring requests match the granted session scope.
+- Standalone C++ engine runners (`linep-llama-server`) support configurable security enforcement via CLI flags: `--require-sl1` and `--require-lease` (defaulting to `false` for loopback plain/dev operation).
+- In authenticated D1 topologies and production environments, operator policy mandates `--require-sl1` and `--require-lease`, enforcing process and lease ownership (`lease_token` validation) to ensure requests match the authorized session scope.
 
 ---
 
@@ -182,8 +186,10 @@ Because canonical LiNeP V0.2 framing rejects unconsumed trailing bytes:
 - Old peers do not advertise Profile 5; requests to Profile 5 on unextended nodes are rejected with `error_category::unsupported`.
 
 ### B. Router Invariant (`liara-noded 1.18.0`)
-- **Typed Profile Routing:** Requests for `PROFILE_DECISION` (5) are routed strictly to runtimes that explicitly advertise Profile 5 and declare the requested model in `supported_decision_models` with a matching `decision_type`.
-- **Wildcard Exclusion:** Typed profiles (both `VISION` and `DECISION`) are **strictly excluded** from generic `any_model` wildcard fallbacks.
+- **Typed Profile Routing:** In `trunk_router.rs`, requests for `PROFILE_DECISION` (5) are routed strictly to runtimes that advertise Profile 5 and match the requested `model_id` via `model_matches(&dm.model_id, requested_model)` over their declared `supported_decision_models`.
+- **Capability vs Request Scope:** Wire requests do not carry `decision_type`; `decision_type` is an advertised capability property verified by clients or providers during capability negotiation.
+- **Independent Descriptor Lists:** Typed DECISION routing requires only matching entries in `supported_decision_models`; an entry in the generic `supported_models` list is not required.
+- **Wildcard Exclusion:** Typed profiles (both `VISION` and `DECISION`) are **strictly excluded** from generic `any_model` wildcard fallbacks (`candidates()` returns `(Vec::new(), false)` if no explicit descriptor matches).
 
 ---
 
