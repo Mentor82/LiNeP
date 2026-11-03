@@ -99,6 +99,7 @@ from linep.v0_2.control_plane import (
     calc_crc32,
 )
 from linep.v0_2.client import LiNePClient
+from linep.v0_2.trunk import Sl1Credentials, TrunkError, TrunkSession
 from linep.v0_2.server import LiNePMockServer, MockServerConfig
 from linep.v0_2.conformance import (
     ConformanceRunner,
@@ -180,6 +181,9 @@ __all__ = [
     "calc_crc32",
     # Client & Server
     "LiNePClient",
+    "TrunkSession",
+    "Sl1Credentials",
+    "TrunkError",
     "LiNePMockServer",
     "MockServerConfig",
     # Conformance
