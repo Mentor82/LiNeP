@@ -24,6 +24,9 @@ from linep.v0_2 import (
     CapabilitiesEnvelope,
     CapabilitiesDescriptor,
     EmbeddingSpaceDescriptor,
+    DecisionModelDescriptor,
+    VisionModelDescriptor,
+    VisionTask,
     EmbeddingPayload,
     RuntimeErrorPayload,
     SessionBindEnvelope,
@@ -246,6 +249,147 @@ def test_capabilities_roundtrip():
     bad_trailing.append(0xFF)
     struct.pack_into("<I", bad_trailing, 28, len(bad_trailing) - 32)
     assert decode_capabilities(bytes(bad_trailing)) is None
+
+
+def test_c3_decision_capabilities_roundtrip_and_pfad_a():
+    # 1. Full 5-profiles roundtrip (Chat + Vision + Decision)
+    caps_full = CapabilitiesEnvelope(
+        descriptor=CapabilitiesDescriptor(
+            supported_profiles=[
+                RuntimeProfile.GENERATE,
+                RuntimeProfile.CHAT,
+                RuntimeProfile.EMBED,
+                RuntimeProfile.VISION,
+                RuntimeProfile.DECISION,
+            ],
+            max_context_tokens=8192,
+            max_output_tokens=4096,
+            supports_streaming=True,
+            supports_cancellation=True,
+            supports_tool_calling=True,
+            supports_reasoning_deltas=True,
+            supports_structured_messages=True,
+            supported_models=["llama3:8b", "clef:test"],
+            supported_embedding_spaces=[],
+            supported_vision_models=[
+                VisionModelDescriptor(
+                    model_id="yolo11n",
+                    model_revision="v1",
+                    label_set_id="coco80",
+                    task=VisionTask.DETECT,
+                    max_detections=100,
+                    custom_labels=["person", "car"],
+                )
+            ],
+            supported_decision_models=[
+                DecisionModelDescriptor(
+                    model_id="clef:test",
+                    model_revision="r1",
+                    decision_type="choice,score,noul",
+                ),
+                DecisionModelDescriptor(
+                    model_id="second:model",
+                    model_revision="",
+                    decision_type="lfm2-d1-omni",
+                ),
+            ],
+        )
+    )
+    raw_full = encode_capabilities(caps_full)
+    dec_full = decode_capabilities(raw_full)
+    assert dec_full is not None
+    assert dec_full.descriptor.supports_profile(RuntimeProfile.DECISION) is True
+    assert dec_full.descriptor.supports_profile(RuntimeProfile.VISION) is True
+    assert len(dec_full.descriptor.supported_vision_models) == 1
+    assert dec_full.descriptor.supported_vision_models[0].model_id == "yolo11n"
+    assert len(dec_full.descriptor.supported_decision_models) == 2
+    assert dec_full.descriptor.supported_decision_models[0].model_id == "clef:test"
+    assert dec_full.descriptor.supported_decision_models[0].decision_type == "choice,score,noul"
+    assert dec_full.descriptor.supported_decision_models[1].model_id == "second:model"
+    assert dec_full.descriptor.supported_decision_models[1].model_revision == ""
+    assert dec_full.descriptor.supports_decision_model("clef:test") is True
+    assert dec_full.descriptor.supports_decision_model("second:model") is True
+    assert dec_full.descriptor.supports_decision_model("unknown") is False
+
+    # 2. Pfad A: Decision models without Vision models (empty u16(0) vision slot)
+    caps_pfad_a = CapabilitiesEnvelope(
+        descriptor=CapabilitiesDescriptor(
+            supported_profiles=[RuntimeProfile.CHAT, RuntimeProfile.DECISION],
+            max_context_tokens=4096,
+            max_output_tokens=2048,
+            supports_streaming=True,
+            supports_cancellation=True,
+            supported_models=["clef:test"],
+            supported_embedding_spaces=[],
+            supported_vision_models=[],  # Empty vision list!
+            supported_decision_models=[
+                DecisionModelDescriptor(
+                    model_id="clef:test",
+                    model_revision="r1",
+                    decision_type="choice,score,noul",
+                )
+            ],
+        )
+    )
+    raw_pfad_a = encode_capabilities(caps_pfad_a)
+    dec_pfad_a = decode_capabilities(raw_pfad_a)
+    assert dec_pfad_a is not None
+    assert dec_pfad_a.descriptor.supports_profile(RuntimeProfile.DECISION) is True
+    assert len(dec_pfad_a.descriptor.supported_vision_models) == 0
+    assert len(dec_pfad_a.descriptor.supported_decision_models) == 1
+    assert dec_pfad_a.descriptor.supported_decision_models[0].model_id == "clef:test"
+
+    # Verify that raw frame has 0x0000 at vision models offset
+    # Header: 32 bytes.
+    # prof_count(2) + 2 profs(2) + max_ctx(4) + max_out(4) + 5 bools(5) = 17 bytes
+    # models_count(2) + str_len(2) + 9 bytes ("clef:test") = 13 bytes
+    # spaces_count(2) = 2 bytes
+    # Total before vision: 32 + 17 + 13 + 2 = 64 bytes.
+    # At offset 64: uint16 == 0 (Pfad A empty vision list)
+    vision_count = struct.unpack_from("<H", raw_pfad_a, 64)[0]
+    assert vision_count == 0
+    # At offset 66: decision count == 1
+    decision_count = struct.unpack_from("<H", raw_pfad_a, 66)[0]
+    assert decision_count == 1
+
+
+def test_c3_decision_capabilities_bounds_and_robustness():
+    base_caps = CapabilitiesEnvelope(
+        descriptor=CapabilitiesDescriptor(
+            supported_profiles=[RuntimeProfile.DECISION],
+            max_context_tokens=1024,
+            max_output_tokens=512,
+            supported_models=["clef:test"],
+            supported_decision_models=[
+                DecisionModelDescriptor(
+                    model_id="clef:test",
+                    model_revision="r1",
+                    decision_type="choice,score,noul",
+                )
+            ],
+        )
+    )
+    raw = encode_capabilities(base_caps)
+
+    # 1. Trailing garbage after decision tail must be rejected
+    bad_trailing = bytearray(raw)
+    bad_trailing.append(0xEE)
+    struct.pack_into("<I", bad_trailing, 28, len(bad_trailing) - 32)
+    assert decode_capabilities(bytes(bad_trailing)) is None
+
+    # 2. Decision count exceeding bounds (> 1024) must be rejected
+    # In base_caps: vision count is at 64 (0), decision count is at 66 (1)
+    bad_count = bytearray(raw)
+    struct.pack_into("<H", bad_count, 66, 1025)
+    assert decode_capabilities(bytes(bad_count)) is None
+
+    # 3. Decision model with empty model_id is invalid
+    dm_empty = DecisionModelDescriptor(model_id="", model_revision="r1", decision_type="choice")
+    assert not dm_empty.is_valid()
+
+    # 4. Decision model with string exceeding 256 bytes is invalid
+    dm_long = DecisionModelDescriptor(model_id="a" * 257, model_revision="r1", decision_type="choice")
+    assert not dm_long.is_valid()
 
 
 def test_strict_rejection_of_malformed_and_trailing_data():

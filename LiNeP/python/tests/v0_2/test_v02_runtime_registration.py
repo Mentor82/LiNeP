@@ -5,6 +5,7 @@ Ensures complete wire-compatibility and parity with C++ reference implementation
 """
 
 import struct
+import copy
 import pytest
 
 from linep.v0_2 import (
@@ -23,6 +24,10 @@ from linep.v0_2 import (
     CapabilitiesEnvelope,
     CapabilitiesDescriptor,
     EmbeddingSpaceDescriptor,
+    DecisionModelDescriptor,
+    VisionModelDescriptor,
+    VisionTask,
+    encode_capabilities,
     RegistrationExtension,
     RuntimeRegistrationEnvelope,
     SessionBindEnvelope,
@@ -48,6 +53,121 @@ def _make_valid_registration(slots: int = 1) -> RuntimeRegistrationEnvelope:
             )
         ),
     )
+
+
+DECISION_REGISTRATION_GOLDEN = bytes.fromhex(
+    "324c4e500002060000000000000000000000000000000000000000005e000000"
+    "010001000100040000000100000004004a000000324c4e500002040000000000"
+    "000000000000000000000000000000002a0000000100050000000000000000"
+    "0101000000010001006400000000010001006402007631060063686f696365"
+)
+
+
+def _profile_registration(profile):
+    reg = _make_valid_registration()
+    d = reg.capabilities.descriptor
+    d.supported_profiles = [profile]
+    if profile == RuntimeProfile.DECISION:
+        d.supported_decision_models = [DecisionModelDescriptor("test-model", "v1", "choice")]
+    else:
+        d.supported_vision_models = [VisionModelDescriptor(model_id="test-model", label_set_id="coco80:v1")]
+    return reg
+
+
+def _unchecked_registration(reg):
+    # Build a valid TLV envelope around inconsistent capabilities, bypassing the
+    # production registration validator so the receiver is tested independently.
+    caps = encode_capabilities(reg.capabilities)
+    payload = (b"\x01\x00\x01\x00" + struct.pack("<HII", 1, 4, reg.concurrent_slots)
+               + struct.pack("<HI", 4, len(caps)) + caps)
+    return encode_header(WireEnvelopeHeader(envelope_type=int(EnvelopeType.RUNTIME_REGISTER), payload_len=len(payload))) + payload
+
+
+def test_decision_registration_shared_cpp_golden():
+    reg = decode_runtime_registration(DECISION_REGISTRATION_GOLDEN)
+    assert reg is not None
+    assert reg.capabilities.descriptor.supported_profiles == [RuntimeProfile.DECISION]
+    assert reg.capabilities.descriptor.supported_decision_models == [DecisionModelDescriptor("d", "v1", "choice")]
+    assert encode_runtime_registration(reg) == DECISION_REGISTRATION_GOLDEN
+
+
+@pytest.mark.parametrize("profile", [RuntimeProfile.VISION, RuntimeProfile.DECISION])
+def test_profile_registration_roundtrip_and_negative_relations(profile):
+    reg = _profile_registration(profile)
+    raw = encode_runtime_registration(reg)
+    assert encode_runtime_registration(decode_runtime_registration(raw)) == raw
+    for change in ("missing_profile", "missing_descriptor", "unadvertised", "duplicate", "long_revision"):
+        bad = copy.deepcopy(reg)
+        d = bad.capabilities.descriptor
+        descriptors = d.supported_decision_models if profile == RuntimeProfile.DECISION else d.supported_vision_models
+        if change == "missing_profile":
+            d.supported_profiles = [RuntimeProfile.CHAT]
+        elif change == "missing_descriptor":
+            descriptors.clear()
+        elif change == "unadvertised":
+            descriptors[0].model_id = "other"
+        elif change == "duplicate":
+            descriptors.append(copy.deepcopy(descriptors[0]))
+        else:
+            descriptors[0].model_revision = "x" * 257
+        with pytest.raises(ValueError):
+            encode_runtime_registration(bad)
+        assert decode_runtime_registration(_unchecked_registration(bad)) is None
+
+
+@pytest.mark.parametrize("profile", [RuntimeProfile.VISION, RuntimeProfile.DECISION])
+@pytest.mark.parametrize("operation", [RegistrationOperation.RESULT, RegistrationOperation.DRAINING, RegistrationOperation.CAPACITY_UPDATE])
+def test_lifecycle_does_not_silently_drop_descriptors(profile, operation):
+    reg = RuntimeRegistrationEnvelope(operation=operation, status_code=200 if operation == RegistrationOperation.RESULT else 0)
+    desc = _profile_registration(profile).capabilities.descriptor
+    reg.capabilities.descriptor.supported_vision_models = desc.supported_vision_models
+    reg.capabilities.descriptor.supported_decision_models = desc.supported_decision_models
+    with pytest.raises(ValueError):
+        encode_runtime_registration(reg)
+
+
+def test_decision_registration_count_boundary():
+    reg = _profile_registration(RuntimeProfile.DECISION)
+    d = reg.capabilities.descriptor
+    d.supported_decision_models = [DecisionModelDescriptor(f"m{i}", "", "choice") for i in range(1024)]
+    d.supported_models = [m.model_id for m in d.supported_decision_models]
+    assert decode_runtime_registration(encode_runtime_registration(reg)) is not None
+    d.supported_models.append("extra")
+    d.supported_decision_models.append(DecisionModelDescriptor("extra", "", "choice"))
+    with pytest.raises(ValueError):
+        encode_runtime_registration(reg)
+    assert decode_runtime_registration(_unchecked_registration(reg)) is None
+
+
+def test_registration_unknown_profile_stays_rejected():
+    reg = _make_valid_registration()
+    reg.capabilities.descriptor.supported_profiles = [6]
+    with pytest.raises(ValueError):
+        encode_runtime_registration(reg)
+    assert decode_runtime_registration(_unchecked_registration(reg)) is None
+
+
+def test_registration_descriptor_bytes_are_in_budget():
+    reg = _profile_registration(RuntimeProfile.VISION)
+    reg.capabilities.descriptor.supported_vision_models[0].custom_labels = ["x" * 256] * 256
+    with pytest.raises(ValueError):
+        encode_runtime_registration(reg)
+    # UTF-8 limits count bytes, not Python code points.
+    reg = _profile_registration(RuntimeProfile.DECISION)
+    reg.capabilities.descriptor.supported_decision_models[0].model_revision = "ä" * 129
+    with pytest.raises(ValueError):
+        encode_runtime_registration(reg)
+
+
+def test_vision_registration_preserves_existing_custom_label_limit():
+    reg = _profile_registration(RuntimeProfile.VISION)
+    vm = reg.capabilities.descriptor.supported_vision_models[0]
+    vm.label_set_id = "custom:test"
+    vm.custom_labels = [f"label{i}" for i in range(2048)]
+    assert decode_runtime_registration(encode_runtime_registration(reg)) is not None
+    vm.custom_labels.append("extra")
+    with pytest.raises(ValueError):
+        encode_runtime_registration(reg)
 
 
 def test_golden_vector_capacity_update():

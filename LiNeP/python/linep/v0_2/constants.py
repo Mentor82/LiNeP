@@ -28,6 +28,7 @@ class RuntimeProfile(IntEnum):
     CHAT = 2
     EMBED = 3
     VISION = 4
+    DECISION = 5
 
 class EnvelopeType(IntEnum):
     UNKNOWN = 0
@@ -69,6 +70,7 @@ class EventType(IntEnum):
     CANCELLED = 11
     FAILED = 12
     VISION_RESULT = 13
+    DATA = 14
 
 class VisionTask(IntEnum):
     UNSPECIFIED = 0
