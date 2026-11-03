@@ -342,6 +342,22 @@ class SessionBindEnvelope:
 
 
 @dataclass
+class DecisionModelDescriptor:
+    model_id: str = ""
+    model_revision: str = ""
+    decision_type: str = ""
+
+    def is_valid(self) -> bool:
+        return (
+            bool(self.model_id)
+            and len(self.model_id.encode("utf-8")) <= 256
+            and len(self.model_revision.encode("utf-8")) <= 256
+            and bool(self.decision_type)
+            and len(self.decision_type.encode("utf-8")) <= 256
+        )
+
+
+@dataclass
 class CapabilitiesDescriptor:
     supported_profiles: List[RuntimeProfile] = field(default_factory=list)
     max_context_tokens: int = 0
@@ -354,6 +370,7 @@ class CapabilitiesDescriptor:
     supported_models: List[str] = field(default_factory=list)
     supported_embedding_spaces: List[EmbeddingSpaceDescriptor] = field(default_factory=list)
     supported_vision_models: List[VisionModelDescriptor] = field(default_factory=list)
+    supported_decision_models: List[DecisionModelDescriptor] = field(default_factory=list)
 
     def supports_profile(self, profile: RuntimeProfile) -> bool:
         return profile in self.supported_profiles
@@ -361,6 +378,12 @@ class CapabilitiesDescriptor:
     def supports_vision_model(self, model_id: str, task: VisionTask = VisionTask.DETECT) -> bool:
         for vm in self.supported_vision_models:
             if vm.model_id == model_id and (task == VisionTask.UNSPECIFIED or vm.task == task):
+                return True
+        return False
+
+    def supports_decision_model(self, model_id: str) -> bool:
+        for dm in self.supported_decision_models:
+            if dm.model_id == model_id:
                 return True
         return False
 
@@ -849,7 +872,11 @@ def encode_capabilities(caps: CapabilitiesEnvelope) -> bytes:
         pw.write_u8(int(sp.normalization))
         pw.write_u8(int(sp.distance_metric))
 
-    if desc.supported_vision_models:
+    has_vision = bool(desc.supported_vision_models)
+    has_decision = bool(desc.supported_decision_models)
+
+    if has_vision or has_decision:
+        # Positional Tail: Vision count + models (Pfad A: empty u16(0) if no vision models)
         pw.write_u16(len(desc.supported_vision_models))
         for vm in desc.supported_vision_models:
             pw.write_string_u16(vm.model_id)
@@ -860,6 +887,14 @@ def encode_capabilities(caps: CapabilitiesEnvelope) -> bytes:
             pw.write_u16(len(vm.custom_labels))
             for lbl in vm.custom_labels:
                 pw.write_string_u16(lbl)
+
+        if has_decision:
+            # Positional Tail: Decision count + Decision models
+            pw.write_u16(len(desc.supported_decision_models))
+            for dm in desc.supported_decision_models:
+                pw.write_string_u16(dm.model_id)
+                pw.write_string_u16(dm.model_revision)
+                pw.write_string_u16(dm.decision_type)
 
     payload = pw.to_bytes()
     hdr = WireEnvelopeHeader(
@@ -910,8 +945,11 @@ def _decode_capabilities_payload(payload: bytes, five_bools: bool) -> Optional[C
             )
 
         vision_models = []
+        decision_models = []
         if r.remaining() > 0:
             vm_count = r.read_u16()
+            if int(vm_count) * 13 > r.remaining():
+                return None
             for _ in range(vm_count):
                 vm_id = r.read_string_u16()
                 vm_rev = r.read_string_u16()
@@ -919,6 +957,8 @@ def _decode_capabilities_payload(payload: bytes, five_bools: bool) -> Optional[C
                 v_task = VisionTask(r.read_u8())
                 v_max = r.read_u32()
                 cl_count = r.read_u16()
+                if int(cl_count) * 2 > r.remaining():
+                    return None
                 cl_labels = [r.read_string_u16() for _ in range(cl_count)]
                 vision_models.append(
                     VisionModelDescriptor(
@@ -930,6 +970,23 @@ def _decode_capabilities_payload(payload: bytes, five_bools: bool) -> Optional[C
                         custom_labels=cl_labels,
                     )
                 )
+
+            if r.remaining() > 0:
+                dm_count = r.read_u16()
+                if dm_count > 1024 or int(dm_count) * 6 > r.remaining():
+                    return None
+                for _ in range(dm_count):
+                    dm_id = r.read_string_u16()
+                    dm_rev = r.read_string_u16()
+                    dm_type = r.read_string_u16()
+                    dm = DecisionModelDescriptor(
+                        model_id=dm_id,
+                        model_revision=dm_rev,
+                        decision_type=dm_type,
+                    )
+                    if not dm.is_valid():
+                        return None
+                    decision_models.append(dm)
 
         if r.remaining() != 0:
             return None
@@ -946,6 +1003,7 @@ def _decode_capabilities_payload(payload: bytes, five_bools: bool) -> Optional[C
             supported_models=models,
             supported_embedding_spaces=spaces,
             supported_vision_models=vision_models,
+            supported_decision_models=decision_models,
         )
         return CapabilitiesEnvelope(descriptor=desc)
     except Exception:
@@ -1169,6 +1227,8 @@ def _is_valid_runtime_registration(e: RuntimeRegistrationEnvelope) -> bool:
         len(d.supported_models) == 0
         and len(d.supported_profiles) == 0
         and len(d.supported_embedding_spaces) == 0
+        and len(d.supported_vision_models) == 0
+        and len(d.supported_decision_models) == 0
         and d.max_context_tokens == 0
         and d.max_output_tokens == 0
         and d.supports_streaming is True
@@ -1195,7 +1255,8 @@ def _is_valid_runtime_registration(e: RuntimeRegistrationEnvelope) -> bool:
 
     if e.concurrent_slots == 0 or len(d.supported_models) == 0 or len(d.supported_profiles) == 0:
         return False
-    if len(d.supported_models) > 2048 or len(d.supported_embedding_spaces) > 2048:
+    if (len(d.supported_models) > 2048 or len(d.supported_embedding_spaces) > 2048
+            or len(d.supported_vision_models) > 2048 or len(d.supported_decision_models) > 1024):
         return False
 
     total_bytes = 64
@@ -1221,6 +1282,33 @@ def _is_valid_runtime_registration(e: RuntimeRegistrationEnvelope) -> bool:
             return False
         total_bytes += len(sp_id_bytes) + len(sp_mod_bytes) + len(sp_rev_bytes) + 12
 
+    if (RuntimeProfile.VISION in d.supported_profiles) != bool(d.supported_vision_models):
+        return False
+    vision_models = set()
+    for vm in d.supported_vision_models:
+        fields = [s.encode("utf-8") for s in (vm.model_id, vm.model_revision, vm.label_set_id)]
+        if (not vm.model_id or not vm.label_set_id or any(len(s) > 256 for s in fields)
+                or vm.task != VisionTask.DETECT or not 1 <= vm.max_detections <= LINEP_V02_MAX_VISION_DETECTIONS
+                or len(vm.custom_labels) > 2048 or vm.model_id in vision_models
+                or vm.model_id not in d.supported_models):
+            return False
+        vision_models.add(vm.model_id)
+        total_bytes += sum(map(len, fields)) + 13
+        for label in vm.custom_labels:
+            raw_label = label.encode("utf-8")
+            if len(raw_label) > 256:
+                return False
+            total_bytes += len(raw_label) + 2
+
+    if (RuntimeProfile.DECISION in d.supported_profiles) != bool(d.supported_decision_models):
+        return False
+    decision_models = set()
+    for dm in d.supported_decision_models:
+        if not dm.is_valid() or dm.model_id in decision_models or dm.model_id not in d.supported_models:
+            return False
+        decision_models.add(dm.model_id)
+        total_bytes += sum(len(s.encode("utf-8")) for s in (dm.model_id, dm.model_revision, dm.decision_type)) + 6
+
     if total_bytes > LINEP_V02_MAX_REGISTRATION_BYTES - 64:
         return False
 
@@ -1234,7 +1322,7 @@ def _is_valid_runtime_registration(e: RuntimeRegistrationEnvelope) -> bool:
     seen_profiles = set()
     for p in d.supported_profiles:
         v = int(p)
-        if v < 1 or v > 3 or v in seen_profiles:
+        if v < 1 or v > 5 or v in seen_profiles:
             return False
         seen_profiles.add(v)
 
