@@ -1,0 +1,14 @@
+# VM108 only. No new network-facing port; SSH reverse listener is loopback.
+# Check that runtime_id 9 is unused before appending to the target registry.
+[runtimes.rpi5_vision]
+runtime_id = 9
+endpoint_id = 1
+data = "tcp:127.0.0.1:19653"
+models = ["yolov8s-detect"]
+max_streams = 1
+trust = "intranet"
+
+[tasks.vision]
+prefer = ["yolov8s-detect"]
+class = "local"
+trust = ["intranet"]

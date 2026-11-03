@@ -1,0 +1,15 @@
+[Unit]
+Description=LiNeP Vision reverse channel to VM108 loopback port 19653
+After=network-online.target linep-vision.service
+Wants=network-online.target linep-vision.service
+
+[Service]
+Type=simple
+User=mirko
+ExecStart=/usr/bin/ssh -N -i /home/mirko/.ssh/id_ed25519_liara_rpi5_worker -o IdentitiesOnly=yes -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/liara-worker/known_hosts -R 127.0.0.1:19653:127.0.0.1:11436 rpi5-vision-worker@192.168.178.161
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
