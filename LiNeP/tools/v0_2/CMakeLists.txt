@@ -35,3 +35,6 @@ linep_v02_tool(linep-v02-golden-socket-test golden_socket_test.cpp)
 
 # 5. Interactive Live UDP Control Plane Handshake Client
 linep_v02_tool(linep-v02-golden-udp-socket-test golden_udp_socket_test.cpp)
+
+# VISION-only real image probe, optionally through a leased SL1 trunk.
+linep_v02_tool(linep-v02-vision-check vision_check.cpp)
