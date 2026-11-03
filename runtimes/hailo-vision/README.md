@@ -71,6 +71,10 @@ other processes can affect latency.
 `linep` packages. The example uses the Pi's existing `mirko` account and model
 path; review the service user and package layout for each target host. A writable
 `StateDirectory` holds HailoRT logs while application code remains read-only.
+`HOME` also points there because HailoRT writes `.hailo` state and the user's
+actual home is hidden by `ProtectHome=true`.
+The service must share the host's `/tmp`: HailoRT's multiprocess socket is
+`/tmp/hailort_uds.sock`, so `PrivateTmp=true` would prevent device access.
 
 ## Validation
 

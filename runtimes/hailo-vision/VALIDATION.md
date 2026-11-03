@@ -22,6 +22,12 @@ test. Existing hailort, linep-ollama and linep-tunnel services remained active.
   not an arm64 release bundle or signed lpkg release.
 - `systemd-analyze verify --man=no deploy/linep-vision.service` succeeds on the Pi.
   The template has not been installed or started as a systemd service.
+- Follow-up review: transient systemd socket-visibility checks reproduce that
+  `PrivateTmp=yes` hides `/tmp/hailort_uds.sock` while `PrivateTmp=no` exposes it.
+  The service template now explicitly shares the host tmp namespace.
+  `HOME` points to the writable StateDirectory for HailoRT's `.hailo` state,
+  preserving `ProtectHome=true`. The hardware smoke also passes under a transient
+  systemd unit with the template's hardening and state-directory settings.
 
 ## Real Hailo inference over the runtime socket
 
