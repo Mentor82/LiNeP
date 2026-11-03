@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import struct
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 from linep.v0_2.constants import (
     LINEP_V02_MAGIC,
@@ -72,9 +72,11 @@ class BufferWriter:
         self._buf.extend(raw)
 
     def write_string_u32(self, s: str) -> None:
-        raw = s.encode("utf-8")
+        self.write_bytes_u32(s.encode("utf-8"))
+
+    def write_bytes_u32(self, raw: bytes) -> None:
         if len(raw) > 0xFFFFFFFF:
-            raise ValueError("String exceeds uint32 limit")
+            raise ValueError("Byte field exceeds uint32 limit")
         self.write_u32(len(raw))
         self._buf.extend(raw)
 
@@ -144,12 +146,15 @@ class BufferReader:
         return raw.decode("utf-8", errors="replace")
 
     def read_string_u32(self) -> str:
+        return self.read_bytes_u32().decode("utf-8", errors="replace")
+
+    def read_bytes_u32(self) -> bytes:
         length = self.read_u32()
         if not self.has_remaining(length):
-            raise ValueError(f"Buffer underflow reading string of length {length}")
+            raise ValueError(f"Buffer underflow reading byte field of length {length}")
         raw = bytes(self._data[self._offset : self._offset + length])
         self._offset += length
-        return raw.decode("utf-8", errors="replace")
+        return raw
 
 
 @dataclass(frozen=True)
@@ -220,7 +225,10 @@ class RequestEnvelope:
     stream: StreamIdentity = field(default_factory=StreamIdentity)
     profile: RuntimeProfile = RuntimeProfile.CHAT
     model_id: str = ""
-    payload: str = ""
+    # Text profiles carry UTF-8 text (str). PROFILE_VISION carries the raw
+    # encoded image (JPEG/PNG/WebP) as bytes (PROFILE_VISION.md section 3);
+    # decode_request returns bytes for it, never a UTF-8-decoded string.
+    payload: Union[str, bytes] = ""
     max_tokens: int = 512
     temperature: float = 0.7
     stream_requested: bool = True
@@ -229,6 +237,12 @@ class RequestEnvelope:
 
     def is_valid(self) -> bool:
         return self.stream.is_valid() and bool(self.model_id) and self.profile != RuntimeProfile.UNSPECIFIED
+
+    def payload_bytes(self) -> bytes:
+        """The payload exactly as it goes on the wire."""
+        if isinstance(self.payload, (bytes, bytearray, memoryview)):
+            return bytes(self.payload)
+        return self.payload.encode("utf-8")
 
 
 @dataclass
@@ -431,7 +445,7 @@ def encode_request(req: RequestEnvelope) -> bytes:
     pw = BufferWriter()
     pw.write_u8(int(req.profile))
     pw.write_string_u16(req.model_id)
-    pw.write_string_u32(req.payload)
+    pw.write_bytes_u32(req.payload_bytes())
     pw.write_u32(req.max_tokens)
     pw.write_float(req.temperature)
     pw.write_u8(1 if req.stream_requested else 0)
@@ -496,7 +510,13 @@ def decode_request(data: bytes) -> Optional[RequestEnvelope]:
     try:
         prof = RuntimeProfile(r.read_u8())
         model_id = r.read_string_u16()
-        payload = r.read_string_u32()
+        raw_payload = r.read_bytes_u32()
+        # Images are binary: a UTF-8 decode would replace invalid bytes and
+        # corrupt them. Text profiles keep their str payload.
+        payload: Union[str, bytes] = (
+            raw_payload if prof == RuntimeProfile.VISION
+            else raw_payload.decode("utf-8", errors="replace")
+        )
         max_tokens = r.read_u32()
         temp = r.read_float()
         stream_req = bool(r.read_u8())

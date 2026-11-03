@@ -12,11 +12,15 @@ from linep.v0_2.envelopes import (
     CapabilitiesDescriptor,
     CapabilitiesEnvelope,
     EventEnvelope,
+    GenerationOptions,
+    RequestEnvelope,
     StreamIdentity,
     decode_capabilities,
     decode_event,
+    decode_request,
     encode_capabilities,
     encode_event,
+    encode_request,
 )
 from linep.v0_2.vision import (
     LABEL_SET_COCO80_V1,
@@ -278,3 +282,55 @@ def test_vision_negatives():
         ),
     )
     assert not bad_payload.is_valid()
+
+
+# A JPEG start plus every byte value: invalid UTF-8 that a text decode would mangle.
+_IMAGE = bytes([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]) + b"JFIF\x00" + bytes(range(256)) + b"\xff\xd9"
+
+
+def _vision_request(payload, has_options=False):
+    opts = GenerationOptions(extra_options=[("vision.task", "detect"), ("vision.content_type", "image/jpeg")])
+    return RequestEnvelope(
+        stream=StreamIdentity(request_id=7, execution_id=8, output_id=0),
+        profile=RuntimeProfile.VISION,
+        model_id="yolov8s-detect",
+        payload=payload,
+        has_options=has_options,
+        options=opts if has_options else GenerationOptions(),
+    )
+
+
+@pytest.mark.parametrize("has_options", [False, True])
+def test_vision_request_binary_image_roundtrip(has_options):
+    """PROFILE_VISION.md section 3: the request payload is the raw image, byte for byte."""
+    raw = encode_request(_vision_request(_IMAGE, has_options))
+    decoded = decode_request(raw)
+    assert decoded is not None
+    assert isinstance(decoded.payload, bytes)
+    assert decoded.payload == _IMAGE
+    assert encode_request(decoded) == raw
+
+
+def test_vision_request_wire_carries_image_unchanged():
+    """The u32-prefixed payload field holds exactly the image bytes (no text encoding)."""
+    raw = encode_request(_vision_request(_IMAGE))
+    marker = len(_IMAGE).to_bytes(4, "little") + _IMAGE
+    assert marker in raw
+
+
+def test_vision_request_empty_payload_decodes_as_bytes():
+    """An empty image is a runtime error (VISION_INVALID_PAYLOAD), not a framing error."""
+    decoded = decode_request(encode_request(_vision_request(b"")))
+    assert decoded is not None and decoded.payload == b""
+
+
+def test_text_profiles_keep_str_payload():
+    req = RequestEnvelope(
+        stream=StreamIdentity(request_id=1, execution_id=2, output_id=0),
+        profile=RuntimeProfile.CHAT,
+        model_id="qwen2.5:1.5b",
+        payload="Grüße – ok",
+    )
+    decoded = decode_request(encode_request(req))
+    assert decoded.payload == "Grüße – ok"
+    assert isinstance(decoded.payload, str)
