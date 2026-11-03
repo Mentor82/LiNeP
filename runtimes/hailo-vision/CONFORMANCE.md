@@ -48,6 +48,10 @@ than promising a structured error for a frame that violates framing limits.
 The helper `tools/negative_auth.py` submits unsigned inference and a bind using
 an unregistered **synthetic** key ID 65000. Both must be denied. It reads no real
 cluster key and does not enroll a key or edit policy.
+With `--key-file` it additionally verifies a `task:vision`-only client's scope:
+`task:fast` and the direct model name must receive 403, followed by healthy
+`task:vision` detection on the same signed session. This optional check needs
+the adapter source on PYTHONPATH as well as the SDK.
 
 ## Native clients and pinned codec snapshots
 
@@ -67,6 +71,8 @@ only **committed** codec files into an isolated build directory, with source
 commits and per-file SHA-256 in CODEC_SOURCES.json. It does not edit those projects
 or vendor them into this repository. Use the OS owner's agreed snapshots; record
 their identities separately from the identity of the running daemon binary.
+Use `--go-ref <commit>` and `--rust-ref <commit>` to export an explicit committed
+revision without checking it out or disturbing another owner's worktree.
 
 The Go client imports the real LiNeP-Ollama codec (including opaque binary strings)
 and uses standard-library networking. In the generated module:

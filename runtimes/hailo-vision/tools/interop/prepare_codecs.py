@@ -14,13 +14,16 @@ def main():
     p=argparse.ArgumentParser()
     p.add_argument("--go-repo",type=Path,required=True)
     p.add_argument("--rust-repo",type=Path,required=True)
+    p.add_argument("--go-ref",default="HEAD")
+    p.add_argument("--rust-ref",default="HEAD")
     p.add_argument("--output",type=Path,required=True)
     args=p.parse_args()
     args.output.mkdir(parents=True,exist_ok=False)
     manifest={}
     here=Path(__file__).resolve().parent
     for language,repo,prefix in [("go",args.go_repo,"pkg/linep/v02/"),("rust",args.rust_repo,"src/liara-noded/src/")]:
-        commit=git(repo,"rev-parse","HEAD").decode().strip()
+        ref=args.go_ref if language=="go" else args.rust_ref
+        commit=git(repo,"rev-parse",ref+"^{commit}").decode().strip()
         names=git(repo,"ls-tree","-r","--name-only",commit,"--",prefix).decode().splitlines()
         if language=="go":
             names=[n for n in names if n.endswith(".go") and not n.endswith("_test.go")]

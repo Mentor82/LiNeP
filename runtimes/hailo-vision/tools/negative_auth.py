@@ -1,6 +1,7 @@
 """Non-privileged negative trunk authentication checks; no real key is read."""
 import argparse
 import json
+from dataclasses import replace
 from pathlib import Path
 from linep.v0_2.client import LiNePClient
 from linep.v0_2.constants import RuntimeProfile, EventType
@@ -14,6 +15,7 @@ def main():
     p.add_argument("--port",type=int,default=9000)
     p.add_argument("--control-port",type=int,default=9001)
     p.add_argument("--image",type=Path,required=True)
+    p.add_argument("--key-file", help="Optional task:vision-only key, read in place for allowlist check")
     args=p.parse_args()
     req=RequestEnvelope(stream=StreamIdentity(99001,990010,0),profile=RuntimeProfile.VISION,
                         model_id="yolov8s-detect",payload=args.image.read_bytes(),has_options=True,
@@ -30,8 +32,25 @@ def main():
     except TrunkError as error:
         assert error.code==401, str(error)
         bad_key_reason=error.reason
-    print(json.dumps({"unsigned_inference":"rejected","unsigned_reason":unsigned_reason,
-                      "unregistered_synthetic_key":"rejected","bad_key_reason":bad_key_reason,"passed":True}))
+    report = {"unsigned_inference":"rejected","unsigned_reason":unsigned_reason,
+              "unregistered_synthetic_key":"rejected","bad_key_reason":bad_key_reason,"passed":True}
+    if args.key_file:
+        from linep_vision.conformance import VisionConformance, validate_events
+        credentials = Sl1Credentials.from_file(args.key_file)
+        factory = lambda: TrunkSession(args.host, trunk_port=args.port, control_port=args.control_port,
+                                       credentials=credentials, timeout=15)
+        suite = VisionConformance(factory, args.image.read_bytes(), model="task:vision")
+        suite.check_capabilities()
+        with factory() as session:
+            for model in ("task:fast", "yolov8s-detect"):
+                denied = replace(suite.request(), model_id=model)
+                events = list(session.execute_stream(denied, auto_ack_window=False))
+                validate_events(events, denied.stream, EventType.FAILED)
+                assert len(events) == 1 and events[0].error.code == 403
+                assert events[0].error.message == "model_not_allowed_for_client"
+                suite.detection(session, suite.request())
+        report["vision_only_allowlist_and_session_recovery"] = "passed"
+    print(json.dumps(report))
 
 
 if __name__=="__main__":
