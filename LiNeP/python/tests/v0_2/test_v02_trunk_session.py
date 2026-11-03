@@ -27,6 +27,8 @@ from linep.v0_2 import (
     MessageDirection,
     NodeEndpointIdentity,
     RuntimeErrorPayload,
+    RequestEnvelope,
+    RuntimeProfile,
     SessionBindEnvelope,
     Sl1Credentials,
     StreamIdentity,
@@ -149,6 +151,14 @@ class FakeLinepd:
         conn.close()
 
     def _serve(self, conn):
+        with conn:
+            try:
+                self._serve_connection(conn)
+            except ConnectionError:
+                # The client intentionally discards interrupted streams.
+                return
+
+    def _serve_connection(self, conn):
         out_seq = 0
         raw = self._read(conn)
         if raw is None:
@@ -291,3 +301,60 @@ def test_heartbeats_keep_the_lease(linepd):
     assert len(beats) >= 2
     assert all(b.lease_token == linepd.lease for b in beats)
     assert [b.control_seq for b in beats] == sorted(b.control_seq for b in beats)
+
+
+def test_send_failure_closes_session_without_retry(linepd, monkeypatch):
+    with session(linepd) as s:
+        attempts = []
+        original_send = s._send_frame
+
+        def delivered_then_failed(frame):
+            attempts.append(frame)
+            original_send(frame)
+            raise OSError("delivery outcome unknown")
+
+        monkeypatch.setattr(s, "_send_frame", delivered_then_failed)
+        with pytest.raises(OSError, match="delivery outcome unknown"):
+            s.embed("task:embed-bge", "one request")
+        assert len(attempts) == 1
+        assert not s.is_connected()
+
+
+def test_early_stream_close_reconnects_before_next_request(linepd):
+    with session(linepd) as s:
+        first = s.execute_stream(RequestEnvelope(
+            stream=StreamIdentity(1, 10, 0), profile=RuntimeProfile.EMBED,
+            model_id="task:embed-bge", payload="first",
+        ))
+        assert next(first).event_type == EventType.EMBEDDING_RESULT
+        first.close()
+        assert not s.is_connected()
+        assert s.embed("task:embed-bge", "second") == [6.0, 0.5, 0.5, 0.5]
+
+
+@pytest.mark.parametrize("event_type,outcome", [
+    (EventType.COMPLETED, TerminalOutcome.COMPLETED),
+    (EventType.FAILED, TerminalOutcome.FAILED),
+    (EventType.CANCELLED, TerminalOutcome.CANCELLED),
+])
+def test_close_after_terminal_keeps_session(linepd, monkeypatch, event_type, outcome):
+    with session(linepd) as s:
+        req = RequestEnvelope(stream=StreamIdentity(1, 10, 0), model_id="model")
+        monkeypatch.setattr(s, "_recv_frame", lambda: encode_event(EventEnvelope(
+            stream=req.stream, event_seq=1, event_type=event_type, outcome=outcome,
+        )))
+        events = s.execute_stream(req)
+        assert next(events).event_type == event_type
+        events.close()
+        assert s.is_connected()
+
+
+@pytest.mark.parametrize("failure", [socket.timeout("partial frame"), TrunkError("SL1 verification failed")])
+def test_receive_failure_discards_session(linepd, monkeypatch, failure):
+    with session(linepd) as s:
+        def fail_receive():
+            raise failure
+        monkeypatch.setattr(s, "_recv_frame", fail_receive)
+        with pytest.raises(type(failure)):
+            s.embed("task:embed-bge", "text")
+        assert not s.is_connected()

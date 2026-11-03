@@ -335,41 +335,50 @@ class TrunkSession:
         return StreamIdentity(request_id=self._request_counter, execution_id=self._request_counter * 10, output_id=0)
 
     def execute_stream(self, req: RequestEnvelope, auto_ack_window: bool = True) -> Iterator[EventEnvelope]:
+        """Yield one request's events without automatically retrying dispatch.
+
+        Close the iterator when stopping early (e.g. with contextlib.closing).
+        An incomplete stream discards the connection; the next call reconnects.
+        A send failure leaves delivery uncertain and is propagated to the caller.
+        """
         with self._lock:
             self.connect()
+            terminal_received = False
             try:
+                # A failed sendall may already have dispatched the request.
+                # Without deduplication, reconnecting and retrying is unsafe.
                 self._send_frame(encode_request(req))
-            except OSError:
-                # the trunk dropped an idle session (restart, expired lease): bind anew once
-                self.close()
-                self.connect()
-                self._send_frame(encode_request(req))
-            cumulative_bytes = 0
-            while True:
-                evt = decode_event(self._recv_frame())
-                if evt is None:
-                    raise TrunkError("invalid event frame from the trunk")
-                if evt.stream.is_connection_level():
-                    # connection-level failure (lease, auth, routing): the trunk closes
-                    self.close()
-                    raise TrunkError(evt.error.message or "connection-level error", evt.error.code)
-                if evt.stream.request_id != req.stream.request_id or evt.stream.execution_id != req.stream.execution_id:
-                    raise TrunkError("stream identity mismatch in a trunk event")
-                if auto_ack_window and evt.event_type in (EventType.CONTENT_DELTA, EventType.REASONING_DELTA):
-                    cumulative_bytes += len(evt.payload.encode("utf-8"))
-                    self._send_frame(
-                        encode_control(
-                            ControlEnvelope(
-                                stream=evt.stream,
-                                control_type=ControlType.WINDOW_UPDATE,
-                                reason="ACK",
-                                ack_offset_bytes=cumulative_bytes,
+                cumulative_bytes = 0
+                while True:
+                    evt = decode_event(self._recv_frame())
+                    if evt is None:
+                        raise TrunkError("invalid event frame from the trunk")
+                    if evt.stream.is_connection_level():
+                        # connection-level failure (lease, auth, routing): the trunk closes
+                        raise TrunkError(evt.error.message or "connection-level error", evt.error.code)
+                    if evt.stream.request_id != req.stream.request_id or evt.stream.execution_id != req.stream.execution_id:
+                        raise TrunkError("stream identity mismatch in a trunk event")
+                    if auto_ack_window and evt.event_type in (EventType.CONTENT_DELTA, EventType.REASONING_DELTA):
+                        cumulative_bytes += len(evt.payload.encode("utf-8"))
+                        self._send_frame(
+                            encode_control(
+                                ControlEnvelope(
+                                    stream=evt.stream,
+                                    control_type=ControlType.WINDOW_UPDATE,
+                                    reason="ACK",
+                                    ack_offset_bytes=cumulative_bytes,
+                                )
                             )
                         )
-                    )
-                yield evt
-                if evt.event_type in (EventType.COMPLETED, EventType.FAILED, EventType.CANCELLED):
-                    break
+                    terminal_received = evt.event_type in (EventType.COMPLETED, EventType.FAILED, EventType.CANCELLED)
+                    yield evt
+                    if terminal_received:
+                        break
+            finally:
+                # Unread events or a partial frame must never reach the next request.
+                # Closing the iterator early also runs this cleanup.
+                if not terminal_received:
+                    self.close()
 
     def stream_chat(
         self,
