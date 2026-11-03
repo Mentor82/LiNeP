@@ -1,5 +1,8 @@
 # Point 4 validation — 2026-11-03
 
+This records the point 4 implementation/review before deployment. The later
+point 5 rollout is recorded separately in `deploy/ROLLOUT_2026-11-03.md`.
+
 Scope: standalone real Hailo runtime and service template. No systemd service
 installed, no packages installed on the Pi, no linepd or tunnel configuration
 changed, no existing service restarted. Test source was copied to a fresh

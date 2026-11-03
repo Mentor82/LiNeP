@@ -32,6 +32,7 @@ the Debian/Pi deployment.
 2. Extract to a new immutable `/opt/linep/linep-vision-0.1.0-<commit>-arm64` directory.
    Point `/opt/linep/linep-vision` to it. Verify the selected model and host imports.
 3. Install `linep-vision.service` as a local systemd unit and enable/start it.
+   Wait for the listener/ready log after `Type=simple` start before the probe.
    Its `StateDirectory` is writable, HOME points there, and host `/tmp` is shared
    for the HailoRT socket. Verify a real image through the installed endpoint.
 4. Provision the separate restricted SSH account on VM108, preserving the old
@@ -43,7 +44,8 @@ the Debian/Pi deployment.
    `liara-noded ports --registry <candidate>`. Test the running binary against it
    in an isolated mount namespace with private `/run/liara`, no seed peers and
    distinct control/trunk ports; do not disturb live mesh/HA.
-6. Use the existing HA-safe `roll-noded-cluster.sh --restart-local` procedure:
+6. Use the HA-safe sequence from `roll-noded-cluster.sh --restart-local`, with
+   a detached registry-only runner that also supports restore-before-resume:
    stop HA on both nodes, replace VM108's registry, restart linepd on VM108 only,
    wait for fresh mutual mesh, resume HA and verify QUORATE on both. Execute
    detached on VM108 so operator SSH loss cannot interrupt recovery. A failed
@@ -57,6 +59,14 @@ the Debian/Pi deployment.
 trunk, specify its in-place `--key-file` and `--control-port`; the tool performs
 the real UDP lease + SESSION_BIND + per-frame SL1 handshake. A test bus image is
 required; it checks bus/person labels and the resolved model/revision.
+
+Known integration limit: the deployed trunk also advertises DECISION profile 5,
+which the current main Python SDK's full capabilities decoder rejects. Do not
+weaken the SDK's unknown-ID rejection. Verify the worker's capabilities directly;
+use explicit `--skip-trunk-capabilities` for the separate signed request-only
+trunk check. Its JSON records that capabilities were not checked. This proves
+known-model/task VISION routing, not full SDK capability discovery compatibility.
+Track the decoder extension in the cross-language/conformance work of point 6.
 
 ## Rollback
 

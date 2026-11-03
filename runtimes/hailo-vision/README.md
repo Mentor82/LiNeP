@@ -89,8 +89,9 @@ CLI always constructs `HailoBackend`. The smoke test uses the real Hailo device,
 a temporary loopback listener and local bus/dog/bicycle/person images, plus a
 corrupt JPEG. It does not install anything or contact linepd.
 
-Point 5 remains separate: reverse tunnel (candidate VM108 port 19653), SSH
-`permitlisten` authorization, `[runtimes.rpi5_vision]`, model allowlist, HA rollout.
+Point 5 deployment artifacts and the controlled procedure are documented in
+[`deploy/README.md`](deploy/README.md); the first rollout is recorded in
+[`deploy/ROLLOUT_2026-11-03.md`](deploy/ROLLOUT_2026-11-03.md).
 Point 6 still needs full linepd conformance/E2E and the wider failure matrix.
 Distribution remains one source tree with an arm64 bundle + SHA256SUMS and a
 signed lpkg recipe; packaging and deployment are not performed by this change.
