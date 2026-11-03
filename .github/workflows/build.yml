@@ -248,9 +248,9 @@ jobs:
           cmake -S LiNeP -B LiNeP/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DLINEP_BUILD_TESTS=OFF \
-            -DLINEP_BUILD_V02=OFF \
+            -DLINEP_BUILD_V02=ON \
             --log-level=WARNING
-          cmake --build LiNeP/build --parallel --target linep
+          cmake --build LiNeP/build --parallel --target linep linep-v02-golden-frames
 
       - name: Install Python package and test dependencies
         run: python -m pip install "./LiNeP/python[dev]"
@@ -270,7 +270,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install test runner
-        run: python -m pip install pytest
+        run: python -m pip install pytest numpy opencv-python-headless
       - name: Run vision unit and socket tests
         env:
           PYTHONPATH: LiNeP/python:runtimes/hailo-vision/src

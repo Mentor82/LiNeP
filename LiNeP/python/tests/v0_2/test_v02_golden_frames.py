@@ -68,6 +68,12 @@ GOLDEN_SL1_KEY_ROTATED = bytes([
 
 
 def find_cpp_golden_tool() -> Optional[Path]:
+    explicit = os.environ.get("LINEP_CPP_GOLDEN_TOOL")
+    if explicit:
+        tool = Path(explicit).resolve()
+        if not tool.is_file() or not os.access(tool, os.X_OK if os.name != "nt" else os.F_OK):
+            raise RuntimeError("LINEP_CPP_GOLDEN_TOOL is not an executable file")
+        return tool
     roots = [
         Path(__file__).resolve().parents[4],
         Path(__file__).resolve().parents[3],
