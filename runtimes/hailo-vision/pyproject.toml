@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linep-hailo-vision"
+version = "0.1.0"
+description = "LiNeP V0.2 object detection runtime for Hailo-8L"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.9"
+dependencies = ["linep>=0.2.0"]
+
+[project.scripts]
+linep-vision = "linep_vision.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

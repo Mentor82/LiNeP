@@ -2,6 +2,10 @@
 
 Python support for the LiNeP dual-plane protocol.
 
+For a real Hailo-8L object detection worker, see the independent
+[Hailo vision runtime adapter](../../runtimes/hailo-vision/README.md).
+It uses these codecs and is separate from the deterministic mock runtime.
+
 The `0.2.x` distribution exposes the V0.2 runtime protocol while retaining an
 explicit V0.1 compatibility namespace:
 
