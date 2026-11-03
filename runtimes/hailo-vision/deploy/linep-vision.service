@@ -1,0 +1,25 @@
+[Unit]
+Description=LiNeP Hailo object detection runtime
+After=network.target hailort.service
+Requires=hailort.service
+
+[Service]
+Type=simple
+User=mirko
+StateDirectory=linep-vision
+WorkingDirectory=/var/lib/linep-vision
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/opt/linep/linep-vision
+Environment=HOME=/var/lib/linep-vision
+ExecStart=/usr/bin/python3 -m linep_vision --host 127.0.0.1 --port 11436 --model yolov8s-detect=/usr/local/hailo/resources/models/hailo8l/yolov8s.hef
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+# HailoRT multiprocess service exposes /tmp/hailort_uds.sock on the host.
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target

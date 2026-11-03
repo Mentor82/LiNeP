@@ -261,6 +261,22 @@ jobs:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python -m pytest -q LiNeP/python/tests
 
+  hailo-vision-tests:
+    name: Hailo vision runtime (hardware-independent)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install test runner
+        run: python -m pip install pytest
+      - name: Run vision unit and socket tests
+        env:
+          PYTHONPATH: LiNeP/python:runtimes/hailo-vision/src
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m pytest -q runtimes/hailo-vision/tests -W error::pytest.PytestUnhandledThreadExceptionWarning
+
   # ── Distribution licensing and third-party notice verification ─────────────
   legal-compliance:
     name: Legal artifact verification
@@ -284,7 +300,7 @@ jobs:
   # ── Bundle all artifacts into one release zip ────────────────────────────────
   bundle:
     name: Bundle release artifacts
-    needs: [windows, linux, macos, protocol-tests, python-tests, legal-compliance]
+    needs: [windows, linux, macos, protocol-tests, python-tests, hailo-vision-tests, legal-compliance]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
 
